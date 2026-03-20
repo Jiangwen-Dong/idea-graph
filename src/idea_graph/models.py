@@ -90,6 +90,7 @@ class FinalProposal:
 class IdeaGraph:
     topic: str
     literature: list[str]
+    metadata: dict[str, object] = field(default_factory=dict)
     nodes: dict[str, Node] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
     branches: dict[str, Branch] = field(default_factory=dict)

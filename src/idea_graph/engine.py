@@ -129,7 +129,12 @@ def create_edge(
 
 def build_seed_graphs(graph: IdeaGraph) -> None:
     for role in ROLE_NAMES:
-        template = build_seed_template(role, graph.topic)
+        template = build_seed_template(
+            role,
+            graph.topic,
+            literature=graph.literature,
+            metadata=graph.metadata,
+        )
         branch = create_branch(graph, role)
         anchor = create_node(
             graph,
@@ -541,8 +546,8 @@ def apply_action(graph: IdeaGraph, action: GraphAction) -> None:
             note=action.rationale,
         )
         for edge in graph.edges:
-                if edge.relation == "contradicts" and edge.target_id == action.target_ids[0]:
-                    edge.resolved = True
+            if edge.relation == "contradicts" and edge.target_id == action.target_ids[0]:
+                edge.resolved = True
         return
 
     if action.kind == "freeze_branch":
@@ -633,8 +638,12 @@ def synthesize_proposal(graph: IdeaGraph, subgraph: dict[str, object]) -> FinalP
     )
 
 
-def run_experiment(topic: str, literature: list[str]) -> IdeaGraph:
-    graph = IdeaGraph(topic=topic, literature=literature)
+def run_experiment(
+    topic: str,
+    literature: list[str],
+    metadata: dict[str, object] | None = None,
+) -> IdeaGraph:
+    graph = IdeaGraph(topic=topic, literature=literature, metadata=dict(metadata or {}))
     build_seed_graphs(graph)
     merge_seed_graphs(graph)
 
@@ -656,6 +665,7 @@ def graph_as_dict(graph: IdeaGraph) -> dict[str, object]:
     return {
         "topic": graph.topic,
         "literature": graph.literature,
+        "metadata": graph.metadata,
         "nodes": {node_id: asdict(node) for node_id, node in graph.nodes.items()},
         "edges": [asdict(edge) for edge in graph.edges],
         "branches": {branch_id: asdict(branch) for branch_id, branch in graph.branches.items()},
