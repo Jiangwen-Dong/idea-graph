@@ -1,0 +1,14 @@
+{
+  "name": "sample-delayed-consensus",
+  "topic": "Collaborative scientific ideation via delayed consensus over typed idea graphs",
+  "literature": [
+    "Multi-agent ideation systems often vote over whole ideas too early.",
+    "Graph representations can preserve partial claims and expose support and contradiction relations.",
+    "Novelty assessment improves when claims are grounded against prior work.",
+    "Process metrics can reveal whether collaboration improves structure rather than only surface fluency."
+  ],
+  "metadata": {
+    "source": "local-sample",
+    "notes": "Deterministic placeholder instance for first pipeline execution."
+  }
+}
