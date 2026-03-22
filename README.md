@@ -18,18 +18,25 @@ The implementation direction comes from the extracted `exp.docx` protocol:
 This repository now contains the first Python implementation step:
 
 - typed graph schema and data models
-- deterministic placeholder seed generation
+- deterministic and OpenAI-compatible multi-agent backends
 - graph merge and constrained graph actions
 - maturity checks and final subgraph selection
-- a runnable prototype script
+- benchmark loaders and runnable pipeline scripts
 
-The current prototype is intentionally model-free. It exercises the protocol as
-code before we plug in retrieval, LLM agents, and baselines.
+The pipeline can now run in two modes:
+
+- `deterministic`
+  Useful for local validation, debugging, and reproducible graph mechanics.
+- `openai-compatible`
+  Uses an OpenAI-style `chat/completions` API protocol so you can target
+  ChatGPT-style, Qwen-style, DeepSeek-style, or other compatible providers by
+  changing the base URL, API key, and model names.
 
 ## Layout
 
 - `docs/implementation-plan.md`
 - `docs/benchmarks.md`
+- `configs/openai_compatible.example.json`
 - `pyproject.toml`
 - `data/sample_instance.json`
 - `src/idea_graph/`
@@ -56,6 +63,12 @@ The default pipeline run will:
   Typed experiment-instance input objects shared by local JSON and benchmark loaders.
 - `src/idea_graph/models.py`
   Graph, node, edge, branch, action, and proposal data models.
+- `src/idea_graph/settings.py`
+  Runtime settings for OpenAI-compatible multi-agent execution.
+- `src/idea_graph/llm.py`
+  Lightweight OpenAI-compatible chat client built on the Python standard library.
+- `src/idea_graph/agent_backend.py`
+  Multi-agent seed generation, action generation, and final synthesis protocols.
 - `src/idea_graph/schema.py`
   Graph schema and benchmark-aware seed-template construction.
 - `src/idea_graph/engine.py`
@@ -109,6 +122,96 @@ Notes:
 - For the current prototype, literature context is built from the benchmark's
   provided top-reference titles and their local paper paths when available.
 
+## OpenAI-Compatible Multi-Agent Mode
+
+The action model can now be driven by an OpenAI-compatible API instead of the
+deterministic placeholder policy.
+
+### Configure
+
+Start from:
+
+```bash
+configs/openai_compatible.example.json
+```
+
+Fill in:
+
+- your provider's OpenAI-compatible `base_url`
+- your `model`
+- your `provider` such as `dashscope` or `openai`
+- your `reasoning_mode` when the provider exposes a thinking toggle
+- your API key via an environment variable such as `OPENAI_API_KEY`
+
+### Run
+
+Use the local sample:
+
+```bash
+python scripts/run_pipeline.py --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json
+```
+
+Use a benchmark row:
+
+```bash
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json
+```
+
+You can also override config values directly:
+
+```bash
+python scripts/run_pipeline.py --agent-backend openai-compatible --llm-base-url https://your-provider.example/v1 --llm-model your-model-name
+```
+
+Notes:
+
+- The backend uses the OpenAI-style `/chat/completions` protocol for maximum compatibility.
+- If an LLM response is malformed or invalid for the graph schema, the engine falls back to the deterministic policy for that step.
+- Run artifacts keep backend settings and model traces without storing the API key.
+- `api_key_env` must be an environment-variable name such as `DASHSCOPE_API_KEY`, not the API key value itself.
+- If you do not want role-specific models yet, keep `role_models` empty. Placeholder names such as `your-strong-reasoning-model` will cause provider errors.
+- `reasoning_mode` supports `auto`, `off`, and `on`.
+- For DashScope Qwen reasoning-capable models, this client is currently non-streaming. `reasoning_mode=auto` or `off` will automatically send `enable_thinking=false` when needed. `reasoning_mode=on` is intentionally blocked until streaming support is added.
+- Some DashScope models are effectively always-thinking, such as `QwQ`, `DeepSeek-R1`, and Qwen variants with `thinking` in the model name. Those are not supported by the current non-streaming client.
+
+### Quick Provider Check
+
+Before running the full pipeline, you can test whether your provider and model
+respond correctly:
+
+```bash
+python scripts/check_openai_compatible.py --llm-config configs/openai_compatible.example.json
+```
+
+For Qwen on DashScope, a typical setup is:
+
+```powershell
+$env:DASHSCOPE_API_KEY="your_real_key"
+python scripts/check_openai_compatible.py --llm-config configs/openai_compatible.example.json
+python scripts/run_pipeline.py --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json
+```
+
+You can also override the provider and reasoning mode on the command line:
+
+```bash
+python scripts/check_openai_compatible.py --llm-config configs/openai_compatible.example.json --llm-provider dashscope --llm-reasoning-mode off
+python scripts/run_pipeline.py --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json --llm-provider dashscope --llm-reasoning-mode off
+```
+
+If you are using Anaconda Prompt or `cmd.exe`, use `set` instead of `$env:`:
+
+```bat
+set DASHSCOPE_API_KEY=your_real_key
+"D:\Anaconda\anaconda\python.exe" scripts\check_openai_compatible.py --llm-config configs\openai_compatible.example.json
+"D:\Anaconda\anaconda\python.exe" scripts\run_pipeline.py --agent-backend openai-compatible --llm-config configs\openai_compatible.example.json
+```
+
+If you want to keep everything on one PowerShell line, use `;` between commands:
+
+```powershell
+$env:DASHSCOPE_API_KEY="your_real_key"; & 'D:\Anaconda\anaconda\python.exe' scripts\run_pipeline.py --agent-backend openai-compatible --llm-config configs\openai_compatible.example.json
+```
+
 ## liveideabench
 
 The pipeline can also use the official `liveideabench` dataset hosted on
@@ -148,8 +251,8 @@ Notes:
 
 ## Next steps
 
-1. Replace deterministic seed generation with role-specific LLM prompts.
-2. Replace heuristic edit selection with structured graph actions from agents.
-3. Add benchmark loading and retrieved literature inputs.
+1. Improve prompt quality and validation for benchmark-specific action selection.
+2. Add a retrieval stage so keyword-only benchmarks such as `liveideabench` get real literature context.
+3. Expand supported graph actions beyond the current safe subset.
 4. Implement the comparison baselines from the protocol.
-5. Add full trace logging and evaluation metrics.
+5. Add stronger evaluation logging and replay tooling for LLM traces.

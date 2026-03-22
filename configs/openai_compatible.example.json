@@ -1,0 +1,17 @@
+{
+  "openai_compatible": {
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key_env": "DASHSCOPE_API_KEY",
+    "model": "qwen3-8b",
+    "provider": "dashscope",
+    "reasoning_mode": "auto",
+    "temperature": 0.2,
+    "max_tokens": 1400,
+    "timeout_seconds": 90,
+    "max_retries": 2,
+    "json_mode": false,
+    "role_models": {},
+    "extra_headers": {},
+    "extra_body": {}
+  }
+}

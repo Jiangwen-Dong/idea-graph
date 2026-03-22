@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Callable
 
+from .agent_backend import (
+    ActionDecision,
+    CollaborationBackend,
+    append_agent_trace,
+)
 from .models import (
     Branch,
     Edge,
@@ -13,6 +19,24 @@ from .models import (
     Provenance,
 )
 from .schema import ROLE_NAMES, build_seed_template
+
+
+ACTION_TARGET_COUNTS = {
+    "add_support_edge": 2,
+    "add_contradiction_edge": 2,
+    "add_dependency_edge": 2,
+    "request_evidence": 1,
+    "attach_evidence": 1,
+    "mark_overlap": 1,
+    "propose_repair": 1,
+    "freeze_branch": 0,
+}
+
+ACTION_REQUIRED_PAYLOAD_FIELDS = {
+    "attach_evidence": ("evidence",),
+    "mark_overlap": ("paper_id",),
+    "propose_repair": ("repair_text",),
+}
 
 
 def normalize_text(text: str) -> str:
@@ -162,6 +186,51 @@ def build_seed_graphs(graph: IdeaGraph) -> None:
                 role=role,
                 branch_id=branch.id,
                 note=f"Seed relation from {role}",
+            )
+
+
+def build_seed_graphs_with_backend(graph: IdeaGraph, backend: CollaborationBackend) -> None:
+    for role in ROLE_NAMES:
+        draft = backend.generate_seed(graph, role)
+        append_agent_trace(graph, stage="seed_generation", role=role, trace=draft.trace)
+
+        branch = create_branch(graph, role)
+        anchor = create_node(
+            graph,
+            node_type=draft.anchor_type,
+            text=draft.anchor_text,
+            role=role,
+            branch_id=branch.id,
+            confidence=draft.anchor_confidence,
+            source="llm_seed",
+        )
+        for support in draft.support_nodes:
+            support_node = create_node(
+                graph,
+                node_type=support.type,
+                text=support.text,
+                role=role,
+                branch_id=branch.id,
+                confidence=support.confidence,
+                source="llm_seed",
+            )
+            relation = support.relation_to_anchor if support.relation_to_anchor in {
+                "supports",
+                "contradicts",
+                "refines",
+                "depends_on",
+                "requires_evidence",
+                "overlaps_prior",
+                "repairs",
+            } else "supports"
+            create_edge(
+                graph,
+                source_id=support_node.id,
+                relation=relation,
+                target_id=anchor.id,
+                role=role,
+                branch_id=branch.id,
+                note=draft.rationale or f"LLM seed relation from {role}",
             )
 
 
@@ -450,7 +519,73 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
     )
 
 
+def action_from_decision(
+    graph: IdeaGraph,
+    *,
+    round_name: str,
+    role: str,
+    decision: ActionDecision,
+) -> GraphAction:
+    action = make_action(
+        graph,
+        round_name=round_name,
+        role=role,
+        kind=decision.kind,
+        target_ids=list(decision.target_ids),
+        payload=dict(decision.payload),
+        rationale=decision.rationale,
+    )
+    validate_action(graph, action)
+    return action
+
+
+def validate_action(graph: IdeaGraph, action: GraphAction) -> None:
+    expected_targets = ACTION_TARGET_COUNTS.get(action.kind)
+    if expected_targets is None:
+        raise ValueError(f"Unsupported action kind: {action.kind}")
+
+    branch_id = str(action.payload.get("branch_id", "")).strip()
+    if not branch_id:
+        raise ValueError(f"Action {action.id} ({action.kind}) is missing payload.branch_id.")
+    if branch_id not in graph.branches:
+        raise ValueError(f"Action {action.id} ({action.kind}) referenced unknown branch '{branch_id}'.")
+
+    if len(action.target_ids) != expected_targets:
+        raise ValueError(
+            f"Action {action.id} ({action.kind}) expected {expected_targets} target ids "
+            f"but received {len(action.target_ids)}."
+        )
+
+    for node_id in action.target_ids:
+        if node_id not in graph.nodes:
+            raise ValueError(f"Action {action.id} ({action.kind}) referenced unknown node '{node_id}'.")
+
+    for field_name in ACTION_REQUIRED_PAYLOAD_FIELDS.get(action.kind, ()):
+        value = action.payload.get(field_name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError(f"Action {action.id} ({action.kind}) is missing payload.{field_name}.")
+
+
+def emit_progress(
+    graph: IdeaGraph,
+    progress_callback: Callable[[str], None] | None,
+    *,
+    stage: str,
+    message: str,
+    details: dict[str, object] | None = None,
+) -> None:
+    entry: dict[str, object] = {"stage": stage, "message": message}
+    if details:
+        entry["details"] = details
+    log = graph.metadata.setdefault("progress_log", [])
+    if isinstance(log, list):
+        log.append(entry)
+    if progress_callback is not None:
+        progress_callback(message)
+
+
 def apply_action(graph: IdeaGraph, action: GraphAction) -> None:
+    validate_action(graph, action)
     graph.actions.append(action)
     branch_id = str(action.payload["branch_id"])
 
@@ -642,22 +777,203 @@ def run_experiment(
     topic: str,
     literature: list[str],
     metadata: dict[str, object] | None = None,
+    collaboration_backend: CollaborationBackend | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> IdeaGraph:
     graph = IdeaGraph(topic=topic, literature=literature, metadata=dict(metadata or {}))
-    build_seed_graphs(graph)
+    backend_name = collaboration_backend.name if collaboration_backend is not None else "deterministic"
+    emit_progress(
+        graph,
+        progress_callback,
+        stage="start",
+        message=f"Initialized idea graph for topic '{topic}' using backend '{backend_name}'.",
+        details={"backend": backend_name, "topic": topic},
+    )
+    if collaboration_backend is None:
+        emit_progress(
+            graph,
+            progress_callback,
+            stage="seed_generation",
+            message="Building deterministic seed graphs.",
+        )
+        build_seed_graphs(graph)
+    else:
+        try:
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="seed_generation",
+                message="Generating seed graphs with the OpenAI-compatible backend.",
+            )
+            build_seed_graphs_with_backend(graph, collaboration_backend)
+        except Exception as exc:
+            graph.metadata["seed_generation_error"] = str(exc)
+            graph.metadata["seed_generation_fallback"] = "deterministic"
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="seed_generation_fallback",
+                message=f"Seed generation failed with the LLM backend, falling back to deterministic seeds: {exc}",
+                details={"error": str(exc)},
+            )
+            build_seed_graphs(graph)
+    emit_progress(
+        graph,
+        progress_callback,
+        stage="seed_generation_complete",
+        message=f"Seed graphs ready: {len(graph.branches)} branches, {len(graph.nodes)} nodes, {len(graph.edges)} edges.",
+        details={"branches": len(graph.branches), "nodes": len(graph.nodes), "edges": len(graph.edges)},
+    )
     merge_seed_graphs(graph)
+    emit_progress(
+        graph,
+        progress_callback,
+        stage="merge_complete",
+        message=f"Seed merge complete: {len(graph.active_nodes())} active nodes, {len(graph.edges)} edges.",
+        details={"active_nodes": len(graph.active_nodes()), "edges": len(graph.edges)},
+    )
 
     for round_name in ("Round1", "Round2", "Round3"):
+        emit_progress(
+            graph,
+            progress_callback,
+            stage="round_start",
+            message=f"{round_name} started.",
+            details={"round": round_name},
+        )
         for role in ROLE_NAMES:
-            action = choose_round_action(graph, round_name, role)
-            apply_action(graph, action)
+            action_source = "deterministic"
+            if collaboration_backend is None:
+                action = choose_round_action(graph, round_name, role)
+            else:
+                try:
+                    decision = collaboration_backend.choose_action(graph, round_name, role)
+                    append_agent_trace(graph, stage=f"{round_name}_action", role=role, trace=decision.trace)
+                    action = action_from_decision(
+                        graph,
+                        round_name=round_name,
+                        role=role,
+                        decision=decision,
+                    )
+                    action_source = "llm"
+                except Exception as exc:
+                    graph.metadata.setdefault("action_errors", []).append(
+                        {"round": round_name, "role": role, "error": str(exc)}
+                    )
+                    emit_progress(
+                        graph,
+                        progress_callback,
+                        stage="action_fallback",
+                        message=f"{round_name} {role}: invalid LLM action, using deterministic fallback. Error: {exc}",
+                        details={"round": round_name, "role": role, "error": str(exc)},
+                    )
+                    action = choose_round_action(graph, round_name, role)
+                    action_source = "deterministic_fallback"
+            try:
+                apply_action(graph, action)
+            except Exception as exc:
+                if action_source == "llm":
+                    graph.metadata.setdefault("action_errors", []).append(
+                        {
+                            "round": round_name,
+                            "role": role,
+                            "error": f"LLM action application failed: {exc}",
+                        }
+                    )
+                    emit_progress(
+                        graph,
+                        progress_callback,
+                        stage="action_fallback",
+                        message=f"{round_name} {role}: LLM action could not be applied, using deterministic fallback. Error: {exc}",
+                        details={"round": round_name, "role": role, "error": str(exc)},
+                    )
+                    action = choose_round_action(graph, round_name, role)
+                    apply_action(graph, action)
+                    action_source = "deterministic_fallback"
+                else:
+                    raise RuntimeError(
+                        f"Failed to apply {action_source} action for {round_name}/{role}: {exc}"
+                    ) from exc
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="action_applied",
+                message=(
+                    f"{round_name} {role}: applied {action.kind} "
+                    f"via {'LLM' if action_source == 'llm' else 'deterministic policy'}."
+                ),
+                details={
+                    "round": round_name,
+                    "role": role,
+                    "action_kind": action.kind,
+                    "action_source": action_source,
+                    "target_ids": list(action.target_ids),
+                },
+            )
         snapshot = maturity_snapshot(graph)
         graph.round_summaries.append((round_name, snapshot))
         if snapshot.is_mature and graph.matured_at_round is None:
             graph.matured_at_round = round_name
+        emit_progress(
+            graph,
+            progress_callback,
+            stage="round_complete",
+            message=(
+                f"{round_name} complete: support={snapshot.support_coverage}, "
+                f"contradictions={snapshot.unresolved_contradiction_ratio}, "
+                f"utility={snapshot.utility}, mature={snapshot.is_mature}."
+            ),
+            details={
+                "round": round_name,
+                "support_coverage": snapshot.support_coverage,
+                "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
+                "utility": snapshot.utility,
+                "is_mature": snapshot.is_mature,
+            },
+        )
 
     graph.final_subgraph = select_final_subgraph(graph)
-    graph.final_proposal = synthesize_proposal(graph, graph.final_subgraph)
+    emit_progress(
+        graph,
+        progress_callback,
+        stage="final_subgraph",
+        message=(
+            f"Selected final subgraph with {len(graph.final_subgraph['node_ids'])} nodes and "
+            f"{len(graph.final_subgraph['edge_ids'])} edges."
+        ),
+        details=dict(graph.final_subgraph),
+    )
+    if collaboration_backend is None:
+        graph.final_proposal = synthesize_proposal(graph, graph.final_subgraph)
+    else:
+        try:
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="final_synthesis",
+                message="Synthesizing the final proposal with the OpenAI-compatible backend.",
+            )
+            graph.final_proposal = collaboration_backend.synthesize_final_proposal(graph, graph.final_subgraph)
+        except Exception as exc:
+            graph.metadata["final_synthesis_error"] = str(exc)
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="final_synthesis_fallback",
+                message=f"Final synthesis failed with the LLM backend, using deterministic synthesis: {exc}",
+                details={"error": str(exc)},
+            )
+            graph.final_proposal = synthesize_proposal(graph, graph.final_subgraph)
+    emit_progress(
+        graph,
+        progress_callback,
+        stage="complete",
+        message=(
+            f"Run complete: {len(graph.nodes)} nodes, {len(graph.edges)} edges, "
+            f"{len(graph.actions)} actions."
+        ),
+        details={"nodes": len(graph.nodes), "edges": len(graph.edges), "actions": len(graph.actions)},
+    )
     return graph
 
 

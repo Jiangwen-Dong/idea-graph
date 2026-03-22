@@ -1,3 +1,4 @@
+from .agent_backend import OpenAICompatibleCollaborationBackend
 from .benchmarks import (
     AIIdeaBench2025Paths,
     AIIdeaBench2025Record,
@@ -15,6 +16,7 @@ from .benchmarks import (
 )
 from .engine import graph_as_dict, run_experiment
 from .instances import ExperimentInstance
+from .settings import AgentRuntimeConfig, OpenAICompatibleSettings
 from .io import load_instance, write_run_artifacts
 from .models import IdeaGraph
 from .schema import EDGE_TYPES, NODE_TYPES, ROLE_NAMES
@@ -22,12 +24,15 @@ from .schema import EDGE_TYPES, NODE_TYPES, ROLE_NAMES
 __all__ = [
     "AIIdeaBench2025Paths",
     "AIIdeaBench2025Record",
+    "AgentRuntimeConfig",
     "LiveIdeaBenchPaths",
     "LiveIdeaBenchRecord",
     "EDGE_TYPES",
     "ExperimentInstance",
     "IdeaGraph",
     "NODE_TYPES",
+    "OpenAICompatibleCollaborationBackend",
+    "OpenAICompatibleSettings",
     "ROLE_NAMES",
     "ai_idea_bench_2025_instance_from_record",
     "download_ai_idea_bench_2025",
