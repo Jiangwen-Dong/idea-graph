@@ -143,6 +143,115 @@ def first_available_node(
     )
 
 
+def edge_exists(
+    graph: IdeaGraph,
+    *,
+    source_id: str,
+    relation: str,
+    target_id: str,
+) -> bool:
+    return any(
+        edge.source_id == source_id and edge.relation == relation and edge.target_id == target_id
+        for edge in graph.edges
+    )
+
+
+def unresolved_contradiction_edges(graph: IdeaGraph) -> list[Edge]:
+    return [
+        edge
+        for edge in graph.edges
+        if edge.relation == "contradicts"
+        and not edge.resolved
+        and edge.source_id in graph.nodes
+        and edge.target_id in graph.nodes
+        and graph.nodes[edge.source_id].status == "active"
+        and graph.nodes[edge.target_id].status == "active"
+    ]
+
+
+REPAIR_TARGET_TYPE_PREFERENCES = {
+    "MechanismProposer": ("Method", "Hypothesis", "EvalPlan", "Problem", "NoveltyClaim", "Risk", "Assumption"),
+    "FeasibilityCritic": ("EvalPlan", "Method", "Hypothesis", "Problem", "NoveltyClaim", "Risk", "Assumption"),
+    "NoveltyExaminer": ("NoveltyClaim", "Hypothesis", "Problem", "Method", "EvalPlan", "Risk", "Assumption"),
+    "EvaluationDesigner": ("EvalPlan", "Method", "Hypothesis", "Problem", "NoveltyClaim", "Risk", "Assumption"),
+    "ImpactReframer": ("Problem", "Hypothesis", "NoveltyClaim", "Method", "EvalPlan", "Risk", "Assumption"),
+}
+
+
+def choose_repair_target(graph: IdeaGraph, role: str) -> Node | None:
+    unresolved = unresolved_contradiction_edges(graph)
+    if not unresolved:
+        return None
+
+    preferred_types = REPAIR_TARGET_TYPE_PREFERENCES.get(role, tuple())
+    targets = [graph.nodes[edge.target_id] for edge in unresolved if edge.target_id in graph.nodes]
+
+    for preferred_type in preferred_types:
+        for candidate in targets:
+            if candidate.type == preferred_type and candidate.role != role:
+                return candidate
+        for candidate in targets:
+            if candidate.type == preferred_type:
+                return candidate
+
+    for candidate in targets:
+        if candidate.role != role:
+            return candidate
+    return targets[0] if targets else None
+
+
+def contradiction_related_node_ids(graph: IdeaGraph) -> set[str]:
+    related: set[str] = set()
+    for edge in unresolved_contradiction_edges(graph):
+        related.add(edge.source_id)
+        related.add(edge.target_id)
+    return related
+
+
+def llm_action_alignment_error(graph: IdeaGraph, round_name: str, action: GraphAction) -> str | None:
+    phase = resolve_round_phase(round_name)
+    if phase.key != "repair":
+        return None
+
+    unresolved = unresolved_contradiction_edges(graph)
+    if not unresolved:
+        return None
+
+    contradiction_target_ids = {edge.target_id for edge in unresolved}
+    contradiction_node_ids = contradiction_related_node_ids(graph)
+
+    if action.kind == "propose_repair":
+        if action.target_ids and action.target_ids[0] in contradiction_target_ids:
+            return None
+        return (
+            "Repair-phase action proposed a repair that does not target any unresolved contradiction target. "
+            "Use a contradiction target or let deterministic fallback handle the repair."
+        )
+
+    if action.kind == "attach_evidence":
+        if action.target_ids and action.target_ids[0] in contradiction_node_ids:
+            return None
+        return (
+            "Repair-phase attach_evidence action does not address any unresolved contradiction-related node. "
+            "Use a contradiction-related node or let deterministic fallback handle the repair."
+        )
+
+    if action.kind == "freeze_branch":
+        return (
+            "Repair-phase freeze_branch action was rejected because unresolved contradictions still exist."
+        )
+
+    if action.kind == "add_support_edge":
+        if any(node_id in contradiction_node_ids for node_id in action.target_ids):
+            return None
+        return (
+            "Repair-phase add_support_edge action does not touch any unresolved contradiction-related node. "
+            "Use a contradiction-related node or let deterministic fallback handle the repair."
+        )
+
+    return None
+
+
 def branch_for_role(graph: IdeaGraph, role: str) -> Branch:
     return next(branch for branch in graph.branches.values() if branch.role == role)
 
@@ -492,6 +601,27 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
 
     if phase.key == "stress_test":
         if role == "MechanismProposer":
+            contradiction_related = contradiction_related_node_ids(graph)
+            contradiction_targets = [
+                graph.nodes[node_id]
+                for node_id in contradiction_related
+                if node_id in graph.nodes
+                and graph.nodes[node_id].status == "active"
+                and graph.nodes[node_id].role != role
+                and graph.nodes[node_id].type in {"Method", "EvalPlan", "Hypothesis", "Problem"}
+                and not graph.nodes[node_id].evidence
+            ]
+            if contradiction_targets:
+                target = sorted(contradiction_targets, key=lambda node: node.id)[0]
+                return make_action(
+                    graph,
+                    round_name=round_name,
+                    role=role,
+                    kind="attach_evidence",
+                    target_ids=[target.id],
+                    payload={"branch_id": branch.id, "evidence": literature_item(graph, 0)},
+                    rationale="Ground a contradiction-related node before deciding whether repair is needed.",
+                )
             method = first_available_node(
                 graph,
                 node_types=("Method", "EvalPlan", "Hypothesis"),
@@ -509,6 +639,25 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 rationale="Ground a method node from a branch created by another role.",
             )
         if role == "FeasibilityCritic":
+            contradiction_targets = [
+                graph.nodes[edge.target_id]
+                for edge in unresolved_contradiction_edges(graph)
+                if edge.target_id in graph.nodes
+                and graph.nodes[edge.target_id].status == "active"
+                and graph.nodes[edge.target_id].role != role
+                and not graph.nodes[edge.target_id].evidence
+            ]
+            if contradiction_targets:
+                target = sorted(contradiction_targets, key=lambda node: node.id)[0]
+                return make_action(
+                    graph,
+                    round_name=round_name,
+                    role=role,
+                    kind="attach_evidence",
+                    target_ids=[target.id],
+                    payload={"branch_id": branch.id, "evidence": literature_item(graph, 1)},
+                    rationale="Attach evidence to a contradiction target before deciding whether the critique still holds.",
+                )
             hypothesis = first_available_node(
                 graph,
                 node_types=("Hypothesis", "Problem", "Method", "NoveltyClaim"),
@@ -547,6 +696,25 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 rationale="Ground a non-self novelty claim against nearby prior work.",
             )
         if role == "EvaluationDesigner":
+            contradiction_targets = [
+                graph.nodes[edge.target_id]
+                for edge in unresolved_contradiction_edges(graph)
+                if edge.target_id in graph.nodes
+                and graph.nodes[edge.target_id].status == "active"
+                and graph.nodes[edge.target_id].type in {"EvalPlan", "Method", "Hypothesis"}
+                and not graph.nodes[edge.target_id].evidence
+            ]
+            if contradiction_targets:
+                target = sorted(contradiction_targets, key=lambda node: node.id)[0]
+                return make_action(
+                    graph,
+                    round_name=round_name,
+                    role=role,
+                    kind="attach_evidence",
+                    target_ids=[target.id],
+                    payload={"branch_id": branch.id, "evidence": literature_item(graph, 3)},
+                    rationale="Attach evidence to a contradiction target so later repair decisions are better grounded.",
+                )
             eval_plan = first_available_node(
                 graph,
                 node_types=("EvalPlan", "Method", "Hypothesis"),
@@ -581,6 +749,23 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
         )
 
     if role == "MechanismProposer":
+        repair_target = choose_repair_target(graph, role)
+        if repair_target is not None:
+            return make_action(
+                graph,
+                round_name=round_name,
+                role=role,
+                kind="propose_repair",
+                target_ids=[repair_target.id],
+                payload={
+                    "branch_id": branch.id,
+                    "repair_text": (
+                        f"Refine the {repair_target.type.lower()} so it directly addresses the unresolved failure mode "
+                        f"and becomes more mechanistically specific."
+                    ),
+                },
+                rationale="Resolve an unresolved contradiction by making the target node more mechanistically precise.",
+            )
         method = first_available_node(
             graph,
             node_types=("Method", "EvalPlan", "Hypothesis"),
@@ -600,6 +785,23 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             rationale="Repair the method after feasibility critique.",
         )
     if role == "FeasibilityCritic":
+        repair_target = choose_repair_target(graph, role)
+        if repair_target is not None:
+            return make_action(
+                graph,
+                round_name=round_name,
+                role=role,
+                kind="propose_repair",
+                target_ids=[repair_target.id],
+                payload={
+                    "branch_id": branch.id,
+                    "repair_text": (
+                        f"Adjust the {repair_target.type.lower()} to answer the unresolved feasibility concern "
+                        f"with clearer constraints, assumptions, or evaluation details."
+                    ),
+                },
+                rationale="Resolve an unresolved contradiction by tightening feasibility around the target node.",
+            )
         eval_plan = first_available_node(
             graph,
             node_types=("EvalPlan", "Method", "Hypothesis"),
@@ -619,6 +821,23 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             rationale="Repair the evaluation plan after contradiction exposure.",
         )
     if role == "NoveltyExaminer":
+        repair_target = choose_repair_target(graph, role)
+        if repair_target is not None:
+            return make_action(
+                graph,
+                round_name=round_name,
+                role=role,
+                kind="propose_repair",
+                target_ids=[repair_target.id],
+                payload={
+                    "branch_id": branch.id,
+                    "repair_text": (
+                        f"Narrow the {repair_target.type.lower()} so it is more clearly differentiated from nearby prior work "
+                        f"and easier to justify as novel."
+                    ),
+                },
+                rationale="Resolve an unresolved contradiction by making the target node more specific and defensible.",
+            )
         novelty_claim = first_available_node(
             graph,
             node_types=("NoveltyClaim", "Hypothesis", "Problem"),
@@ -638,6 +857,23 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             rationale="Refine the novelty claim after overlap analysis.",
         )
     if role == "EvaluationDesigner":
+        repair_target = choose_repair_target(graph, role)
+        if repair_target is not None:
+            return make_action(
+                graph,
+                round_name=round_name,
+                role=role,
+                kind="propose_repair",
+                target_ids=[repair_target.id],
+                payload={
+                    "branch_id": branch.id,
+                    "repair_text": (
+                        f"Revise the {repair_target.type.lower()} so its evaluation path and success criteria are explicit "
+                        f"enough to resolve the current contradiction."
+                    ),
+                },
+                rationale="Resolve an unresolved contradiction by clarifying how the target node will be evaluated or supported.",
+            )
         method = first_available_node(
             graph,
             node_types=("Method", "EvalPlan", "Hypothesis"),
@@ -658,6 +894,23 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             rationale="Reconnect compatible pieces from different branches into one stronger path.",
         )
 
+    repair_target = choose_repair_target(graph, role)
+    if repair_target is not None:
+        return make_action(
+            graph,
+            round_name=round_name,
+            role=role,
+            kind="propose_repair",
+            target_ids=[repair_target.id],
+            payload={
+                "branch_id": branch.id,
+                "repair_text": (
+                    f"Reframe the {repair_target.type.lower()} so the broader problem framing and significance are clearer "
+                    f"while directly addressing the unresolved contradiction."
+                ),
+            },
+            rationale="Resolve an unresolved contradiction by reframing the target node more clearly.",
+        )
     problem_branch = branch_for_role(graph, "ImpactReframer")
     return make_action(
         graph,
@@ -1015,6 +1268,9 @@ def run_experiment(
                         role=role,
                         decision=decision,
                     )
+                    alignment_error = llm_action_alignment_error(graph, round_name, action)
+                    if alignment_error is not None:
+                        raise ValueError(alignment_error)
                     action_source = "llm"
                 except Exception as exc:
                     graph.metadata.setdefault("action_errors", []).append(
