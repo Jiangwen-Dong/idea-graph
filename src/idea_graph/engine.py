@@ -8,6 +8,12 @@ from .agent_backend import (
     CollaborationBackend,
     append_agent_trace,
 )
+from .collaboration_protocol import (
+    ACTION_REQUIRED_PAYLOAD_FIELDS,
+    ACTION_TARGET_COUNTS,
+    build_round_name,
+    resolve_round_phase,
+)
 from .models import (
     Branch,
     Edge,
@@ -19,25 +25,6 @@ from .models import (
     Provenance,
 )
 from .schema import ROLE_NAMES, build_seed_template
-
-
-ACTION_TARGET_COUNTS = {
-    "add_support_edge": 2,
-    "add_contradiction_edge": 2,
-    "add_dependency_edge": 2,
-    "request_evidence": 1,
-    "attach_evidence": 1,
-    "mark_overlap": 1,
-    "propose_repair": 1,
-    "freeze_branch": 0,
-}
-
-ACTION_REQUIRED_PAYLOAD_FIELDS = {
-    "attach_evidence": ("evidence",),
-    "mark_overlap": ("paper_id",),
-    "propose_repair": ("repair_text",),
-}
-
 
 def normalize_text(text: str) -> str:
     return " ".join("".join(ch.lower() if ch.isalnum() else " " for ch in text).split())
@@ -81,6 +68,79 @@ def first_active_node(
             f"Could not find active node of type={node_type}, role={role}, exclude_role={exclude_role}"
         )
     return candidates[0]
+
+
+def first_active_node_with_fallback(
+    graph: IdeaGraph,
+    node_type: str,
+    *,
+    role: str | None = None,
+    exclude_role: str | None = None,
+    prefer_without_evidence: bool = False,
+) -> Node:
+    if prefer_without_evidence:
+        candidates = find_active_nodes(
+            graph,
+            node_type,
+            role=role,
+            exclude_role=exclude_role,
+            without_evidence=True,
+        )
+        if candidates:
+            return candidates[0]
+    return first_active_node(
+        graph,
+        node_type,
+        role=role,
+        exclude_role=exclude_role,
+        without_evidence=False,
+    )
+
+
+def first_available_node(
+    graph: IdeaGraph,
+    *,
+    node_types: tuple[str, ...] | list[str],
+    preferred_roles: tuple[str, ...] | list[str] = (),
+    exclude_role: str | None = None,
+    prefer_without_evidence: bool = False,
+) -> Node:
+    normalized_types = tuple(node_types)
+    normalized_roles = tuple(preferred_roles)
+
+    def _attempt(without_evidence: bool) -> Node | None:
+        for node_type in normalized_types:
+            for preferred_role in normalized_roles:
+                candidates = find_active_nodes(
+                    graph,
+                    node_type,
+                    role=preferred_role,
+                    exclude_role=exclude_role,
+                    without_evidence=without_evidence,
+                )
+                if candidates:
+                    return candidates[0]
+            candidates = find_active_nodes(
+                graph,
+                node_type,
+                exclude_role=exclude_role,
+                without_evidence=without_evidence,
+            )
+            if candidates:
+                return candidates[0]
+        return None
+
+    candidate = _attempt(prefer_without_evidence)
+    if candidate is not None:
+        return candidate
+    if prefer_without_evidence:
+        candidate = _attempt(False)
+        if candidate is not None:
+            return candidate
+    raise ValueError(
+        "Could not find an active fallback node for "
+        f"types={normalized_types}, preferred_roles={normalized_roles}, exclude_role={exclude_role}"
+    )
 
 
 def branch_for_role(graph: IdeaGraph, role: str) -> Branch:
@@ -327,12 +387,21 @@ def make_action(
 
 def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAction:
     branch = branch_for_role(graph, role)
+    phase = resolve_round_phase(round_name)
     _view = focused_view(graph, role)
 
-    if round_name == "Round1":
+    if phase.key == "structure":
         if role == "MechanismProposer":
-            hypothesis = first_active_node(graph, "Hypothesis", role="MechanismProposer")
-            problem = first_active_node(graph, "Problem")
+            hypothesis = first_available_node(
+                graph,
+                node_types=("Hypothesis", "Method", "NoveltyClaim"),
+                preferred_roles=("MechanismProposer", "ImpactReframer"),
+            )
+            problem = first_available_node(
+                graph,
+                node_types=("Problem", "Hypothesis"),
+                preferred_roles=("ImpactReframer",),
+            )
             return make_action(
                 graph,
                 round_name=round_name,
@@ -343,8 +412,17 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 rationale="Expose a mechanism-to-problem support relation early.",
             )
         if role == "FeasibilityCritic":
-            risk = first_active_node(graph, "Risk", role="FeasibilityCritic")
-            method = first_active_node(graph, "Method", role="EvaluationDesigner")
+            risk = first_available_node(
+                graph,
+                node_types=("Risk", "Assumption"),
+                preferred_roles=("FeasibilityCritic", "EvaluationDesigner"),
+            )
+            method = first_available_node(
+                graph,
+                node_types=("Method", "EvalPlan", "Hypothesis"),
+                preferred_roles=("EvaluationDesigner", "MechanismProposer"),
+                exclude_role=role,
+            )
             return make_action(
                 graph,
                 round_name=round_name,
@@ -355,7 +433,11 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 rationale="Surface a concrete feasibility risk against the proposed method.",
             )
         if role == "NoveltyExaminer":
-            novelty_claim = first_active_node(graph, "NoveltyClaim", role="NoveltyExaminer")
+            novelty_claim = first_available_node(
+                graph,
+                node_types=("NoveltyClaim", "Hypothesis", "Problem"),
+                preferred_roles=("NoveltyExaminer", "ImpactReframer"),
+            )
             return make_action(
                 graph,
                 round_name=round_name,
@@ -369,8 +451,16 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 rationale="Require explicit evidence before accepting the novelty claim.",
             )
         if role == "EvaluationDesigner":
-            eval_plan = first_active_node(graph, "EvalPlan", role="EvaluationDesigner")
-            hypothesis = first_active_node(graph, "Hypothesis", role="MechanismProposer")
+            eval_plan = first_available_node(
+                graph,
+                node_types=("EvalPlan", "Method"),
+                preferred_roles=("EvaluationDesigner", "FeasibilityCritic"),
+            )
+            hypothesis = first_available_node(
+                graph,
+                node_types=("Hypothesis", "Problem", "Method"),
+                preferred_roles=("MechanismProposer", "ImpactReframer"),
+            )
             return make_action(
                 graph,
                 round_name=round_name,
@@ -380,8 +470,16 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 payload={"branch_id": branch.id},
                 rationale="Make the evaluation plan explicitly depend on the main hypothesis.",
             )
-        hypothesis = first_active_node(graph, "Hypothesis", role="ImpactReframer")
-        problem = first_active_node(graph, "Problem", role="ImpactReframer")
+        hypothesis = first_available_node(
+            graph,
+            node_types=("Hypothesis", "NoveltyClaim", "Method"),
+            preferred_roles=("ImpactReframer", "MechanismProposer"),
+        )
+        problem = first_available_node(
+            graph,
+            node_types=("Problem", "Hypothesis"),
+            preferred_roles=("ImpactReframer",),
+        )
         return make_action(
             graph,
             round_name=round_name,
@@ -392,9 +490,15 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             rationale="Clarify how the reframed hypothesis supports the motivating problem.",
         )
 
-    if round_name == "Round2":
+    if phase.key == "stress_test":
         if role == "MechanismProposer":
-            method = first_active_node(graph, "Method", role="EvaluationDesigner", without_evidence=True)
+            method = first_available_node(
+                graph,
+                node_types=("Method", "EvalPlan", "Hypothesis"),
+                preferred_roles=("EvaluationDesigner", "ImpactReframer", "MechanismProposer"),
+                exclude_role=role,
+                prefer_without_evidence=True,
+            )
             return make_action(
                 graph,
                 round_name=round_name,
@@ -405,7 +509,13 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 rationale="Ground a method node from a branch created by another role.",
             )
         if role == "FeasibilityCritic":
-            hypothesis = first_active_node(graph, "Hypothesis", role="ImpactReframer", without_evidence=True)
+            hypothesis = first_available_node(
+                graph,
+                node_types=("Hypothesis", "Problem", "Method", "NoveltyClaim"),
+                preferred_roles=("ImpactReframer", "MechanismProposer"),
+                exclude_role=role,
+                prefer_without_evidence=True,
+            )
             return make_action(
                 graph,
                 round_name=round_name,
@@ -416,7 +526,13 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 rationale="Attach evidence to a non-self branch before accepting its feasibility.",
             )
         if role == "NoveltyExaminer":
-            novelty_claim = first_active_node(graph, "NoveltyClaim", role="ImpactReframer", without_evidence=True)
+            novelty_claim = first_available_node(
+                graph,
+                node_types=("NoveltyClaim", "Hypothesis", "Problem"),
+                preferred_roles=("ImpactReframer", "NoveltyExaminer"),
+                exclude_role=role,
+                prefer_without_evidence=True,
+            )
             return make_action(
                 graph,
                 round_name=round_name,
@@ -431,7 +547,13 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 rationale="Ground a non-self novelty claim against nearby prior work.",
             )
         if role == "EvaluationDesigner":
-            eval_plan = first_active_node(graph, "EvalPlan", role="FeasibilityCritic", without_evidence=True)
+            eval_plan = first_available_node(
+                graph,
+                node_types=("EvalPlan", "Method", "Hypothesis"),
+                preferred_roles=("FeasibilityCritic", "EvaluationDesigner", "MechanismProposer"),
+                exclude_role=role,
+                prefer_without_evidence=True,
+            )
             return make_action(
                 graph,
                 round_name=round_name,
@@ -441,7 +563,13 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
                 payload={"branch_id": branch.id, "evidence": literature_item(graph, 3)},
                 rationale="Attach validation-oriented evidence to another branch's evaluation node.",
             )
-        novelty_claim = first_active_node(graph, "NoveltyClaim", role="NoveltyExaminer", without_evidence=True)
+        novelty_claim = first_available_node(
+            graph,
+            node_types=("NoveltyClaim", "Hypothesis", "Problem"),
+            preferred_roles=("NoveltyExaminer", "ImpactReframer"),
+            exclude_role=role,
+            prefer_without_evidence=True,
+        )
         return make_action(
             graph,
             round_name=round_name,
@@ -453,7 +581,12 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
         )
 
     if role == "MechanismProposer":
-        method = first_active_node(graph, "Method", role="EvaluationDesigner")
+        method = first_available_node(
+            graph,
+            node_types=("Method", "EvalPlan", "Hypothesis"),
+            preferred_roles=("EvaluationDesigner", "MechanismProposer"),
+            exclude_role=role,
+        )
         return make_action(
             graph,
             round_name=round_name,
@@ -467,7 +600,12 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             rationale="Repair the method after feasibility critique.",
         )
     if role == "FeasibilityCritic":
-        eval_plan = first_active_node(graph, "EvalPlan", role="EvaluationDesigner")
+        eval_plan = first_available_node(
+            graph,
+            node_types=("EvalPlan", "Method", "Hypothesis"),
+            preferred_roles=("EvaluationDesigner", "FeasibilityCritic"),
+            exclude_role=role,
+        )
         return make_action(
             graph,
             round_name=round_name,
@@ -481,7 +619,12 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             rationale="Repair the evaluation plan after contradiction exposure.",
         )
     if role == "NoveltyExaminer":
-        novelty_claim = first_active_node(graph, "NoveltyClaim", role="ImpactReframer")
+        novelty_claim = first_available_node(
+            graph,
+            node_types=("NoveltyClaim", "Hypothesis", "Problem"),
+            preferred_roles=("ImpactReframer", "NoveltyExaminer"),
+            exclude_role=role,
+        )
         return make_action(
             graph,
             round_name=round_name,
@@ -495,8 +638,16 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             rationale="Refine the novelty claim after overlap analysis.",
         )
     if role == "EvaluationDesigner":
-        method = first_active_node(graph, "Method", role="MechanismProposer")
-        hypothesis = first_active_node(graph, "Hypothesis", role="ImpactReframer")
+        method = first_available_node(
+            graph,
+            node_types=("Method", "EvalPlan", "Hypothesis"),
+            preferred_roles=("MechanismProposer", "EvaluationDesigner"),
+        )
+        hypothesis = first_available_node(
+            graph,
+            node_types=("Hypothesis", "Problem", "NoveltyClaim"),
+            preferred_roles=("ImpactReframer", "MechanismProposer"),
+        )
         return make_action(
             graph,
             round_name=round_name,
@@ -779,15 +930,22 @@ def run_experiment(
     metadata: dict[str, object] | None = None,
     collaboration_backend: CollaborationBackend | None = None,
     progress_callback: Callable[[str], None] | None = None,
+    max_rounds: int = 3,
+    stop_when_mature: bool = True,
 ) -> IdeaGraph:
     graph = IdeaGraph(topic=topic, literature=literature, metadata=dict(metadata or {}))
+    graph.metadata["max_rounds_requested"] = max(1, int(max_rounds))
+    graph.metadata["stop_when_mature"] = bool(stop_when_mature)
     backend_name = collaboration_backend.name if collaboration_backend is not None else "deterministic"
     emit_progress(
         graph,
         progress_callback,
         stage="start",
-        message=f"Initialized idea graph for topic '{topic}' using backend '{backend_name}'.",
-        details={"backend": backend_name, "topic": topic},
+        message=(
+            f"Initialized idea graph for topic '{topic}' using backend '{backend_name}' "
+            f"with up to {max(1, int(max_rounds))} rounds."
+        ),
+        details={"backend": backend_name, "topic": topic, "max_rounds": max(1, int(max_rounds))},
     )
     if collaboration_backend is None:
         emit_progress(
@@ -833,13 +991,15 @@ def run_experiment(
         details={"active_nodes": len(graph.active_nodes()), "edges": len(graph.edges)},
     )
 
-    for round_name in ("Round1", "Round2", "Round3"):
+    for round_index in range(1, max(1, int(max_rounds)) + 1):
+        round_name = build_round_name(round_index)
+        phase = resolve_round_phase(round_name)
         emit_progress(
             graph,
             progress_callback,
             stage="round_start",
-            message=f"{round_name} started.",
-            details={"round": round_name},
+            message=f"{round_name} started with phase '{phase.title}'.",
+            details={"round": round_name, "phase": phase.key, "phase_title": phase.title},
         )
         for role in ROLE_NAMES:
             action_source = "deterministic"
@@ -914,6 +1074,7 @@ def run_experiment(
         graph.round_summaries.append((round_name, snapshot))
         if snapshot.is_mature and graph.matured_at_round is None:
             graph.matured_at_round = round_name
+            graph.metadata["maturity_stop_candidate"] = round_name
         emit_progress(
             graph,
             progress_callback,
@@ -931,8 +1092,23 @@ def run_experiment(
                 "is_mature": snapshot.is_mature,
             },
         )
+        if stop_when_mature and snapshot.is_mature:
+            graph.metadata["stopped_early"] = True
+            graph.metadata["stop_reason"] = f"mature_at_{round_name}"
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="maturity_stop",
+                message=f"{round_name} reached maturity, stopping early before additional rounds.",
+                details={"round": round_name},
+            )
+            break
 
     graph.final_subgraph = select_final_subgraph(graph)
+    graph.metadata["executed_round_count"] = len(graph.round_summaries)
+    if "stopped_early" not in graph.metadata:
+        graph.metadata["stopped_early"] = False
+        graph.metadata["stop_reason"] = "max_rounds_reached"
     emit_progress(
         graph,
         progress_callback,

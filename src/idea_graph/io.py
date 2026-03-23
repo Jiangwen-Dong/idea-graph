@@ -36,7 +36,11 @@ def build_run_summary(graph: IdeaGraph, instance_name: str, source_path: str) ->
         "edge_count": len(graph.edges),
         "branch_count": len(graph.branches),
         "action_count": len(graph.actions),
+        "executed_round_count": graph.metadata.get("executed_round_count", len(graph.round_summaries)),
+        "max_rounds_requested": graph.metadata.get("max_rounds_requested"),
         "matured_at_round": graph.matured_at_round,
+        "stopped_early": graph.metadata.get("stopped_early", False),
+        "stop_reason": graph.metadata.get("stop_reason", "unknown"),
         "rounds": [
             {
                 "round": round_name,

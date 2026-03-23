@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -10,8 +11,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from idea_graph.agent_backend import ActionDecision
-from idea_graph.engine import run_experiment
-from idea_graph.models import FinalProposal, IdeaGraph
+from idea_graph.engine import build_seed_graphs, choose_round_action, merge_seed_graphs, run_experiment
+from idea_graph.models import FinalProposal, IdeaGraph, MaturitySnapshot
 
 
 class InvalidActionBackend:
@@ -40,6 +41,15 @@ class InvalidActionBackend:
 
 
 class EngineTests(unittest.TestCase):
+    def _build_seed_graph(self) -> IdeaGraph:
+        graph = IdeaGraph(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+        )
+        build_seed_graphs(graph)
+        merge_seed_graphs(graph)
+        return graph
+
     def test_invalid_llm_actions_fall_back_without_crashing(self) -> None:
         messages: list[str] = []
         graph = run_experiment(
@@ -67,6 +77,72 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(any("Round1 started" in message for message in messages))
         self.assertTrue(any("Run complete" in message for message in messages))
         self.assertIn("progress_log", graph.metadata)
+
+    def test_run_experiment_respects_custom_max_rounds(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            max_rounds=5,
+            stop_when_mature=False,
+        )
+
+        self.assertEqual(len(graph.round_summaries), 5)
+        self.assertEqual(len(graph.actions), 25)
+        self.assertEqual(graph.metadata.get("executed_round_count"), 5)
+        self.assertEqual(graph.metadata.get("stop_reason"), "max_rounds_reached")
+
+    def test_run_experiment_stops_early_when_mature(self) -> None:
+        mature_snapshot = MaturitySnapshot(
+            support_coverage=0.8,
+            unresolved_contradiction_ratio=0.0,
+            utility=8.0,
+            utility_stable=True,
+            completeness=True,
+            is_mature=True,
+        )
+        immature_snapshot = MaturitySnapshot(
+            support_coverage=0.3,
+            unresolved_contradiction_ratio=1.0,
+            utility=4.0,
+            utility_stable=False,
+            completeness=False,
+            is_mature=False,
+        )
+
+        with patch("idea_graph.engine.maturity_snapshot", side_effect=[immature_snapshot, mature_snapshot]):
+            graph = run_experiment(
+                topic="graph-based scientific ideation",
+                literature=["paper a", "paper b", "paper c", "paper d"],
+                max_rounds=6,
+                stop_when_mature=True,
+            )
+
+        self.assertEqual(len(graph.round_summaries), 2)
+        self.assertEqual(graph.matured_at_round, "Round2")
+        self.assertTrue(graph.metadata.get("stopped_early"))
+        self.assertEqual(graph.metadata.get("stop_reason"), "mature_at_Round2")
+
+    def test_choose_round_action_handles_missing_impact_hypothesis_in_late_rounds(self) -> None:
+        graph = self._build_seed_graph()
+        for node in graph.active_nodes():
+            if node.role == "ImpactReframer" and node.type == "Hypothesis":
+                node.status = "archived-for-test"
+
+        action = choose_round_action(graph, "Round4", "FeasibilityCritic")
+
+        self.assertEqual(action.kind, "attach_evidence")
+        self.assertEqual(len(action.target_ids), 1)
+
+    def test_choose_round_action_handles_missing_impact_hypothesis_in_structure_phase(self) -> None:
+        graph = self._build_seed_graph()
+        for node in graph.active_nodes():
+            if node.role == "ImpactReframer" and node.type == "Hypothesis":
+                node.status = "archived-for-test"
+
+        action = choose_round_action(graph, "Round1", "ImpactReframer")
+
+        self.assertEqual(action.kind, "add_support_edge")
+        self.assertEqual(len(action.target_ids), 2)
 
 
 if __name__ == "__main__":

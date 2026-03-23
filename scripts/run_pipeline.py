@@ -87,6 +87,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Multi-agent backend to use for seed generation, collaboration actions, and final synthesis.",
     )
     parser.add_argument(
+        "--max-rounds",
+        type=int,
+        default=3,
+        help="Maximum number of collaboration rounds to execute.",
+    )
+    parser.add_argument(
+        "--disable-maturity-stop",
+        action="store_true",
+        help="Keep running until --max-rounds even if the maturity metric is reached earlier.",
+    )
+    parser.add_argument(
         "--llm-config",
         type=Path,
         help="Path to a JSON config file for the OpenAI-compatible backend.",
@@ -229,6 +240,8 @@ def main() -> None:
     collaboration_backend = build_collaboration_backend(args)
     experiment_metadata = dict(instance.metadata)
     experiment_metadata["agent_backend"] = args.agent_backend
+    experiment_metadata["max_rounds_requested"] = max(1, args.max_rounds)
+    experiment_metadata["stop_when_mature"] = not args.disable_maturity_stop
     if collaboration_backend is not None:
         experiment_metadata["openai_compatible"] = collaboration_backend.settings.sanitized_dict()
     instance = ExperimentInstance(
@@ -244,6 +257,8 @@ def main() -> None:
         metadata=experiment_metadata,
         collaboration_backend=collaboration_backend,
         progress_callback=print_progress,
+        max_rounds=max(1, args.max_rounds),
+        stop_when_mature=not args.disable_maturity_stop,
     )
     run_dir = write_run_artifacts(
         graph,
@@ -283,6 +298,9 @@ def main() -> None:
     print(f"Edges: {len(graph.edges)}")
     print(f"Branches: {len(graph.branches)}")
     print(f"Actions: {len(graph.actions)}")
+    print(f"Executed rounds: {graph.metadata.get('executed_round_count', len(graph.round_summaries))}")
+    print(f"Matured at: {graph.matured_at_round or 'not reached'}")
+    print(f"Stop reason: {graph.metadata.get('stop_reason', 'unknown')}")
     print()
 
     print("== Round Maturity ==")
