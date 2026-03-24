@@ -20,6 +20,7 @@ from idea_graph.benchmarks import (
     get_liveideabench_record,
     liveideabench_instance_from_record,
 )
+from idea_graph.evaluation import evaluate_graph
 from idea_graph.engine import run_experiment
 from idea_graph.io import load_instance, write_run_artifacts
 from idea_graph.instances import ExperimentInstance
@@ -320,6 +321,13 @@ def main() -> None:
     print(f"Motivation: {graph.final_proposal.motivation}")
     print(f"Proposed Method: {graph.final_proposal.method}")
     print(f"Experiment Plan: {graph.final_proposal.evaluation}")
+    print()
+
+    evaluation = evaluate_graph(graph)
+    print("== Idea Evaluation ==")
+    print(f"Overall: {evaluation.overall_score}/10")
+    for category, score in evaluation.category_scores.items():
+        print(f"{category}: {score}/10")
     print()
 
     backend_diagnostics = []

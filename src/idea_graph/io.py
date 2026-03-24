@@ -6,6 +6,7 @@ from datetime import datetime
 import re
 
 from .engine import graph_as_dict
+from .evaluation import evaluate_graph, format_evaluation_markdown
 from .instances import ExperimentInstance
 from .models import IdeaGraph
 
@@ -19,7 +20,15 @@ def load_instance(path: str | Path) -> ExperimentInstance:
     return ExperimentInstance.from_json_file(path)
 
 
-def build_run_summary(graph: IdeaGraph, instance_name: str, source_path: str) -> dict[str, object]:
+def build_run_summary(
+    graph: IdeaGraph,
+    instance_name: str,
+    source_path: str,
+    *,
+    evaluation_payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    if evaluation_payload is None:
+        evaluation_payload = evaluate_graph(graph).as_dict()
     final_proposal = {
         "title": graph.final_proposal.title if graph.final_proposal else "",
         "problem": graph.final_proposal.problem if graph.final_proposal else "",
@@ -58,6 +67,7 @@ def build_run_summary(graph: IdeaGraph, instance_name: str, source_path: str) ->
         ],
         "final_proposal": final_proposal,
         "literature_grounding": graph.metadata.get("literature_grounding", {}),
+        "idea_evaluation": evaluation_payload,
     }
 
 
@@ -72,10 +82,17 @@ def write_run_artifacts(
     run_dir = output_root / f"{timestamp}-{slugify(instance.name)}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    evaluation = evaluate_graph(graph)
     graph_payload = graph_as_dict(graph)
-    summary_payload = build_run_summary(graph, instance_name=instance.name, source_path=instance.source_path)
+    summary_payload = build_run_summary(
+        graph,
+        instance_name=instance.name,
+        source_path=instance.source_path,
+        evaluation_payload=evaluation.as_dict(),
+    )
     if instance.metadata:
         summary_payload["instance_metadata"] = instance.metadata
+    evaluation_payload = summary_payload.get("idea_evaluation", {})
 
     (run_dir / "graph.json").write_text(
         json.dumps(graph_payload, indent=2, ensure_ascii=False, default=str),
@@ -83,6 +100,10 @@ def write_run_artifacts(
     )
     (run_dir / "summary.json").write_text(
         json.dumps(summary_payload, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+    (run_dir / "evaluation.json").write_text(
+        json.dumps(evaluation_payload, indent=2, ensure_ascii=False, default=str),
         encoding="utf-8",
     )
 
@@ -107,5 +128,10 @@ def write_run_artifacts(
         final_proposal_lines.extend([f"## {heading}", value, ""])
 
     (run_dir / "final_proposal.md").write_text("\n".join(final_proposal_lines), encoding="utf-8")
+    if evaluation_payload:
+        (run_dir / "evaluation.md").write_text(
+            format_evaluation_markdown(evaluation),
+            encoding="utf-8",
+        )
 
     return run_dir

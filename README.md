@@ -36,6 +36,7 @@ The pipeline can now run in two modes:
 
 - `docs/implementation-plan.md`
 - `docs/benchmarks.md`
+- `docs/evaluation.md`
 - `configs/openai_compatible.example.json`
 - `pyproject.toml`
 - `data/sample_instance.json`
@@ -55,7 +56,13 @@ The default pipeline run will:
 - load `data/sample_instance.json`
 - execute the deterministic graph collaboration pipeline
 - print a short terminal summary
-- write `graph.json`, `summary.json`, and `final_proposal.md` into `outputs/<timestamp>-<instance>/`
+- write `graph.json`, `summary.json`, `final_proposal.md`, `evaluation.json`, and `evaluation.md` into `outputs/<timestamp>-<instance>/`
+
+Re-evaluate an existing run:
+
+```bash
+python scripts/evaluate_run.py --run-dir outputs/<timestamp>-<instance>
+```
 
 ## Package Structure
 
@@ -259,4 +266,4 @@ Notes:
 2. Add a retrieval stage so keyword-only benchmarks such as `liveideabench` get real literature context.
 3. Expand supported graph actions beyond the current safe subset.
 4. Implement the comparison baselines from the protocol.
-5. Add stronger evaluation logging and replay tooling for LLM traces.
+5. Add LLM-judge and human-eval hooks on top of the current deterministic rubric.

@@ -15,6 +15,7 @@ from .benchmarks import (
     load_liveideabench_records,
 )
 from .engine import graph_as_dict, run_experiment
+from .evaluation import evaluate_graph
 from .instances import ExperimentInstance
 from .settings import AgentRuntimeConfig, OpenAICompatibleSettings
 from .io import load_instance, write_run_artifacts
@@ -37,6 +38,7 @@ __all__ = [
     "ai_idea_bench_2025_instance_from_record",
     "download_ai_idea_bench_2025",
     "download_liveideabench",
+    "evaluate_graph",
     "extract_ai_idea_bench_2025_papers",
     "get_ai_idea_bench_2025_record",
     "get_liveideabench_record",
