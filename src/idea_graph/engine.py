@@ -14,6 +14,7 @@ from .collaboration_protocol import (
     build_round_name,
     resolve_round_phase,
 )
+from .literature_grounding import build_literature_grounding
 from .models import (
     Branch,
     Edge,
@@ -1165,15 +1166,154 @@ def select_final_subgraph(graph: IdeaGraph) -> dict[str, object]:
     }
 
 
+def _proposal_title(graph: IdeaGraph, selected: dict[str, str]) -> str:
+    topic = _clean_topic_text(graph.topic)
+    if topic:
+        return topic[0].upper() + topic[1:] if topic[0].islower() else topic
+    method = selected.get("Method", "").strip().rstrip(".")
+    if method:
+        return method.split(".")[0][:140]
+    return "Structured Research Idea"
+
+
+def _clean_topic_text(text: str) -> str:
+    cleaned = str(text).strip().rstrip(".")
+    prefix = "The topic of this paper is "
+    if cleaned.startswith(prefix):
+        cleaned = cleaned[len(prefix) :].strip()
+    return cleaned
+
+
+def _first_sentence(text: str) -> str:
+    cleaned = str(text).strip()
+    if not cleaned:
+        return ""
+    for delimiter in (". ", "?\n", "!\n", "?", "!"):
+        if delimiter in cleaned:
+            segment = cleaned.split(delimiter, 1)[0].strip()
+            if segment:
+                return segment + ("" if segment.endswith((".", "?", "!")) else ".")
+    return cleaned if cleaned.endswith((".", "?", "!")) else f"{cleaned}."
+
+
+def _clean_evaluation_text(text: str, *, topic_text: str, raw_topic: str) -> str:
+    cleaned = str(text).strip()
+    raw_topic_clean = str(raw_topic).strip().rstrip(".")
+    prefixes = [
+        f"Evaluate {raw_topic_clean} on ",
+        f"Evaluate {topic_text} on ",
+    ]
+    for prefix in prefixes:
+        if prefix and cleaned.startswith(prefix):
+            return "Evaluate the proposed approach on " + cleaned[len(prefix) :]
+    return cleaned
+
+
+def _strip_leading_repetition(prefix: str, text: str) -> str:
+    prefix_clean = str(prefix).strip().rstrip(".!?")
+    text_clean = str(text).strip()
+    if not prefix_clean or not text_clean:
+        return text_clean
+    if text_clean.casefold().startswith(prefix_clean.casefold()):
+        remainder = text_clean[len(prefix_clean) :].lstrip(" .!?")
+        return remainder if remainder else text_clean
+    return text_clean
+
+
+def _sentences_to_paragraph(parts: list[str]) -> str:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        text = str(part).strip()
+        if not text:
+            continue
+        if text[-1] not in ".!?":
+            text = f"{text}."
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(text)
+    return " ".join(normalized)
+
+
 def synthesize_proposal(graph: IdeaGraph, subgraph: dict[str, object]) -> FinalProposal:
     selected = {graph.nodes[node_id].type: graph.nodes[node_id].text for node_id in subgraph["node_ids"]}
+    topic_text = _clean_topic_text(graph.topic)
+    grounding = build_literature_grounding(literature=graph.literature, metadata=graph.metadata)
+    benchmark_motivation = str(graph.metadata.get("motivation", "")).strip()
+    unresolved_count = len(unresolved_contradiction_edges(graph))
+
+    problem = selected.get(
+        "Problem",
+        f"{topic_text or graph.topic} remains insufficiently specified for rigorous scientific evaluation.",
+    )
+    if "..." in problem and benchmark_motivation:
+        problem = _first_sentence(benchmark_motivation)
+    hypothesis = selected.get(
+        "Hypothesis",
+        "A structured collaboration process can produce a stronger research idea than early whole-idea voting.",
+    )
+    method = selected.get(
+        "Method",
+        "Compose a typed idea graph that preserves partial claims, disagreements, and supporting evidence during ideation.",
+    )
+    if method and normalize_text(hypothesis) == normalize_text(method):
+        hypothesis = (
+            f"A more structured method for {topic_text or graph.topic} should improve reliability, "
+            "robustness, or scientific usefulness over current baselines."
+        )
+
+    raw_evaluation = selected.get(
+        "EvalPlan",
+        "Evaluate the idea against strong baselines, representative benchmark tasks, and targeted ablations.",
+    )
+    evaluation = grounding.experiment_plan_summary or _clean_evaluation_text(
+        raw_evaluation,
+        topic_text=topic_text,
+        raw_topic=graph.topic,
+    )
+    if "..." in evaluation:
+        evaluation = _clean_evaluation_text(raw_evaluation, topic_text=topic_text, raw_topic=graph.topic)
+
+    existing_methods = grounding.existing_methods_summary
+
+    motivation = benchmark_motivation or _sentences_to_paragraph(
+        [
+            "Current approaches leave a gap between promising partial ideas and fully testable research proposals",
+            hypothesis,
+        ]
+    )
+    motivation = _strip_leading_repetition(problem, motivation)
+    if not motivation:
+        motivation = (
+            f"This motivates a more explicit and testable research strategy for {topic_text or graph.topic}."
+        )
+    significance = _sentences_to_paragraph(
+        [
+            f"If successful, this idea would produce a more testable and clearly motivated research direction for {topic_text or graph.topic}.",
+            "It would also make the proposal easier to compare against strong baselines and ablations.",
+        ]
+    )
+    caveats_parts = [
+        "The current scaffold still relies on heuristic graph updates and lightweight literature grounding."
+    ]
+    if unresolved_count:
+        caveats_parts.append(
+            f"The graph still contains {unresolved_count} unresolved contradiction(s), so the proposal should be stress-tested further."
+        )
+    caveats = " ".join(caveats_parts)
     return FinalProposal(
-        problem=selected.get("Problem", ""),
-        hypothesis=selected.get("Hypothesis", ""),
-        method=selected.get("Method", ""),
-        evaluation=selected.get("EvalPlan", ""),
-        significance="A typed graph may preserve disagreement long enough to improve proposal selection.",
-        caveats="The current scaffold uses deterministic placeholder actions and heuristic deduplication.",
+        title=_proposal_title(graph, selected),
+        abstract="",
+        problem=problem,
+        existing_methods=existing_methods,
+        motivation=motivation,
+        hypothesis=hypothesis,
+        method=method,
+        evaluation=evaluation,
+        significance=significance,
+        caveats=caveats,
     )
 
 
@@ -1187,6 +1327,10 @@ def run_experiment(
     stop_when_mature: bool = True,
 ) -> IdeaGraph:
     graph = IdeaGraph(topic=topic, literature=literature, metadata=dict(metadata or {}))
+    graph.metadata.setdefault(
+        "literature_grounding",
+        build_literature_grounding(literature=graph.literature, metadata=graph.metadata).as_dict(),
+    )
     graph.metadata["max_rounds_requested"] = max(1, int(max_rounds))
     graph.metadata["stop_when_mature"] = bool(stop_when_mature)
     backend_name = collaboration_backend.name if collaboration_backend is not None else "deterministic"

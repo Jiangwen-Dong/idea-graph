@@ -19,7 +19,8 @@ Conversion strategy:
 
 - topic comes from the benchmark topic or revised topic
 - literature comes from benchmark reference titles and paper paths
-- motivation, method summary, datasets, metrics, and target paper are preserved in metadata
+- target-paper-side metadata is preserved in artifacts for inspection and evaluation
+- generation prompts now use a prompt-safe benchmark view that keeps reference papers but hides oracle fields such as the target paper title, gold motivation, and gold method summary
 
 ## liveideabench
 

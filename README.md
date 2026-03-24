@@ -111,6 +111,10 @@ Notes:
 
 - The default benchmark integration uses the official `target_paper_data.json`
   metadata file.
+- Oracle-style fields from the benchmark such as the target paper title,
+  gold motivation, and gold method summary are retained in artifacts for
+  inspection, but the LLM prompt context now hides them to avoid directly
+  leaking the ground-truth paper into generation.
 - `--benchmark-index` accepts either the official benchmark `index` value or a
   zero-based row position in the downloaded metadata file.
 - The optional `--include-paper-assets` flag downloads the official

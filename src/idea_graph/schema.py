@@ -77,6 +77,19 @@ def _coalesce(*values: str) -> str:
 
 
 def _reference_titles(literature: list[str], metadata: dict[str, Any]) -> list[str]:
+    paper_grounding = metadata.get("paper_grounding", {})
+    if isinstance(paper_grounding, dict):
+        reference_snippets = paper_grounding.get("reference_paper_snippets", [])
+        if isinstance(reference_snippets, list):
+            snippet_titles = []
+            for item in reference_snippets:
+                if not isinstance(item, dict):
+                    continue
+                title = _clean_text(item.get("resolved_title", ""))
+                if title:
+                    snippet_titles.append(title)
+            if snippet_titles:
+                return snippet_titles
     titles = metadata.get("reference_titles", [])
     if isinstance(titles, list):
         normalized = [_clean_text(item) for item in titles if _clean_text(item)]
@@ -86,6 +99,14 @@ def _reference_titles(literature: list[str], metadata: dict[str, Any]) -> list[s
 
 
 def _method_summary(metadata: dict[str, Any]) -> str:
+    paper_grounding = metadata.get("paper_grounding", {})
+    if isinstance(paper_grounding, dict):
+        target_snippet = paper_grounding.get("target_paper_snippet", {})
+        if isinstance(target_snippet, dict):
+            for key in ("method", "abstract", "introduction", "text_excerpt"):
+                value = _clean_text(target_snippet.get(key, ""))
+                if value:
+                    return value
     raw_record = metadata.get("raw_record", {})
     method_summary = _clean_text(metadata.get("method_summary", ""))
     if method_summary:

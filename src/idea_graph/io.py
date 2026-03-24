@@ -21,7 +21,10 @@ def load_instance(path: str | Path) -> ExperimentInstance:
 
 def build_run_summary(graph: IdeaGraph, instance_name: str, source_path: str) -> dict[str, object]:
     final_proposal = {
+        "title": graph.final_proposal.title if graph.final_proposal else "",
         "problem": graph.final_proposal.problem if graph.final_proposal else "",
+        "existing_methods": graph.final_proposal.existing_methods if graph.final_proposal else "",
+        "motivation": graph.final_proposal.motivation if graph.final_proposal else "",
         "hypothesis": graph.final_proposal.hypothesis if graph.final_proposal else "",
         "method": graph.final_proposal.method if graph.final_proposal else "",
         "evaluation": graph.final_proposal.evaluation if graph.final_proposal else "",
@@ -54,6 +57,7 @@ def build_run_summary(graph: IdeaGraph, instance_name: str, source_path: str) ->
             for round_name, snapshot in graph.round_summaries
         ],
         "final_proposal": final_proposal,
+        "literature_grounding": graph.metadata.get("literature_grounding", {}),
     }
 
 
@@ -82,28 +86,26 @@ def write_run_artifacts(
         encoding="utf-8",
     )
 
-    final_proposal_lines = [
-        f"# {instance.name}",
-        "",
-        "## Problem",
-        summary_payload["final_proposal"]["problem"],
-        "",
-        "## Hypothesis",
-        summary_payload["final_proposal"]["hypothesis"],
-        "",
-        "## Method",
-        summary_payload["final_proposal"]["method"],
-        "",
-        "## Evaluation",
-        summary_payload["final_proposal"]["evaluation"],
-        "",
-        "## Significance",
-        summary_payload["final_proposal"]["significance"],
-        "",
-        "## Caveats",
-        summary_payload["final_proposal"]["caveats"],
-        "",
+    proposal = summary_payload["final_proposal"]
+    title = str(proposal.get("title") or instance.name).strip() or instance.name
+    final_proposal_lines = [f"# {title}", ""]
+
+    section_map = [
+        ("Problem", "problem"),
+        ("Existing Methods", "existing_methods"),
+        ("Motivation", "motivation"),
+        ("Core Hypothesis", "hypothesis"),
+        ("Proposed Method", "method"),
+        ("Experiment Plan", "evaluation"),
+        ("Expected Contribution", "significance"),
+        ("Risks And Limitations", "caveats"),
     ]
+    for heading, key in section_map:
+        value = str(proposal.get(key, "")).strip()
+        if not value:
+            continue
+        final_proposal_lines.extend([f"## {heading}", value, ""])
+
     (run_dir / "final_proposal.md").write_text("\n".join(final_proposal_lines), encoding="utf-8")
 
     return run_dir

@@ -16,6 +16,7 @@ from idea_graph.engine import (
     choose_round_action,
     merge_seed_graphs,
     run_experiment,
+    synthesize_proposal,
     unresolved_contradiction_edges,
 )
 from idea_graph.models import FinalProposal, IdeaGraph, MaturitySnapshot
@@ -120,6 +121,75 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(any("Round1 started" in message for message in messages))
         self.assertTrue(any("Run complete" in message for message in messages))
         self.assertIn("progress_log", graph.metadata)
+
+    def test_deterministic_synthesis_produces_richer_structured_fields(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            max_rounds=3,
+            stop_when_mature=False,
+        )
+
+        self.assertIsNotNone(graph.final_proposal)
+        assert graph.final_proposal is not None
+        self.assertTrue(graph.final_proposal.title)
+        self.assertEqual(graph.final_proposal.abstract, "")
+        self.assertTrue(graph.final_proposal.problem)
+        self.assertTrue(graph.final_proposal.existing_methods)
+        self.assertTrue(graph.final_proposal.motivation)
+        self.assertTrue(graph.final_proposal.method)
+        self.assertTrue(graph.final_proposal.evaluation)
+
+    def test_deterministic_synthesis_uses_grounded_datasets_and_metrics_when_available(self) -> None:
+        metadata = {
+            "target_paper": "PanoPose",
+            "method_summary": (
+                "PanoPose comprises a depth-net and a pose-net, utilizing self-supervision through "
+                "image reconstruction based on estimated depth and relative pose."
+            ),
+            "raw_record": {
+                "summary": {
+                    "method": {
+                        "datasets": (
+                            "Experiments were conducted on several datasets, including "
+                            "PanoSUNCG (synthetic indoor), Mapillary Metropolis (real-world panoramic images), "
+                            "360VO Dataset (synthetic urban scenes), and custom datasets Building and Campus "
+                            "(collected with an Insta 360 ONE X2 camera)."
+                        ),
+                        "metrics": (
+                            "Evaluation metrics include Relative Rotation Error (RRE), Relative Translation "
+                            "Angle Error (RTAE), and Relative Scale Error (RSE). For global pose estimation, "
+                            "Absolute Rotation Error (ARE) and Absolute Translation Error (ATE) are used."
+                        ),
+                    }
+                }
+            },
+        }
+        graph = IdeaGraph(
+            topic="The topic of this paper is estimating scaled relative poses in panoramic images.",
+            literature=[
+                "Unsupervised learning of depth and ego-motion from video",
+                "An efficient solution to the five-point relative pose problem",
+            ],
+            metadata=metadata,
+        )
+        build_seed_graphs(graph)
+        merge_seed_graphs(graph)
+        subgraph = {
+            "node_ids": [
+                node.id
+                for node in graph.active_nodes()
+                if node.type in {"Problem", "Hypothesis", "Method", "EvalPlan"}
+            ][:4],
+            "edge_ids": [],
+        }
+
+        proposal = synthesize_proposal(graph, subgraph)
+
+        self.assertEqual(proposal.abstract, "")
+        self.assertIn("PanoSUNCG (synthetic indoor)", proposal.evaluation)
+        self.assertIn("Relative Rotation Error (RRE)", proposal.evaluation)
+        self.assertNotIn("...", proposal.evaluation)
 
     def test_run_experiment_respects_custom_max_rounds(self) -> None:
         graph = run_experiment(

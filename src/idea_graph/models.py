@@ -78,12 +78,16 @@ class MaturitySnapshot:
 
 @dataclass
 class FinalProposal:
-    problem: str
-    hypothesis: str
-    method: str
-    evaluation: str
-    significance: str
-    caveats: str
+    title: str = ""
+    abstract: str = ""
+    problem: str = ""
+    existing_methods: str = ""
+    motivation: str = ""
+    hypothesis: str = ""
+    method: str = ""
+    evaluation: str = ""
+    significance: str = ""
+    caveats: str = ""
 
 
 @dataclass

@@ -315,10 +315,11 @@ def main() -> None:
 
     print("== Final Proposal ==")
     assert graph.final_proposal is not None
+    print(f"Title: {graph.final_proposal.title or instance.name}")
     print(f"Problem: {graph.final_proposal.problem}")
-    print(f"Hypothesis: {graph.final_proposal.hypothesis}")
-    print(f"Method: {graph.final_proposal.method}")
-    print(f"Evaluation: {graph.final_proposal.evaluation}")
+    print(f"Motivation: {graph.final_proposal.motivation}")
+    print(f"Proposed Method: {graph.final_proposal.method}")
+    print(f"Experiment Plan: {graph.final_proposal.evaluation}")
     print()
 
     backend_diagnostics = []
