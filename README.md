@@ -39,6 +39,7 @@ The pipeline can now run in two modes:
 - `docs/evaluation.md`
 - `docs/paper_protocol.md`
 - `configs/openai_compatible.example.json`
+- `configs/external_baselines.example.json`
 - `pyproject.toml`
 - `data/sample_instance.json`
 - `src/idea_graph/`
@@ -80,6 +81,19 @@ python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-delayed-consensus
 ```
+
+Run an exact external baseline through its upstream repository adapter:
+
+```bash
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher --external-baseline-config configs/external_baselines.example.json
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline scipip --external-baseline-config configs/external_baselines.example.json
+```
+
+Notes:
+
+- `ai-researcher`, `scipip`, and `virsci` are exact external wrappers and need `--external-baseline-config`.
+- `ai-researcher-proxy`, `scipip-proxy`, and `virsci-proxy` remain local approximations implemented entirely inside this repo.
+- `virsci` currently raises a clear error in benchmark mode because the upstream repository does not expose a fixed-topic benchmark entrypoint yet.
 
 ## Package Structure
 
@@ -285,8 +299,8 @@ Notes:
 
 ## Next steps
 
-1. Replace more proxy baseline wrappers with exact external integrations where possible.
-2. Extend AI Idea Bench native scoring to the metrics that need auxiliary assets or batch-level cross-system pools.
-3. Add a retrieval stage so keyword-only benchmarks such as `liveideabench` get real literature context.
-4. Expand supported graph actions beyond the current safe subset.
+1. Harden and validate the exact `AI-Researcher` integration on full benchmark runs.
+2. Replace the guarded `SciPIP` and `VirSci` wrappers with better benchmark-native upstream integrations where feasible.
+3. Extend AI Idea Bench native scoring to the metrics that need auxiliary assets or batch-level cross-system pools.
+4. Add a retrieval stage so keyword-only benchmarks such as `liveideabench` get real literature context.
 5. Add human-eval hooks on top of the current local rubric.

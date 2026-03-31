@@ -122,13 +122,37 @@ benchmark-mode input and output schema.
 - Single-agent draft, critique, and revision
 - Control baseline for iterative improvement without multi-agent structure
 
+### Exact External Baseline Wrappers
+
+These wrappers call the official upstream repositories and require an external
+configuration file.
+
+4. `ai-researcher`
+
+- Exact external wrapper for the ICLR `AI-Researcher` baseline
+- This is the preferred literature baseline when reporting faithful external
+  comparisons
+
+5. `scipip`
+
+- Guarded external wrapper for `SciPIP`
+- Use only when its external environment and data dependencies are configured
+  correctly
+
+6. `virsci`
+
+- Guarded external wrapper for `Virtual-Scientists`
+- Not currently benchmark-faithful for fixed-topic public benchmarks, so it
+  should not be used in the main benchmark table until upstream control is
+  improved
+
 ### Proxy Wrappers For Prior Literature
 
 The repository also exposes prompt-style proxy wrappers for prior systems. These
 are not exact reproductions of the original codebases and should be labeled as
 local approximations unless replaced by direct external integrations.
 
-4. `ai-researcher-proxy`
+7. `ai-researcher-proxy`
 
 - Literature-grounded candidate-generation and ranking wrapper
 - Intended to approximate the style of the ICLR `AI-Researcher` ideation
@@ -141,13 +165,13 @@ local approximations unless replaced by direct external integrations.
   - it is a different system than `AI-Researcher`
   - it is temporarily banned from the current paper protocol
 
-5. `scipip-proxy`
+8. `scipip-proxy`
 
 - Structured single-agent wrapper that emphasizes motivation and experiment-plan
   decomposition
 - Intended to approximate the style of `SciPIP`
 
-6. `virsci-proxy`
+9. `virsci-proxy`
 
 - Multi-agent wrapper using the delayed-consensus engine with a more discussion-
   oriented collaboration style
@@ -245,6 +269,8 @@ Move graph-process diagnostics to ablations or supplementary analysis.
 The current repository implementation now supports:
 
 - `AI-Researcher` as the named proxy baseline instead of `ResearchAgent`
+- exact external baseline entrypoints for `ai-researcher`, `scipip`, and
+  `virsci`
 - benchmark-native scoring artifacts via `benchmark_native_evaluation.json`
   and `benchmark_native_evaluation.md`
 

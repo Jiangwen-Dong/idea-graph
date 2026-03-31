@@ -22,6 +22,7 @@ from .benchmarks import (
     load_liveideabench_records,
 )
 from .engine import graph_as_dict, run_experiment
+from .external_baselines import load_external_baseline_config, run_external_baseline
 from .benchmark_scoring import (
     BenchmarkNativeEvaluation,
     BenchmarkNativeMetric,
@@ -70,9 +71,11 @@ __all__ = [
     "load_instance",
     "load_ai_idea_bench_2025_records",
     "load_liveideabench_records",
+    "load_external_baseline_config",
     "liveideabench_instance_from_record",
     "resolve_io_mode",
     "run_experiment",
     "run_baseline_experiment",
+    "run_external_baseline",
     "write_run_artifacts",
 ]

@@ -1,0 +1,63 @@
+{
+  "ai-researcher": {
+    "enabled": true,
+    "repo_path": "C:/path/to/AI-Researcher",
+    "python_executable": "python",
+    "workspace_root": ".tmp-external-baseline-runs",
+    "engine": "gpt-4o",
+    "method": "prompting",
+    "ideas_n": 4,
+    "grounding_k": 4,
+    "ranking_rounds": 3,
+    "seed": 2024,
+    "timeout_seconds": 3600,
+    "keys": {
+      "api_key": {
+        "env": "OPENAI_API_KEY"
+      },
+      "organization_id": {
+        "env": "OPENAI_ORG_ID"
+      },
+      "s2_key": {
+        "env": "S2_API_KEY"
+      },
+      "anthropic_key": {
+        "env": "ANTHROPIC_API_KEY"
+      }
+    },
+    "env": {}
+  },
+  "scipip": {
+    "enabled": false,
+    "repo_path": "C:/path/to/SciPIP",
+    "python_executable": "python",
+    "config_path": "C:/path/to/SciPIP/configs/datasets.yaml",
+    "workspace_root": ".tmp-external-baseline-runs",
+    "retriever_name": "SNKG",
+    "brainstorm_mode": "mode_c",
+    "use_inspiration": true,
+    "timeout_seconds": 3600,
+    "env": {
+      "OPENAI_API_KEY": {
+        "env": "OPENAI_API_KEY"
+      }
+    }
+  },
+  "virsci": {
+    "enabled": false,
+    "repo_path": "C:/path/to/Virtual-Scientists",
+    "python_executable": "python",
+    "workspace_root": ".tmp-external-baseline-runs",
+    "runs": 1,
+    "team_limit": 1,
+    "max_discuss_iteration": 2,
+    "max_team_member": 2,
+    "epochs": 6,
+    "timeout_seconds": 7200,
+    "env": {
+      "OPENAI_API_KEY": {
+        "env": "OPENAI_API_KEY"
+      }
+    }
+  }
+}

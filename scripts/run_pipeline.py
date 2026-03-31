@@ -29,6 +29,7 @@ from idea_graph.benchmark_scoring import evaluate_benchmark_native
 from idea_graph.evaluation import evaluate_graph
 from idea_graph.io import load_instance, write_run_artifacts
 from idea_graph.instances import ExperimentInstance
+from idea_graph.external_baselines import load_external_baseline_config
 from idea_graph.settings import OpenAICompatibleSettings
 
 
@@ -171,6 +172,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run benchmark-native scoring after generation. This may require extra LLM judge calls.",
     )
+    parser.add_argument(
+        "--external-baseline-config",
+        type=Path,
+        help="Path to a JSON config file for exact external baseline integrations such as AI-Researcher, SciPIP, or VirSci.",
+    )
     return parser
 
 
@@ -273,6 +279,7 @@ def main() -> None:
     )
     llm_settings = build_openai_compatible_settings(args)
     collaboration_backend = build_collaboration_backend(args, llm_settings)
+    external_baseline_config = load_external_baseline_config(args.external_baseline_config)
     if args.native_eval and llm_settings is None:
         raise SystemExit(
             "--native-eval requires OpenAI-compatible judge settings. Provide --llm-config or the equivalent LLM flags."
@@ -286,6 +293,9 @@ def main() -> None:
     if args.native_eval and llm_settings is not None:
         experiment_metadata["benchmark_native_eval_enabled"] = True
         experiment_metadata["benchmark_native_eval_backend"] = llm_settings.sanitized_dict()
+    if args.external_baseline_config:
+        experiment_metadata["external_baseline_config_path"] = str(args.external_baseline_config)
+        experiment_metadata["external_baseline_available"] = sorted(external_baseline_config)
     instance = ExperimentInstance(
         name=instance.name,
         topic=instance.topic,
@@ -300,6 +310,7 @@ def main() -> None:
         progress_callback=print_progress,
         max_rounds=max(1, args.max_rounds),
         stop_when_mature=not args.disable_maturity_stop,
+        external_baseline_config=external_baseline_config,
     )
     native_evaluation = evaluate_benchmark_native(graph, settings=llm_settings) if args.native_eval else None
     run_dir = write_run_artifacts(
@@ -339,6 +350,8 @@ def main() -> None:
     print("== Baseline ==")
     print(args.baseline)
     print(f"I/O mode: {instance.metadata.get('io_mode', args.io_mode)}")
+    if args.external_baseline_config:
+        print(f"External config: {args.external_baseline_config}")
     print()
 
     print("== Graph Summary ==")

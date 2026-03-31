@@ -7,6 +7,7 @@ from typing import Any, Callable
 from .agent_backend import OpenAICompatibleCollaborationBackend
 from .benchmark_mode import apply_io_mode
 from .engine import emit_progress, run_experiment
+from .external_baselines import run_external_baseline
 from .literature_grounding import build_literature_grounding
 from .models import FinalProposal, IdeaGraph
 
@@ -44,6 +45,24 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         strategy="self_refine",
         description="Single-agent draft, critique, and revision baseline.",
         prompt_style="self_refine",
+    ),
+    "ai-researcher": BaselineSpec(
+        name="ai-researcher",
+        display_name="AI-Researcher",
+        strategy="external",
+        description="External wrapper that runs the official AI-Researcher ideation pipeline from its upstream repository.",
+    ),
+    "scipip": BaselineSpec(
+        name="scipip",
+        display_name="SciPIP",
+        strategy="external",
+        description="External wrapper that runs the official SciPIP pipeline from its upstream repository.",
+    ),
+    "virsci": BaselineSpec(
+        name="virsci",
+        display_name="VirSci",
+        strategy="external",
+        description="External wrapper that runs the official Virtual-Scientists pipeline from its upstream repository when the task setting is supported.",
     ),
     "ai-researcher-proxy": BaselineSpec(
         name="ai-researcher-proxy",
@@ -570,6 +589,8 @@ def _build_baseline_graph(
     graph.metadata["baseline_prompt_style"] = baseline.prompt_style
     graph.metadata["baseline_proxy"] = baseline.is_proxy
     graph.metadata["baseline_proxy_target"] = baseline.proxy_target
+    graph.metadata["baseline_description"] = baseline.description
+    graph.metadata.setdefault("instance_name", instance.name)
     return graph
 
 
@@ -581,6 +602,7 @@ def run_baseline_experiment(
     progress_callback: Callable[[str], None] | None = None,
     max_rounds: int = 3,
     stop_when_mature: bool = True,
+    external_baseline_config: dict[str, dict[str, Any]] | None = None,
 ):
     baseline = get_baseline_spec(baseline_name)
     if (
@@ -611,7 +633,20 @@ def run_baseline_experiment(
         details={"baseline": baseline.name, "strategy": baseline.strategy},
     )
 
-    if baseline.strategy == "direct":
+    if baseline.strategy == "external":
+        emit_progress(
+            graph,
+            progress_callback,
+            stage="baseline_generation",
+            message=f"Running external baseline '{baseline.name}' through its upstream repository adapter.",
+        )
+        proposal = run_external_baseline(
+            graph,
+            baseline_name=baseline.name,
+            external_config=external_baseline_config,
+            progress_callback=progress_callback,
+        )
+    elif baseline.strategy == "direct":
         emit_progress(
             graph,
             progress_callback,
@@ -657,7 +692,10 @@ def run_baseline_experiment(
     graph.metadata["stop_when_mature"] = False
     graph.metadata["executed_round_count"] = 0
     graph.metadata["stopped_early"] = False
-    graph.metadata["stop_reason"] = f"baseline_{baseline.strategy}_complete"
+    if baseline.strategy == "external":
+        graph.metadata["stop_reason"] = f"baseline_{baseline.name}_complete"
+    else:
+        graph.metadata["stop_reason"] = f"baseline_{baseline.strategy}_complete"
 
     emit_progress(
         graph,
