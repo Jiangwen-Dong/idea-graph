@@ -37,6 +37,7 @@ The pipeline can now run in two modes:
 - `docs/implementation-plan.md`
 - `docs/benchmarks.md`
 - `docs/evaluation.md`
+- `docs/paper_protocol.md`
 - `configs/openai_compatible.example.json`
 - `pyproject.toml`
 - `data/sample_instance.json`
@@ -57,11 +58,27 @@ The default pipeline run will:
 - execute the deterministic graph collaboration pipeline
 - print a short terminal summary
 - write `graph.json`, `summary.json`, `final_proposal.md`, `evaluation.json`, and `evaluation.md` into `outputs/<timestamp>-<instance>/`
+- optionally write `benchmark_native_evaluation.json` and `benchmark_native_evaluation.md` when `--native-eval` is enabled
 
 Re-evaluate an existing run:
 
 ```bash
 python scripts/evaluate_run.py --run-dir outputs/<timestamp>-<instance>
+```
+
+Re-evaluate an existing run with benchmark-native scoring:
+
+```bash
+python scripts/evaluate_run.py --run-dir outputs/<timestamp>-<instance> --native-eval --llm-config configs/openai_compatible.example.json
+```
+
+Run a local baseline wrapper under the same benchmark-facing I/O contract:
+
+```bash
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline direct
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline self-refine
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher-proxy
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-delayed-consensus
 ```
 
 ## Package Structure
@@ -168,6 +185,12 @@ Use a benchmark row:
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json
 ```
 
+Add benchmark-native scoring with the same judge configuration:
+
+```bash
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json --native-eval
+```
+
 You can also override config values directly:
 
 ```bash
@@ -262,8 +285,8 @@ Notes:
 
 ## Next steps
 
-1. Improve prompt quality and validation for benchmark-specific action selection.
-2. Add a retrieval stage so keyword-only benchmarks such as `liveideabench` get real literature context.
-3. Expand supported graph actions beyond the current safe subset.
-4. Implement the comparison baselines from the protocol.
-5. Add LLM-judge and human-eval hooks on top of the current deterministic rubric.
+1. Replace more proxy baseline wrappers with exact external integrations where possible.
+2. Extend AI Idea Bench native scoring to the metrics that need auxiliary assets or batch-level cross-system pools.
+3. Add a retrieval stage so keyword-only benchmarks such as `liveideabench` get real literature context.
+4. Expand supported graph actions beyond the current safe subset.
+5. Add human-eval hooks on top of the current local rubric.

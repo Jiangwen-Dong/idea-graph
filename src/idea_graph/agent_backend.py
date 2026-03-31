@@ -639,6 +639,22 @@ def _literature_display_items(graph: IdeaGraph, *, limit: int = 8) -> list[str]:
     return _unique_strings(entries)[:limit]
 
 
+def _baseline_prompt_instruction(metadata: dict[str, Any]) -> str:
+    baseline_name = _coerce_string(metadata.get("baseline_display_name") or metadata.get("baseline_name"))
+    proxy_target = _coerce_string(metadata.get("baseline_proxy_target"))
+    strategy = _coerce_string(metadata.get("baseline_strategy"))
+    if not baseline_name:
+        return ""
+    parts = [f"Current baseline wrapper: {baseline_name}."]
+    if strategy:
+        parts.append(f"Execution strategy: {strategy}.")
+    if proxy_target:
+        parts.append(
+            f"This is a local proxy wrapper intended to approximate {proxy_target}; do not assume it is an exact reproduction."
+        )
+    return " ".join(parts)
+
+
 def _seed_system_prompt(role: str) -> str:
     preferred_anchor_types = ROLE_PREFERRED_ANCHOR_TYPES.get(role, tuple(NODE_TYPES))
     return (
@@ -662,6 +678,8 @@ def _seed_user_prompt(graph: IdeaGraph, role: str) -> str:
         "role": role,
         "topic": graph.topic,
         "literature": graph.literature[:8],
+        "benchmark_input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "baseline_context": _baseline_prompt_instruction(graph.metadata),
         "metadata": _prompt_safe_metadata(graph.metadata),
         "constraints": {
             "exactly_one_anchor": True,
@@ -732,6 +750,8 @@ def _action_user_prompt(graph: IdeaGraph, round_name: str, role: str) -> str:
         "phase": phase.key,
         "phase_title": phase.title,
         "allowed_actions": list(phase.allowed_actions),
+        "benchmark_input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "baseline_context": _baseline_prompt_instruction(graph.metadata),
         "action_requirements": action_requirements,
         "focused_view": focused_view_for_prompt(graph, role),
         "repair_priority_targets": _repair_priority_targets(graph),
@@ -791,6 +811,8 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
     }
     payload = {
         "topic": graph.topic,
+        "benchmark_input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "baseline_context": _baseline_prompt_instruction(graph.metadata),
         "literature_titles": _literature_display_items(graph, limit=8),
         "literature_grounding": grounding.as_dict(),
         "benchmark_context": benchmark_context,

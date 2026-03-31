@@ -163,6 +163,9 @@ def build_seed_template(
 ) -> SeedTemplate:
     literature = literature or []
     metadata = metadata or {}
+    safe_metadata = metadata.get("generation_safe_metadata", metadata)
+    if isinstance(safe_metadata, dict):
+        metadata = safe_metadata
     topic_fragment = _topic_fragment(topic)
     references = _reference_titles(literature, metadata)
     reference_hint = _coalesce(references[0] if references else "", "the provided benchmark context")

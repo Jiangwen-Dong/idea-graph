@@ -505,6 +505,7 @@ def ai_idea_bench_2025_instance_from_record(
         source_path=str(default_paths(root).metadata_path),
         metadata={
             "benchmark": BENCHMARK_NAME,
+            "benchmark_root": str(root),
             "benchmark_index": record.benchmark_index,
             "target_paper": record.target_paper,
             "target_paper_path": target_paper_path,

@@ -5,6 +5,11 @@ from pathlib import Path
 from datetime import datetime
 import re
 
+from .benchmark_scoring import (
+    BenchmarkNativeEvaluation,
+    BenchmarkNativeMetric,
+    format_benchmark_native_markdown,
+)
 from .engine import graph_as_dict
 from .evaluation import evaluate_graph, format_evaluation_markdown
 from .instances import ExperimentInstance
@@ -26,6 +31,7 @@ def build_run_summary(
     source_path: str,
     *,
     evaluation_payload: dict[str, object] | None = None,
+    native_evaluation_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if evaluation_payload is None:
         evaluation_payload = evaluate_graph(graph).as_dict()
@@ -40,7 +46,7 @@ def build_run_summary(
         "significance": graph.final_proposal.significance if graph.final_proposal else "",
         "caveats": graph.final_proposal.caveats if graph.final_proposal else "",
     }
-    return {
+    summary = {
         "instance_name": instance_name,
         "source_path": source_path,
         "topic": graph.topic,
@@ -69,6 +75,9 @@ def build_run_summary(
         "literature_grounding": graph.metadata.get("literature_grounding", {}),
         "idea_evaluation": evaluation_payload,
     }
+    if native_evaluation_payload is not None:
+        summary["benchmark_native_evaluation"] = native_evaluation_payload
+    return summary
 
 
 def write_run_artifacts(
@@ -76,6 +85,7 @@ def write_run_artifacts(
     *,
     output_root: str | Path,
     instance: ExperimentInstance,
+    native_evaluation_payload: dict[str, object] | None = None,
 ) -> Path:
     output_root = Path(output_root)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -89,6 +99,7 @@ def write_run_artifacts(
         instance_name=instance.name,
         source_path=instance.source_path,
         evaluation_payload=evaluation.as_dict(),
+        native_evaluation_payload=native_evaluation_payload,
     )
     if instance.metadata:
         summary_payload["instance_metadata"] = instance.metadata
@@ -133,5 +144,50 @@ def write_run_artifacts(
             format_evaluation_markdown(evaluation),
             encoding="utf-8",
         )
+    if native_evaluation_payload:
+        (run_dir / "benchmark_native_evaluation.json").write_text(
+            json.dumps(native_evaluation_payload, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        if isinstance(native_evaluation_payload, dict):
+            native_evaluation = BenchmarkNativeEvaluation(
+                protocol_name=str(native_evaluation_payload.get("protocol_name", "")).strip(),
+                benchmark=str(native_evaluation_payload.get("benchmark", "")).strip(),
+                metrics=[],
+                summary={},
+                notes=[],
+            )
+            metrics_payload = native_evaluation_payload.get("metrics", [])
+            if isinstance(metrics_payload, list):
+                native_evaluation = BenchmarkNativeEvaluation(
+                    protocol_name=str(native_evaluation_payload.get("protocol_name", "")).strip(),
+                    benchmark=str(native_evaluation_payload.get("benchmark", "")).strip(),
+                    metrics=[
+                        BenchmarkNativeMetric(
+                            key=str(item.get("key", "")).strip(),
+                            display_name=str(item.get("display_name", "")).strip(),
+                            score=float(item.get("score", 0.0) or 0.0),
+                            max_score=float(item.get("max_score", 0.0) or 0.0),
+                            rationale=str(item.get("rationale", "")).strip(),
+                            available=bool(item.get("available", False)),
+                            details=dict(item.get("details", {}) or {}),
+                        )
+                        for item in metrics_payload
+                        if isinstance(item, dict)
+                    ],
+                    summary={
+                        str(key): float(value)
+                        for key, value in dict(native_evaluation_payload.get("summary", {}) or {}).items()
+                    },
+                    notes=[
+                        str(item).strip()
+                        for item in native_evaluation_payload.get("notes", [])
+                        if str(item).strip()
+                    ],
+                )
+            (run_dir / "benchmark_native_evaluation.md").write_text(
+                format_benchmark_native_markdown(native_evaluation),
+                encoding="utf-8",
+            )
 
     return run_dir

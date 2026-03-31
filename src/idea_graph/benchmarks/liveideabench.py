@@ -167,6 +167,7 @@ def liveideabench_instance_from_record(
         source_path=str(default_paths(benchmark_root).csv_path),
         metadata={
             "benchmark": BENCHMARK_NAME,
+            "benchmark_root": str(Path(benchmark_root)),
             "row_index": record.row_index,
             "keyword": record.keyword,
             "idea_model": record.idea_model,

@@ -1,7 +1,7 @@
 # Evaluation
 
 This repository now includes a local deterministic evaluator for generated
-research ideas.
+research ideas, plus an optional benchmark-native scorer for benchmark runs.
 
 ## Design Principle
 
@@ -59,8 +59,12 @@ Each pipeline run now writes:
 
 - `evaluation.json`
 - `evaluation.md`
+- `benchmark_native_evaluation.json` when `--native-eval` is enabled
+- `benchmark_native_evaluation.md` when `--native-eval` is enabled
 
 The run `summary.json` also includes an `idea_evaluation` field.
+When native scoring is enabled it also includes a
+`benchmark_native_evaluation` field.
 
 ## Re-evaluate An Existing Run
 
@@ -70,3 +74,21 @@ python scripts/evaluate_run.py --run-dir outputs/<timestamp>-<instance>
 
 This regenerates `evaluation.json` and `evaluation.md` from the saved
 `graph.json`.
+
+To also recompute benchmark-native scoring:
+
+```bash
+python scripts/evaluate_run.py --run-dir outputs/<timestamp>-<instance> --native-eval --llm-config configs/openai_compatible.example.json
+```
+
+## Benchmark-Native Scoring
+
+The benchmark-native scorer is separate from the local deterministic rubric.
+
+- `AI_Idea_Bench_2025`
+  Reproduces the released prompt-based metric structure where public assets are
+  sufficient, and marks metrics unavailable when the official protocol needs
+  extra assets or batch-level comparisons.
+- `liveideabench`
+  Uses the benchmark's native minimal-context scoring dimensions with an
+  OpenAI-compatible judge model.

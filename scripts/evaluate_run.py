@@ -10,6 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from idea_graph.benchmark_scoring import evaluate_benchmark_native, format_benchmark_native_markdown
 from idea_graph.evaluation import evaluate_graph, format_evaluation_markdown
 from idea_graph.models import (
     Branch,
@@ -21,6 +22,7 @@ from idea_graph.models import (
     Node,
     Provenance,
 )
+from idea_graph.settings import OpenAICompatibleSettings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +32,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="Path to a run directory that contains graph.json.",
+    )
+    parser.add_argument(
+        "--llm-config",
+        type=Path,
+        help="Optional JSON config for benchmark-native judge scoring.",
+    )
+    parser.add_argument(
+        "--native-eval",
+        action="store_true",
+        help="Also compute benchmark-native scoring for this saved run.",
     )
     return parser
 
@@ -169,6 +181,12 @@ def main() -> None:
 
     graph = graph_from_payload(payload)
     evaluation = evaluate_graph(graph)
+    native_evaluation = None
+    if args.native_eval:
+        if args.llm_config is None:
+            raise SystemExit("--native-eval requires --llm-config so a judge model can be constructed.")
+        native_settings = OpenAICompatibleSettings.from_json_file(args.llm_config)
+        native_evaluation = evaluate_benchmark_native(graph, settings=native_settings)
 
     (args.run_dir / "evaluation.json").write_text(
         json.dumps(evaluation.as_dict(), indent=2, ensure_ascii=False, default=str),
@@ -178,11 +196,22 @@ def main() -> None:
         format_evaluation_markdown(evaluation),
         encoding="utf-8",
     )
+    if native_evaluation is not None:
+        (args.run_dir / "benchmark_native_evaluation.json").write_text(
+            json.dumps(native_evaluation.as_dict(), indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        (args.run_dir / "benchmark_native_evaluation.md").write_text(
+            format_benchmark_native_markdown(native_evaluation),
+            encoding="utf-8",
+        )
     summary_path = args.run_dir / "summary.json"
     if summary_path.exists():
         summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
         if isinstance(summary_payload, dict):
             summary_payload["idea_evaluation"] = evaluation.as_dict()
+            if native_evaluation is not None:
+                summary_payload["benchmark_native_evaluation"] = native_evaluation.as_dict()
             summary_path.write_text(
                 json.dumps(summary_payload, indent=2, ensure_ascii=False, default=str),
                 encoding="utf-8",
@@ -192,6 +221,11 @@ def main() -> None:
     print(f"Overall: {evaluation.overall_score}/10")
     for category, score in evaluation.category_scores.items():
         print(f"{category}: {score}/10")
+    if native_evaluation is not None:
+        print("== Benchmark-Native Evaluation ==")
+        print(f"Protocol: {native_evaluation.protocol_name}")
+        for key, value in native_evaluation.summary.items():
+            print(f"{key}: {value}")
     print(args.run_dir)
 
 

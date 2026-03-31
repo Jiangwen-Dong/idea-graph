@@ -12,6 +12,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from idea_graph.agent_backend import OpenAICompatibleCollaborationBackend
+from idea_graph.baselines import (
+    attach_baseline_metadata,
+    baseline_choices,
+    run_baseline_experiment,
+)
 from idea_graph.benchmarks import (
     ai_idea_bench_2025_instance_from_record,
     download_ai_idea_bench_2025,
@@ -20,8 +25,8 @@ from idea_graph.benchmarks import (
     get_liveideabench_record,
     liveideabench_instance_from_record,
 )
+from idea_graph.benchmark_scoring import evaluate_benchmark_native
 from idea_graph.evaluation import evaluate_graph
-from idea_graph.engine import run_experiment
 from idea_graph.io import load_instance, write_run_artifacts
 from idea_graph.instances import ExperimentInstance
 from idea_graph.settings import OpenAICompatibleSettings
@@ -88,6 +93,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Multi-agent backend to use for seed generation, collaboration actions, and final synthesis.",
     )
     parser.add_argument(
+        "--baseline",
+        choices=baseline_choices(),
+        default="ours-delayed-consensus",
+        help="Runnable local baseline wrapper to execute under the shared benchmark I/O contract.",
+    )
+    parser.add_argument(
+        "--io-mode",
+        choices=["auto", "benchmark", "assistant"],
+        default="auto",
+        help="Input/output contract mode. 'auto' uses benchmark mode for official benchmark loaders and assistant mode otherwise.",
+    )
+    parser.add_argument(
         "--max-rounds",
         type=int,
         default=3,
@@ -149,6 +166,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Request provider-level JSON mode if the endpoint supports it.",
     )
+    parser.add_argument(
+        "--native-eval",
+        action="store_true",
+        help="Run benchmark-native scoring after generation. This may require extra LLM judge calls.",
+    )
     return parser
 
 
@@ -158,10 +180,7 @@ def resolve_benchmark_root(base_root: Path, benchmark_name: str) -> Path:
     return base_root / benchmark_name
 
 
-def build_collaboration_backend(args: argparse.Namespace) -> OpenAICompatibleCollaborationBackend | None:
-    if args.agent_backend == "deterministic":
-        return None
-
+def build_openai_compatible_settings(args: argparse.Namespace) -> OpenAICompatibleSettings | None:
     payload: dict[str, object] = {}
     if args.llm_config:
         config_payload = json.loads(args.llm_config.read_text(encoding="utf-8"))
@@ -198,7 +217,16 @@ def build_collaboration_backend(args: argparse.Namespace) -> OpenAICompatibleCol
     if args.llm_json_mode:
         merged["json_mode"] = True
 
-    settings = OpenAICompatibleSettings.from_mapping(merged)
+    if not merged and args.agent_backend == "deterministic" and not args.native_eval:
+        return None
+    return OpenAICompatibleSettings.from_mapping(merged)
+
+
+def build_collaboration_backend(args: argparse.Namespace, settings: OpenAICompatibleSettings | None) -> OpenAICompatibleCollaborationBackend | None:
+    if args.agent_backend == "deterministic":
+        return None
+    if settings is None:
+        raise ValueError("OpenAI-compatible generation was requested, but no valid LLM settings were provided.")
     return OpenAICompatibleCollaborationBackend(settings)
 
 
@@ -238,13 +266,26 @@ def main() -> None:
         benchmark_root = None
         instance = load_instance(args.input)
 
-    collaboration_backend = build_collaboration_backend(args)
+    instance = attach_baseline_metadata(
+        instance,
+        baseline_name=args.baseline,
+        io_mode=args.io_mode,
+    )
+    llm_settings = build_openai_compatible_settings(args)
+    collaboration_backend = build_collaboration_backend(args, llm_settings)
+    if args.native_eval and llm_settings is None:
+        raise SystemExit(
+            "--native-eval requires OpenAI-compatible judge settings. Provide --llm-config or the equivalent LLM flags."
+        )
     experiment_metadata = dict(instance.metadata)
     experiment_metadata["agent_backend"] = args.agent_backend
     experiment_metadata["max_rounds_requested"] = max(1, args.max_rounds)
     experiment_metadata["stop_when_mature"] = not args.disable_maturity_stop
     if collaboration_backend is not None:
         experiment_metadata["openai_compatible"] = collaboration_backend.settings.sanitized_dict()
+    if args.native_eval and llm_settings is not None:
+        experiment_metadata["benchmark_native_eval_enabled"] = True
+        experiment_metadata["benchmark_native_eval_backend"] = llm_settings.sanitized_dict()
     instance = ExperimentInstance(
         name=instance.name,
         topic=instance.topic,
@@ -252,19 +293,20 @@ def main() -> None:
         source_path=instance.source_path,
         metadata=experiment_metadata,
     )
-    graph = run_experiment(
-        topic=instance.topic,
-        literature=list(instance.literature),
-        metadata=experiment_metadata,
+    graph = run_baseline_experiment(
+        instance,
+        baseline_name=args.baseline,
         collaboration_backend=collaboration_backend,
         progress_callback=print_progress,
         max_rounds=max(1, args.max_rounds),
         stop_when_mature=not args.disable_maturity_stop,
     )
+    native_evaluation = evaluate_benchmark_native(graph, settings=llm_settings) if args.native_eval else None
     run_dir = write_run_artifacts(
         graph,
         output_root=args.output_dir,
         instance=instance,
+        native_evaluation_payload=native_evaluation.as_dict() if native_evaluation is not None else None,
     )
 
     print("== Instance ==")
@@ -292,6 +334,11 @@ def main() -> None:
     if collaboration_backend is not None:
         print(f"Base URL: {collaboration_backend.settings.base_url}")
         print(f"Model: {collaboration_backend.settings.model}")
+    print()
+
+    print("== Baseline ==")
+    print(args.baseline)
+    print(f"I/O mode: {instance.metadata.get('io_mode', args.io_mode)}")
     print()
 
     print("== Graph Summary ==")
@@ -329,6 +376,16 @@ def main() -> None:
     for category, score in evaluation.category_scores.items():
         print(f"{category}: {score}/10")
     print()
+
+    if native_evaluation is not None:
+        print("== Benchmark-Native Evaluation ==")
+        print(f"Protocol: {native_evaluation.protocol_name}")
+        for key, value in native_evaluation.summary.items():
+            print(f"{key}: {value}")
+        for metric in native_evaluation.metrics:
+            availability = "" if metric.available else " (unavailable)"
+            print(f"{metric.display_name}: {metric.score}/{metric.max_score}{availability}")
+        print()
 
     backend_diagnostics = []
     if "seed_generation_error" in graph.metadata:

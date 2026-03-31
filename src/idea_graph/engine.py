@@ -1240,8 +1240,11 @@ def _sentences_to_paragraph(parts: list[str]) -> str:
 def synthesize_proposal(graph: IdeaGraph, subgraph: dict[str, object]) -> FinalProposal:
     selected = {graph.nodes[node_id].type: graph.nodes[node_id].text for node_id in subgraph["node_ids"]}
     topic_text = _clean_topic_text(graph.topic)
-    grounding = build_literature_grounding(literature=graph.literature, metadata=graph.metadata)
-    benchmark_motivation = str(graph.metadata.get("motivation", "")).strip()
+    generation_metadata = graph.metadata.get("generation_safe_metadata", graph.metadata)
+    if not isinstance(generation_metadata, dict):
+        generation_metadata = graph.metadata
+    grounding = build_literature_grounding(literature=graph.literature, metadata=generation_metadata)
+    benchmark_motivation = str(generation_metadata.get("motivation", "")).strip()
     unresolved_count = len(unresolved_contradiction_edges(graph))
 
     problem = selected.get(
