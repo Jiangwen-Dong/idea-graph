@@ -78,9 +78,26 @@ Run a local baseline wrapper under the same benchmark-facing I/O contract:
 ```bash
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline direct
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline self-refine
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline scipip-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher-proxy
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline virsci-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-delayed-consensus
 ```
+
+For DashScope or Qwen models, prefer `ai-researcher-proxy` first. It is the
+repo-native lightweight reproduction of the AI-Researcher idea pipeline and
+works through the same OpenAI-compatible client as the rest of this project.
+
+Budget guidance:
+
+- `direct` is the cheapest lower-bound baseline.
+- `self-refine` is a modest-cost single-agent control.
+- `scipip-proxy` is the recommended low-cost structured baseline.
+- `ai-researcher-proxy` is the recommended literature baseline for most local
+  Qwen runs.
+- `virsci-proxy` and `ours-delayed-consensus` are higher-cost multi-agent
+  baselines and are better reserved for smaller validation subsets before large
+  sweeps.
 
 Run an exact external baseline through its upstream repository adapter:
 

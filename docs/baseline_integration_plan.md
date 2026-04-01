@@ -12,11 +12,36 @@ repo evolves toward a paper-valid comparison protocol.
 - exact external wrapper entrypoints now exist for `ai-researcher`, `scipip`,
   and `virsci` through `configs/external_baselines.example.json`.
 - `ResearchAgent` is banned from the current paper protocol.
+- the proxy baselines are now being treated as behaviorally differentiated
+  repo-native baselines rather than interchangeable prompt aliases:
+  - `ai-researcher-proxy`: lightweight seed ideation, proposal expansion, and
+    candidate ranking
+  - `scipip-proxy`: low-cost structured single-pass decomposition baseline
+  - `virsci-proxy`: discussion-oriented multi-agent proxy on top of the shared
+    delayed-consensus engine
 
 ## Immediate Goal
 
-Replace proxy-style baseline claims with external baseline integrations whenever
-the upstream repositories make this feasible.
+Keep the local baselines reasonable, benchmark-faithful, and cost-aware now,
+while upgrading to exact external integrations only when the upstream
+repositories make this feasible and the comparison benefit is worth the setup
+cost.
+
+Practical note:
+
+- for Aliyun DashScope or Qwen-based runs, the recommended near-term baseline is
+  the local `ai-researcher-proxy`
+- it now follows a lightweight three-stage pipeline:
+  seed ideation, proposal expansion, and candidate ranking
+- this is intentionally a coarse reproduction of the paper's core idea rather
+  than a strict upstream reimplementation
+- for low-cost comparison sweeps, use:
+  - `direct`
+  - `self-refine`
+  - `scipip-proxy`
+  - `ai-researcher-proxy`
+- use `virsci-proxy` only for smaller validation subsets because it shares the
+  multi-agent runtime cost profile of the main method
 
 ## Priority Order
 
@@ -112,7 +137,9 @@ All baselines should be mapped back into the same internal proposal schema:
 
 The next research-facing steps should be:
 
-1. batch benchmark runner for matched-budget comparison
-2. corpus-level benchmark-native evaluation such as `IC`
-3. pilot table generation over both public benchmarks
-4. only then, deeper prompt and collaboration-policy tuning
+1. run a small matched-budget sanity set over `direct`, `self-refine`,
+   `scipip-proxy`, `ai-researcher-proxy`, and `ours-delayed-consensus`
+2. freeze the baseline prompts and budgets before broad benchmark sweeps
+3. add a batch benchmark runner for corpus-level comparison and `IC`
+4. generate pilot paper tables over both public benchmarks
+5. only then, do deeper prompt or collaboration-policy tuning

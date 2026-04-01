@@ -73,6 +73,25 @@ def _split_outside_parentheses(text: str) -> list[str]:
     return items
 
 
+def _looks_noisy_sentence(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return True
+    if re.search(r"\b\d{2,}:\d{1,2}\b", cleaned):
+        return True
+    non_ascii_count = sum(1 for ch in cleaned if ord(ch) > 127)
+    if non_ascii_count > 2:
+        return True
+    digit_count = sum(1 for ch in cleaned if ch.isdigit())
+    if digit_count > 8:
+        return True
+    noisy_markers = (" arxiv:", "fig.", "figure ", "table ", "et al .", "et al.", "doi:")
+    lowered = cleaned.casefold()
+    if any(marker in lowered for marker in noisy_markers):
+        return True
+    return False
+
+
 def _join_natural(items: list[str]) -> str:
     cleaned = [item for item in (_clean_text(item) for item in items) if item]
     if not cleaned:
@@ -174,15 +193,24 @@ def _design_highlights(metadata: dict[str, Any], *, limit: int = 3) -> list[str]
 
     snippet_highlights: list[str] = []
     for snippet in _reference_paper_snippets(metadata)[:limit]:
-        resolved_title = _clean_text(snippet.get("resolved_title", ""))
+        resolved_title = _clean_text(
+            snippet.get("resolved_title", "")
+            or snippet.get("raw_title", "")
+            or snippet.get("title", "")
+        )
         method = _first_sentence(
-            _clean_text(snippet.get("method", "")) or _clean_text(snippet.get("abstract", ""))
+            _clean_text(snippet.get("method", ""))
+            or _clean_text(snippet.get("abstract", ""))
+            or _clean_text(snippet.get("evaluation", ""))
+            or _clean_text(snippet.get("introduction", ""))
+            or _clean_text(snippet.get("snippet", ""))
         )
         if (
             resolved_title
             and method
             and len(resolved_title) <= 140
             and 40 <= len(method) <= 220
+            and not _looks_noisy_sentence(method)
             and "figure" not in method.casefold()
             and "abstract" not in resolved_title.casefold()
         ):

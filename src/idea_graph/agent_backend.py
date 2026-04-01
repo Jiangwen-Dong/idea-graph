@@ -640,6 +640,7 @@ def _literature_display_items(graph: IdeaGraph, *, limit: int = 8) -> list[str]:
 
 
 def _baseline_prompt_instruction(metadata: dict[str, Any]) -> str:
+    baseline_key = _coerce_string(metadata.get("baseline_name"))
     baseline_name = _coerce_string(metadata.get("baseline_display_name") or metadata.get("baseline_name"))
     proxy_target = _coerce_string(metadata.get("baseline_proxy_target"))
     strategy = _coerce_string(metadata.get("baseline_strategy"))
@@ -652,6 +653,29 @@ def _baseline_prompt_instruction(metadata: dict[str, Any]) -> str:
         parts.append(
             f"This is a local proxy wrapper intended to approximate {proxy_target}; do not assume it is an exact reproduction."
         )
+    baseline_specific_guidance = {
+        "ours-delayed-consensus": (
+            "Optimize for typed-graph rigor: add complementary claims, expose contradictions early, attach evidence when possible, and converge toward one high-utility subgraph rather than a loose discussion transcript."
+        ),
+        "virsci-proxy": (
+            "Approximate a discussion-oriented virtual-scientist panel: keep multiple viewpoints alive for longer, surface tradeoffs explicitly, and let the graph capture debate before convergence."
+        ),
+        "direct": (
+            "Favor a compact single-pass idea without simulated debate or extra self-critique."
+        ),
+        "self-refine": (
+            "Favor a strong draft followed by explicit internal critique and revision for specificity."
+        ),
+        "ai-researcher-proxy": (
+            "Favor literature-grounded candidate ideation, benchmark-faithful topic anchoring, and deliberate selection among alternatives."
+        ),
+        "scipip-proxy": (
+            "Favor structured decomposition: identify the core bottleneck, relate it to nearby work, and turn it into one coherent method plus evaluation plan."
+        ),
+    }
+    guidance = baseline_specific_guidance.get(baseline_key)
+    if guidance:
+        parts.append(guidance)
     return " ".join(parts)
 
 

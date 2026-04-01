@@ -154,7 +154,8 @@ local approximations unless replaced by direct external integrations.
 
 7. `ai-researcher-proxy`
 
-- Literature-grounded candidate-generation and ranking wrapper
+- Literature-grounded lightweight reproduction with seed ideation, proposal
+  expansion, and candidate ranking
 - Intended to approximate the style of the ICLR `AI-Researcher` ideation
   pipeline
 
@@ -170,12 +171,16 @@ local approximations unless replaced by direct external integrations.
 - Structured single-agent wrapper that emphasizes motivation and experiment-plan
   decomposition
 - Intended to approximate the style of `SciPIP`
+- Recommended as the low-cost structured proxy baseline when broad local sweeps
+  are needed
 
 9. `virsci-proxy`
 
 - Multi-agent wrapper using the delayed-consensus engine with a more discussion-
   oriented collaboration style
 - Intended to approximate the style of `VirSci`
+- Higher-cost than the single-agent baselines, so it is better suited to
+  smaller validation subsets than to large exploratory sweeps
 
 ## Shared Input Contract
 
