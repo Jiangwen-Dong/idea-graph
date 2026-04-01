@@ -77,7 +77,7 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
     "scipip-proxy": BaselineSpec(
         name="scipip-proxy",
         display_name="SciPIP Proxy",
-        strategy="direct",
+        strategy="self_refine",
         description="Local proxy wrapper emphasizing structured motivation and experiment decomposition.",
         is_proxy=True,
         proxy_target="SciPIP",

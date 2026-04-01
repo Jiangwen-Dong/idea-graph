@@ -817,7 +817,7 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             target_ids=[eval_plan.id],
             payload={
                 "branch_id": branch.id,
-                "repair_text": "Add explicit budget matching and process metrics to stabilize evaluation claims.",
+                "repair_text": "Add explicit cost reporting and process metrics so evaluation claims separate quality from coordination overhead.",
             },
             rationale="Repair the evaluation plan after contradiction exposure.",
         )

@@ -22,7 +22,7 @@ repo evolves toward a paper-valid comparison protocol.
 
 ## Immediate Goal
 
-Keep the local baselines reasonable, benchmark-faithful, and cost-aware now,
+Keep the local baselines reasonable, benchmark-faithful, and competitive now,
 while upgrading to exact external integrations only when the upstream
 repositories make this feasible and the comparison benefit is worth the setup
 cost.
@@ -137,9 +137,10 @@ All baselines should be mapped back into the same internal proposal schema:
 
 The next research-facing steps should be:
 
-1. run a small matched-budget sanity set over `direct`, `self-refine`,
+1. run a small same-backbone quality pilot over `direct`, `self-refine`,
    `scipip-proxy`, `ai-researcher-proxy`, and `ours-delayed-consensus`
-2. freeze the baseline prompts and budgets before broad benchmark sweeps
-3. add a batch benchmark runner for corpus-level comparison and `IC`
-4. generate pilot paper tables over both public benchmarks
-5. only then, do deeper prompt or collaboration-policy tuning
+2. freeze the baseline prompts and output contract before broad benchmark sweeps
+3. add a corpus-level cost analysis rather than forcing matched-token tables
+4. add a batch benchmark runner for corpus-level comparison and `IC`
+5. generate pilot paper tables over both public benchmarks
+6. only then, do deeper prompt or collaboration-policy tuning

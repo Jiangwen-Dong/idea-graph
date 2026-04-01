@@ -18,7 +18,7 @@ Each ideation instance contains:
 
 - a research topic
 - a retrieved literature set
-- a fixed inference budget
+- a method-configurable inference budget that is logged explicitly
 - one final abstract-length proposal
 
 ## Fixed Roles
@@ -93,7 +93,7 @@ Deliverables:
 
 ### Phase 4
 
-Implement baselines under matched budgets.
+Implement coherent baselines under a shared benchmark-mode interface.
 
 Deliverables:
 

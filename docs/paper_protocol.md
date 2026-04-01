@@ -256,8 +256,14 @@ Use the same settings across methods in the main comparison whenever possible.
 - same backbone model family
 - same benchmark-mode input packet
 - same output schema
-- same generation budget or a clearly stated matched budget
+- no hidden oracle fields or benchmark leakage during generation
+- cost reported explicitly as a separate analysis axis rather than silently mixed into quality
 - anonymized outputs for human review
+
+We do not require the main table to be matched-budget. The main paper claim
+should be quality under a shared benchmark-facing task definition; token and
+API cost should be reported alongside the quality table and, when useful, in a
+dedicated cost-quality tradeoff analysis.
 
 ## Recommended Main Table
 
