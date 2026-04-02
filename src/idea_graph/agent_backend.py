@@ -92,7 +92,6 @@ def append_agent_trace(
 
 def focused_view_for_prompt(graph: IdeaGraph, role: str) -> dict[str, object]:
     own_branch = next((branch for branch in graph.branches.values() if branch.role == role), None)
-    safe_metadata = _prompt_safe_metadata(graph.metadata)
     all_edges = [
         {
             "id": edge.id,
@@ -108,17 +107,17 @@ def focused_view_for_prompt(graph: IdeaGraph, role: str) -> dict[str, object]:
         {
             "id": node.id,
             "type": node.type,
-            "text": node.text,
+            "text": _truncate_text(node.text, max_chars=220),
             "role": node.role,
             "branch_id": node.branch_id,
             "confidence": node.confidence,
-            "evidence": list(node.evidence),
+            "evidence": [_truncate_text(item, max_chars=160) for item in node.evidence[:2]],
         }
         for node in graph.active_nodes()
     ]
     active_edges = [
         edge
-        for edge in all_edges[-40:]
+        for edge in all_edges[-24:]
     ]
     branches = [
         {
@@ -183,11 +182,18 @@ def focused_view_for_prompt(graph: IdeaGraph, role: str) -> dict[str, object]:
         }
         for node in tracked_nodes
         if not node["evidence"]
-    ][:6]
-    candidate_node_ids_by_type = {
-        node_type: [node["id"] for node in active_nodes if node["type"] == node_type][:6]
-        for node_type in NODE_TYPES
-    }
+    ][:5]
+    blocked_request_node_ids = [
+        edge["target_id"]
+        for edge in all_edges
+        if edge["relation"] == "requires_evidence" and edge["source_id"] == edge["target_id"]
+    ]
+    request_evidence_candidates = [
+        node
+        for node in tracked_nodes_needing_evidence
+        if node["id"] not in blocked_request_node_ids
+    ][:4]
+    attach_evidence_candidates = tracked_nodes_needing_evidence[:4]
     tracked_count = len(tracked_nodes)
     supported_count = sum(
         1
@@ -204,23 +210,24 @@ def focused_view_for_prompt(graph: IdeaGraph, role: str) -> dict[str, object]:
         "role_guidance": ROLE_GUIDANCE.get(role, ""),
         "own_branch_id": own_branch.id if own_branch is not None else "",
         "topic": graph.topic,
-        "literature": graph.literature[:8],
-        "metadata": safe_metadata,
-        "evidence_candidates": _paper_evidence_candidates(graph.metadata),
+        "context_packet": _compact_generation_context(graph),
+        "evidence_candidates": _paper_evidence_candidates(graph.metadata, limit=4),
         "maturity_snapshot": {
             "support_coverage": support_coverage,
             "unresolved_contradiction_ratio": unresolved_ratio,
             "completeness": {"Problem", "Hypothesis", "Method", "EvalPlan"}.issubset(active_types),
         },
-        "branches": branches[:5],
-        "nodes": active_nodes[:30],
+        "branches": branches[:4],
+        "nodes": active_nodes[:18],
         "edges": active_edges,
         "unsupported_novelty_claims": unsupported_novelty,
         "unresolved_contradictions": unresolved_contradictions,
-        "tracked_nodes_needing_support": tracked_nodes_needing_support,
+        "tracked_nodes_needing_support": tracked_nodes_needing_support[:5],
         "tracked_nodes_needing_evidence": tracked_nodes_needing_evidence,
-        "candidate_node_ids_by_type": candidate_node_ids_by_type,
-        "recent_actions": _recent_actions_for_prompt(graph),
+        "request_evidence_candidates": request_evidence_candidates,
+        "attach_evidence_candidates": attach_evidence_candidates,
+        "blocked_request_node_ids": blocked_request_node_ids[:6],
+        "recent_actions": _recent_actions_for_prompt(graph, limit=6),
     }
 
 
@@ -299,6 +306,13 @@ def _first_sentence(text: Any, *, max_chars: int = 220) -> str:
     if len(cleaned) > max_chars:
         cleaned = cleaned[: max_chars - 3].rstrip() + "..."
     return cleaned
+
+
+def _truncate_text(text: Any, *, max_chars: int = 220) -> str:
+    cleaned = _coerce_string(text)
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[: max_chars - 3].rstrip() + "..."
 
 
 def _safe_paper_grounding(metadata: dict[str, Any], *, limit: int = 6) -> dict[str, object]:
@@ -380,6 +394,123 @@ def _paper_evidence_candidates(metadata: dict[str, Any], *, limit: int = 6) -> l
             )
             break
     return candidates[:limit]
+
+
+def _benchmark_packet_evidence_candidates(metadata: dict[str, Any], *, limit: int = 6) -> list[dict[str, str]]:
+    packet = metadata.get("benchmark_input_packet", {})
+    if not isinstance(packet, dict):
+        return []
+
+    raw_references = packet.get("reference_packet", [])
+    if not isinstance(raw_references, list):
+        raw_references = []
+
+    candidates: list[dict[str, str]] = []
+    for index, item in enumerate(raw_references[:limit], start=1):
+        if not isinstance(item, dict):
+            continue
+        title = _coerce_string(item.get("title"))
+        evidence = _first_sentence(item.get("snippet"), max_chars=220)
+        if not evidence:
+            continue
+        candidates.append(
+            {
+                "paper_id": f"packet-{index:03d}",
+                "title": title,
+                "section": "reference_packet",
+                "evidence": evidence,
+            }
+        )
+
+    keyword = _coerce_string(packet.get("keyword"))
+    topic = _coerce_string(packet.get("topic"))
+    if keyword:
+        candidates.append(
+            {
+                "paper_id": "benchmark-keyword",
+                "title": "Benchmark keyword",
+                "section": "keyword",
+                "evidence": f"The benchmark keyword is {keyword}.",
+            }
+        )
+    elif topic:
+        candidates.append(
+            {
+                "paper_id": "benchmark-topic",
+                "title": "Benchmark topic",
+                "section": "topic",
+                "evidence": _first_sentence(topic, max_chars=220),
+            }
+        )
+    return candidates[:limit]
+
+
+def _grounding_evidence_candidates(graph: IdeaGraph, *, limit: int = 4) -> list[dict[str, str]]:
+    safe_metadata = _prompt_safe_metadata(graph.metadata)
+    grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata)
+    candidates: list[dict[str, str]] = []
+
+    for index, item in enumerate(grounding.design_highlights[:limit], start=1):
+        evidence = _first_sentence(item, max_chars=220)
+        if evidence:
+            candidates.append(
+                {
+                    "paper_id": f"grounding-{index:03d}",
+                    "title": "Grounding highlight",
+                    "section": "design_highlight",
+                    "evidence": evidence,
+                }
+            )
+
+    experiment_summary = _first_sentence(grounding.experiment_plan_summary, max_chars=220)
+    if experiment_summary:
+        candidates.append(
+            {
+                "paper_id": "grounding-experiment",
+                "title": "Grounding experiment summary",
+                "section": "experiment_plan_summary",
+                "evidence": experiment_summary,
+            }
+        )
+    return candidates[:limit]
+
+
+def _compact_benchmark_packet(graph: IdeaGraph, *, max_references: int = 4, snippet_chars: int = 180) -> dict[str, object]:
+    packet = graph.metadata.get("benchmark_input_packet", {})
+    if not isinstance(packet, dict):
+        packet = {}
+    reference_packet = packet.get("reference_packet", [])
+    if not isinstance(reference_packet, list):
+        reference_packet = []
+
+    compact_references: list[dict[str, str]] = []
+    for item in reference_packet[:max_references]:
+        if not isinstance(item, dict):
+            continue
+        title = _coerce_string(item.get("title"))
+        snippet = _truncate_text(item.get("snippet"), max_chars=snippet_chars)
+        if title or snippet:
+            compact_references.append({"title": title, "snippet": snippet})
+
+    return {
+        "benchmark": _coerce_string(packet.get("benchmark")),
+        "topic": _coerce_string(packet.get("topic") or graph.topic),
+        "task_instruction": _truncate_text(packet.get("task_instruction"), max_chars=220),
+        "reference_packet": compact_references,
+        "constraints": _list_of_strings(packet.get("constraints"))[:4],
+    }
+
+
+def _compact_generation_context(graph: IdeaGraph) -> dict[str, object]:
+    safe_metadata = _prompt_safe_metadata(graph.metadata)
+    grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata).as_dict()
+    return {
+        "benchmark_packet": _compact_benchmark_packet(graph),
+        "design_highlights": _list_of_strings(grounding.get("design_highlights"))[:3],
+        "design_anchor_terms": _design_anchor_terms(_list_of_strings(grounding.get("design_highlights"))[:4]),
+        "dataset_items": _list_of_strings(grounding.get("dataset_items"))[:4],
+        "metric_items": _list_of_strings(grounding.get("metric_items"))[:6],
+    }
 
 
 def _recent_actions_for_prompt(graph: IdeaGraph, *, limit: int = 8) -> list[dict[str, object]]:
@@ -523,6 +654,407 @@ def _normalize_paper_id(value: Any, metadata: dict[str, Any]) -> str:
         if lowered == candidate["title"].casefold():
             return candidate["paper_id"]
     return cleaned
+
+
+def _design_anchor_terms(design_highlights: list[str]) -> list[str]:
+    anchors: list[str] = []
+    for item in design_highlights:
+        cleaned = _coerce_string(item)
+        if not cleaned:
+            continue
+        if ":" in cleaned:
+            label = cleaned.split(":", 1)[0].strip()
+        else:
+            label = " ".join(cleaned.split()[:6]).strip()
+        if label:
+            anchors.append(label)
+    return _unique_strings(anchors)[:4]
+
+
+def _best_attach_evidence_text(
+    graph: IdeaGraph,
+    *,
+    target_id: str,
+    preferred_text: Any,
+) -> str:
+    node = graph.nodes.get(target_id)
+    existing = set(node.evidence) if node is not None else set()
+
+    preferred = _resolve_symbolic_reference_text(_coerce_string(preferred_text), graph.metadata)
+    if preferred and preferred not in existing and not _looks_symbolic_reference(preferred):
+        return preferred
+
+    for candidate in (
+        _paper_evidence_candidates(graph.metadata)
+        + _benchmark_packet_evidence_candidates(graph.metadata)
+        + _grounding_evidence_candidates(graph)
+    ):
+        evidence = _coerce_string(candidate.get("evidence"))
+        if not evidence:
+            continue
+        title = _coerce_string(candidate.get("title"))
+        rendered = f"{title}: {evidence}" if title else evidence
+        if rendered not in existing:
+            return rendered
+        if evidence not in existing:
+            return evidence
+    topic_anchor = _coerce_string(graph.metadata.get("keyword") or graph.topic)
+    if topic_anchor:
+        fallback = f"Topic anchor: {_first_sentence(topic_anchor, max_chars=220)}"
+        if fallback not in existing:
+            return fallback
+    return ""
+
+
+def _unresolved_contradiction_target_ids(graph: IdeaGraph) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for edge in graph.edges:
+        if edge.relation != "contradicts" or edge.resolved:
+            continue
+        if edge.source_id not in graph.nodes or edge.target_id not in graph.nodes:
+            continue
+        source = graph.nodes[edge.source_id]
+        target = graph.nodes[edge.target_id]
+        if source.status != "active" or target.status != "active":
+            continue
+        if edge.target_id in seen:
+            continue
+        seen.add(edge.target_id)
+        ordered.append(edge.target_id)
+    return ordered
+
+
+def _contradiction_related_node_ids(graph: IdeaGraph) -> set[str]:
+    related: set[str] = set()
+    for edge in graph.edges:
+        if edge.relation != "contradicts" or edge.resolved:
+            continue
+        if edge.source_id not in graph.nodes or edge.target_id not in graph.nodes:
+            continue
+        source = graph.nodes[edge.source_id]
+        target = graph.nodes[edge.target_id]
+        if source.status != "active" or target.status != "active":
+            continue
+        related.add(edge.source_id)
+        related.add(edge.target_id)
+    return related
+
+
+def _attachable_target_ids(
+    graph: IdeaGraph,
+    *,
+    related_only: bool = False,
+    limit: int = 8,
+) -> list[str]:
+    candidates: list[str] = []
+    related_ids = _contradiction_related_node_ids(graph)
+    preferred_types = ("EvalPlan", "Method", "Hypothesis", "NoveltyClaim", "Problem")
+    for node_type in preferred_types:
+        for node in graph.active_nodes():
+            if node.type != node_type or node.evidence:
+                continue
+            if related_only and node.id not in related_ids:
+                continue
+            if not _best_attach_evidence_text(graph, target_id=node.id, preferred_text=""):
+                continue
+            candidates.append(node.id)
+            if len(candidates) >= limit:
+                return candidates
+    return candidates
+
+
+def _dynamic_allowed_actions(graph: IdeaGraph, round_name: str) -> tuple[str, ...]:
+    phase = resolve_round_phase(round_name)
+    allowed = list(phase.allowed_actions)
+    unresolved_targets = _unresolved_contradiction_target_ids(graph)
+
+    if phase.key == "repair":
+        if unresolved_targets:
+            allowed = [kind for kind in allowed if kind != "freeze_branch"]
+        else:
+            allowed = [kind for kind in allowed if kind != "propose_repair"]
+        if "attach_evidence" in allowed and not _attachable_target_ids(
+            graph,
+            related_only=bool(unresolved_targets),
+        ):
+            allowed = [kind for kind in allowed if kind != "attach_evidence"]
+        if not allowed:
+            allowed = ["freeze_branch"]
+        return tuple(allowed)
+
+    if "attach_evidence" in allowed and not _attachable_target_ids(graph):
+        allowed = [kind for kind in allowed if kind != "attach_evidence"]
+    if not allowed:
+        return tuple(phase.allowed_actions)
+    return tuple(allowed)
+
+
+def _alternate_request_evidence_target(graph: IdeaGraph, *, exclude_ids: set[str]) -> str:
+    blocked = {
+        edge.target_id
+        for edge in graph.edges
+        if edge.relation == "requires_evidence" and edge.source_id == edge.target_id
+    }
+    preferred_types = ("NoveltyClaim", "Hypothesis", "Method", "EvalPlan")
+    for node_type in preferred_types:
+        for node in graph.active_nodes():
+            if node.type != node_type or node.id in exclude_ids or node.evidence or node.id in blocked:
+                continue
+            return node.id
+    return ""
+
+
+def _ordered_active_node_ids_by_type(
+    graph: IdeaGraph,
+    *,
+    preferred_types: tuple[str, ...],
+    preferred_ids: list[str] | None = None,
+) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    for node_id in preferred_ids or []:
+        node = graph.nodes.get(node_id)
+        if node is None or node.status != "active" or node_id in seen:
+            continue
+        seen.add(node_id)
+        ordered.append(node_id)
+
+    for node_type in preferred_types:
+        for node in graph.active_nodes():
+            if node.type != node_type or node.id in seen:
+                continue
+            seen.add(node.id)
+            ordered.append(node.id)
+
+    return ordered
+
+
+def _alternate_edge_pair(
+    graph: IdeaGraph,
+    *,
+    relation: str,
+    preferred_source_ids: list[str],
+    preferred_target_ids: list[str],
+) -> list[str]:
+    relation_preferences = {
+        "supports": {
+            "sources": ("Method", "Hypothesis", "EvalPlan", "Repair", "NoveltyClaim"),
+            "targets": ("Problem", "Hypothesis", "Method", "NoveltyClaim", "EvalPlan"),
+        },
+        "contradicts": {
+            "sources": ("Risk", "Assumption", "NoveltyClaim", "Problem", "EvalPlan"),
+            "targets": ("Hypothesis", "Method", "NoveltyClaim", "EvalPlan", "Problem"),
+        },
+        "depends_on": {
+            "sources": ("EvalPlan", "Method", "Hypothesis", "NoveltyClaim"),
+            "targets": ("Hypothesis", "Method", "Problem", "Assumption"),
+        },
+    }
+    preferences = relation_preferences.get(
+        relation,
+        {
+            "sources": ("Method", "Hypothesis", "Problem", "EvalPlan", "Risk", "NoveltyClaim"),
+            "targets": ("Problem", "Hypothesis", "Method", "EvalPlan", "NoveltyClaim", "Assumption"),
+        },
+    )
+
+    source_candidates = _ordered_active_node_ids_by_type(
+        graph,
+        preferred_types=preferences["sources"],
+        preferred_ids=preferred_source_ids,
+    )
+    target_candidates = _ordered_active_node_ids_by_type(
+        graph,
+        preferred_types=preferences["targets"],
+        preferred_ids=preferred_target_ids,
+    )
+
+    for source_id in source_candidates:
+        for target_id in target_candidates:
+            if source_id == target_id:
+                continue
+            if _graph_has_edge(
+                graph,
+                source_id=source_id,
+                relation=relation,
+                target_id=target_id,
+            ):
+                continue
+            return [source_id, target_id]
+    return []
+
+
+def _salvage_grounding_target(
+    graph: IdeaGraph,
+    *,
+    preferred_ids: list[str],
+    related_only: bool,
+) -> str:
+    related_ids = _contradiction_related_node_ids(graph)
+    for node_id in preferred_ids:
+        node = graph.nodes.get(node_id)
+        if node is None or node.status != "active":
+            continue
+        if related_only and node_id not in related_ids:
+            continue
+        if _best_attach_evidence_text(graph, target_id=node_id, preferred_text=""):
+            return node_id
+
+    attachable = _attachable_target_ids(
+        graph,
+        related_only=related_only,
+        limit=1,
+    )
+    if attachable:
+        return attachable[0]
+    return ""
+
+
+def _repair_text_for_target(graph: IdeaGraph, target_id: str) -> str:
+    node = graph.nodes.get(target_id)
+    if node is None:
+        return "Revise the target claim so it directly addresses the current contradiction."
+    return (
+        f"Revise the {node.type.lower()} so it resolves the current contradiction with clearer constraints, "
+        "evidence, or evaluation details."
+    )
+
+
+def _salvage_action_decision(
+    graph: IdeaGraph,
+    *,
+    role: str,
+    kind: str,
+    target_ids: list[str],
+    payload: dict[str, object],
+    rationale: str,
+) -> tuple[str, list[str], dict[str, object], str]:
+    branch_id = _coerce_string(payload.get("branch_id")) or _own_branch_id(graph, role)
+    normalized_payload = dict(payload)
+    if branch_id:
+        normalized_payload["branch_id"] = branch_id
+
+    if kind == "attach_evidence" and target_ids:
+        evidence_text = _best_attach_evidence_text(
+            graph,
+            target_id=target_ids[0],
+            preferred_text=normalized_payload.get("evidence"),
+        )
+        if evidence_text:
+            normalized_payload["evidence"] = evidence_text
+        elif not _coerce_string(normalized_payload.get("evidence")) and not _unresolved_contradiction_target_ids(graph):
+            return (
+                "freeze_branch",
+                [],
+                {"branch_id": branch_id},
+                rationale or "No concrete evidence remains to attach, so preserve the branch for final synthesis.",
+            )
+
+    edge_relation_by_kind = {
+        "add_support_edge": "supports",
+        "add_contradiction_edge": "contradicts",
+        "add_dependency_edge": "depends_on",
+    }
+    relation = edge_relation_by_kind.get(kind)
+    if relation is not None and len(target_ids) >= 2:
+        if _graph_has_edge(
+            graph,
+            source_id=target_ids[0],
+            relation=relation,
+            target_id=target_ids[1],
+        ):
+            alternate_pair = _alternate_edge_pair(
+                graph,
+                relation=relation,
+                preferred_source_ids=target_ids,
+                preferred_target_ids=list(reversed(target_ids)),
+            )
+            if alternate_pair:
+                target_ids = alternate_pair
+            elif kind in {"add_support_edge", "add_contradiction_edge"}:
+                grounding_target = _salvage_grounding_target(
+                    graph,
+                    preferred_ids=target_ids,
+                    related_only=(kind == "add_contradiction_edge"),
+                )
+                evidence_text = (
+                    _best_attach_evidence_text(
+                        graph,
+                        target_id=grounding_target,
+                        preferred_text=normalized_payload.get("evidence"),
+                    )
+                    if grounding_target
+                    else ""
+                )
+                if grounding_target and evidence_text:
+                    return (
+                        "attach_evidence",
+                        [grounding_target],
+                        {
+                            "branch_id": branch_id,
+                            "evidence": evidence_text,
+                        },
+                        rationale or "The selected edge already exists, so add new grounding instead of duplicating structure.",
+                    )
+            elif not _unresolved_contradiction_target_ids(graph):
+                return (
+                    "freeze_branch",
+                    [],
+                    {"branch_id": branch_id},
+                    rationale or "The selected dependency already exists, so preserve the current branch instead of repeating it.",
+                )
+
+    if kind == "request_evidence" and target_ids:
+        if _graph_has_edge(
+            graph,
+            source_id=target_ids[0],
+            relation="requires_evidence",
+            target_id=target_ids[0],
+        ):
+            alternate_target = _alternate_request_evidence_target(graph, exclude_ids=set(target_ids))
+            if alternate_target:
+                target_ids = [alternate_target]
+            else:
+                evidence_text = _best_attach_evidence_text(
+                    graph,
+                    target_id=target_ids[0],
+                    preferred_text=normalized_payload.get("evidence"),
+                )
+                if evidence_text:
+                    return (
+                        "attach_evidence",
+                        [target_ids[0]],
+                        {
+                            "branch_id": branch_id,
+                            "evidence": evidence_text,
+                        },
+                        rationale or "An evidence request already exists for this node, so attach grounding directly instead.",
+                    )
+                if not _unresolved_contradiction_target_ids(graph):
+                    return (
+                        "freeze_branch",
+                        [],
+                        {"branch_id": branch_id},
+                        rationale or "The requested evidence is already being tracked, so preserve the branch instead of duplicating the request.",
+                    )
+
+    if kind == "propose_repair":
+        unresolved_targets = _unresolved_contradiction_target_ids(graph)
+        if not unresolved_targets:
+            return (
+                "freeze_branch",
+                [],
+                {"branch_id": branch_id},
+                rationale or "No unresolved contradictions remain, so preserve the current branch for synthesis.",
+            )
+        if not target_ids or target_ids[0] not in unresolved_targets:
+            target_ids = [unresolved_targets[0]]
+        if not _coerce_string(normalized_payload.get("repair_text")) and target_ids:
+            normalized_payload["repair_text"] = _repair_text_for_target(graph, target_ids[0])
+
+    return kind, target_ids, normalized_payload, rationale
 
 
 def _normalize_action_payload(
@@ -689,6 +1221,7 @@ def _seed_system_prompt(role: str) -> str:
         f"Allowed node types: {', '.join(NODE_TYPES)}. "
         f"Preferred anchor types for your role: {', '.join(preferred_anchor_types)}. "
         "Choose an anchor type that best fits your role and the topic; do not default to one type unless the context supports it. "
+        "Prefer one concrete bottleneck, module, evaluation asset, or scientific tension from the provided context rather than generic claims like 'improve performance'. "
         "Support nodes should add complementary structure such as method, evidence needs, risks, or evaluation signals rather than repeating the anchor. "
         "Output schema: "
         '{"anchor":{"type":"<one allowed node type>","text":"...","confidence":0.7},'
@@ -701,10 +1234,8 @@ def _seed_user_prompt(graph: IdeaGraph, role: str) -> str:
     payload = {
         "role": role,
         "topic": graph.topic,
-        "literature": graph.literature[:8],
-        "benchmark_input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "context_packet": _compact_generation_context(graph),
         "baseline_context": _baseline_prompt_instruction(graph.metadata),
-        "metadata": _prompt_safe_metadata(graph.metadata),
         "constraints": {
             "exactly_one_anchor": True,
             "support_node_count_range": [1, 3],
@@ -714,10 +1245,15 @@ def _seed_user_prompt(graph: IdeaGraph, role: str) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def _action_system_prompt(role: str, round_name: str) -> str:
+def _action_system_prompt(
+    graph: IdeaGraph,
+    role: str,
+    round_name: str,
+    allowed_actions: tuple[str, ...],
+) -> str:
     phase = resolve_round_phase(round_name)
     action_lines = []
-    for action_kind in phase.allowed_actions:
+    for action_kind in allowed_actions:
         hint = ACTION_PROMPT_HINTS[action_kind]
         target_shape = hint["target_shape"]
         payload_fields = hint["payload_fields"]
@@ -728,10 +1264,16 @@ def _action_system_prompt(role: str, round_name: str) -> str:
         )
     decision_focus = " ".join(phase.decision_focus)
     phase_specific_instruction = ""
-    if phase.key == "repair":
+    if phase.key == "repair" and _unresolved_contradiction_target_ids(graph):
         phase_specific_instruction = (
             " If you choose propose_repair or attach_evidence during repair, target one of the provided "
             "repair_priority_targets whenever possible."
+        )
+    elif phase.key == "repair":
+        phase_specific_instruction = (
+            " No unresolved contradictions remain, so this repair-phase turn is now consolidation. "
+            "Do not invent a new repair. Prefer attaching grounding to a weak node, adding one missing support edge, "
+            "or freezing a coherent branch."
         )
     return (
         f"You are the {role} agent in round {round_name} of delayed-consensus scientific collaboration. "
@@ -743,12 +1285,13 @@ def _action_system_prompt(role: str, round_name: str) -> str:
         f"{decision_focus} "
         f"{phase_specific_instruction}"
         "Return strict JSON only. Do not use markdown. "
-        f"Allowed action kinds for this phase: {', '.join(phase.allowed_actions)}. "
+        f"Allowed action kinds for this phase: {', '.join(allowed_actions)}. "
         "Use existing node IDs and branch IDs from the provided graph snapshot. "
         "For non-freeze actions, use your own branch_id from the prompt even when targeting another branch's node. "
         "For attach_evidence or mark_overlap, payload.evidence must be concrete evidence text or a concise paraphrase "
         "from one provided evidence candidate. Never return field references such as "
         "reference_paper_snippets[0].abstract. "
+        "Prefer the focused-view candidate lists for request_evidence and attach_evidence, and avoid blocked_request_node_ids. "
         "Avoid duplicating an edge, evidence request, or evidence attachment that already appears in recent action history. "
         "Your rationale should explain why this action is higher leverage than the other allowed actions right now. "
         "Action schemas:\n"
@@ -761,30 +1304,43 @@ def _action_system_prompt(role: str, round_name: str) -> str:
 
 def _action_user_prompt(graph: IdeaGraph, round_name: str, role: str) -> str:
     phase = resolve_round_phase(round_name)
+    allowed_actions = _dynamic_allowed_actions(graph, round_name)
     action_requirements = {
         action_kind: {
             "target_count": ACTION_TARGET_COUNTS[action_kind],
             "required_payload_fields": list(ACTION_REQUIRED_PAYLOAD_FIELDS.get(action_kind, ())),
             "prompt_hint": ACTION_PROMPT_HINTS[action_kind]["when_to_use"],
         }
-        for action_kind in phase.allowed_actions
+        for action_kind in allowed_actions
     }
+    unresolved_targets = _unresolved_contradiction_target_ids(graph)
+    if phase.key == "repair" and unresolved_targets:
+        decision_instruction = (
+            "Pick one action that most improves contradiction handling, maturity, or grounding. "
+            "Prefer repair or evidence actions that directly touch contradiction-related nodes, and avoid duplicating an existing support edge."
+        )
+    elif phase.key == "repair":
+        decision_instruction = (
+            "No unresolved contradictions remain. Consolidate the graph instead of inventing another repair: "
+            "add missing grounding, reinforce one coherent path, or freeze a branch that is already strong enough."
+        )
+    else:
+        decision_instruction = (
+            "Pick one action that most improves maturity, grounding, contradiction handling, or branch quality. "
+            "If support edges already exist for the same pair, avoid duplicating them. "
+            "When attaching evidence, use actual text from the provided evidence candidates instead of symbolic references."
+        )
     payload = {
         "round": round_name,
         "phase": phase.key,
         "phase_title": phase.title,
-        "allowed_actions": list(phase.allowed_actions),
-        "benchmark_input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "allowed_actions": list(allowed_actions),
+        "context_packet": _compact_generation_context(graph),
         "baseline_context": _baseline_prompt_instruction(graph.metadata),
         "action_requirements": action_requirements,
         "focused_view": focused_view_for_prompt(graph, role),
         "repair_priority_targets": _repair_priority_targets(graph),
-        "decision_instruction": (
-            "Pick one action that most improves maturity, grounding, contradiction handling, or branch quality. "
-            "If unresolved contradictions are present, consider whether a repair or evidence action is more useful than adding another support edge. "
-            "If support edges already exist for the same pair, avoid duplicating them. "
-            "When attaching evidence, use actual text from the provided evidence candidates instead of symbolic references."
-        ),
+        "decision_instruction": decision_instruction,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -799,6 +1355,12 @@ def _synthesis_system_prompt() -> str:
         "If the literature context is sparse, say so explicitly and keep the existing-methods summary cautious. "
         "Each field should contribute distinct information instead of repeating the same sentences across sections. "
         "Do not output an abstract field; use the concrete sections below instead. "
+        "Avoid generic titles such as 'Language-Driven X' or 'Improving Y' when a more specific mechanism is available. "
+        "When design highlights or design_anchor_terms are provided, explicitly reuse at least one concrete module, bottleneck, or mechanism name rather than writing only a high-level combination. "
+        "When selected nodes contain Repair, Risk, Assumption, or NoveltyClaim content, use them to sharpen method details, caveats, or novelty positioning instead of dropping them. "
+        "When dataset_items or metric_items are provided, mention at least one dataset and one metric explicitly in the evaluation field rather than using vague placeholders like 'benchmark datasets' or generic metrics. "
+        "Make the method concrete by naming 2-4 distinct design choices or stages when the graph supports them. "
+        "Make the evaluation concrete by naming candidate datasets, baselines, metrics, and at least one ablation or stress test when the context supports them. "
         "Use the fields to produce a proposal that is richer than isolated graph nodes but shorter than a full manuscript. "
         'JSON schema: {"title":"8-18 word title",'
         '"problem":"2-3 sentences","existing_methods":"2-4 sentences grounded in provided literature",'
@@ -825,25 +1387,25 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             local_node_ids.add(edge.target_id)
     safe_metadata = _prompt_safe_metadata(graph.metadata)
     grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata)
-
-    benchmark_context = {
-        "benchmark": _coerce_string(safe_metadata.get("benchmark")),
-        "benchmark_index": safe_metadata.get("benchmark_index"),
-        "reference_titles": _list_of_strings(safe_metadata.get("reference_titles"))[:8],
-        "reference_local_paths": _list_of_strings(safe_metadata.get("reference_local_paths"))[:8],
-        "paper_grounding": safe_metadata.get("paper_grounding", {}),
-    }
     payload = {
         "topic": graph.topic,
-        "benchmark_input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "context_packet": _compact_generation_context(graph),
         "baseline_context": _baseline_prompt_instruction(graph.metadata),
-        "literature_titles": _literature_display_items(graph, limit=8),
-        "literature_grounding": grounding.as_dict(),
-        "benchmark_context": benchmark_context,
-        "metadata": {
-            key: value
-            for key, value in safe_metadata.items()
-            if key not in {"progress_log"}
+        "literature_titles": _literature_display_items(graph, limit=6),
+        "literature_grounding": {
+            "source": grounding.source,
+            "reference_titles": grounding.reference_titles[:5],
+            "design_highlights": grounding.design_highlights[:3],
+            "design_anchor_terms": _design_anchor_terms(grounding.design_highlights[:4]),
+            "dataset_items": grounding.dataset_items[:4],
+            "metric_items": grounding.metric_items[:6],
+            "existing_methods_summary": _truncate_text(grounding.existing_methods_summary, max_chars=320),
+            "experiment_plan_summary": _truncate_text(grounding.experiment_plan_summary, max_chars=260),
+        },
+        "specificity_requirements": {
+            "reuse_design_anchor_terms": _design_anchor_terms(grounding.design_highlights[:4]),
+            "mention_dataset_items": grounding.dataset_items[:2],
+            "mention_metric_items": grounding.metric_items[:3],
         },
         "writing_target": {
             "style": "compact structured research idea",
@@ -859,8 +1421,8 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             {
                 "id": node_id,
                 "type": graph.nodes[node_id].type,
-                "text": graph.nodes[node_id].text,
-                "evidence": list(graph.nodes[node_id].evidence),
+                "text": _truncate_text(graph.nodes[node_id].text, max_chars=240),
+                "evidence": [_truncate_text(item, max_chars=180) for item in graph.nodes[node_id].evidence[:2]],
             }
             for node_id in node_ids
             if node_id in graph.nodes
@@ -869,14 +1431,14 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             {
                 "id": node_id,
                 "type": graph.nodes[node_id].type,
-                "text": graph.nodes[node_id].text,
+                "text": _truncate_text(graph.nodes[node_id].text, max_chars=220),
                 "role": graph.nodes[node_id].role,
                 "confidence": graph.nodes[node_id].confidence,
-                "evidence": list(graph.nodes[node_id].evidence),
+                "evidence": [_truncate_text(item, max_chars=160) for item in graph.nodes[node_id].evidence[:2]],
             }
             for node_id in sorted(local_node_ids)
             if node_id in graph.nodes and node_id not in selected_node_ids
-        ][:16],
+        ][:10],
         "selected_edges": [
             {
                 "id": edge.id,
@@ -908,6 +1470,100 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
         ][:8],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _normalize_match_text(value: Any) -> str:
+    return " ".join(_coerce_string(value).casefold().split())
+
+
+def _contains_any_term(text: str, terms: list[str]) -> bool:
+    haystack = _normalize_match_text(text)
+    if not haystack:
+        return False
+    for term in terms:
+        needle = _normalize_match_text(term)
+        if needle and needle in haystack:
+            return True
+    return False
+
+
+def _append_unique_sentence(base_text: str, sentence: str) -> str:
+    base = _coerce_string(base_text)
+    addition = _coerce_string(sentence)
+    if not addition:
+        return base
+    if not base:
+        return addition
+    if _normalize_match_text(addition) in _normalize_match_text(base):
+        return base
+    separator = "" if base.endswith((".", "!", "?")) else "."
+    return f"{base}{separator} {addition}".strip()
+
+
+def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> FinalProposal:
+    safe_metadata = _prompt_safe_metadata(graph.metadata)
+    grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata)
+    design_anchor_terms = _design_anchor_terms(grounding.design_highlights[:4])
+    packet = graph.metadata.get("benchmark_input_packet", {})
+    reference_packet = packet.get("reference_packet", []) if isinstance(packet, dict) else []
+    keyword = _coerce_string(
+        graph.metadata.get("keyword")
+        or (packet.get("keyword") if isinstance(packet, dict) else "")
+        or graph.topic
+    )
+    keyword_only_mode = (
+        _coerce_string(graph.metadata.get("benchmark")) == "liveideabench"
+        or (grounding.source == "titles_only" and not reference_packet)
+    )
+
+    if design_anchor_terms and not _contains_any_term(proposal.method, design_anchor_terms):
+        proposal.method = _append_unique_sentence(
+            proposal.method,
+            _first_sentence(grounding.design_highlights[0], max_chars=220),
+        )
+
+    if grounding.dataset_items and not _contains_any_term(proposal.evaluation, grounding.dataset_items):
+        proposal.evaluation = _append_unique_sentence(
+            proposal.evaluation,
+            f"Evaluate on {', '.join(grounding.dataset_items[:2])}.",
+        )
+
+    if grounding.metric_items and not _contains_any_term(proposal.evaluation, grounding.metric_items):
+        proposal.evaluation = _append_unique_sentence(
+            proposal.evaluation,
+            f"Report {', '.join(grounding.metric_items[:3])}.",
+        )
+
+    if grounding.reference_titles and not _contains_any_term(proposal.existing_methods, grounding.reference_titles[:3]):
+        summary_sentence = _first_sentence(grounding.existing_methods_summary, max_chars=260)
+        proposal.existing_methods = _append_unique_sentence(proposal.existing_methods, summary_sentence)
+
+    if keyword_only_mode:
+        existing_lower = _normalize_match_text(proposal.existing_methods)
+        if (
+            "benchmark keyword" in existing_lower
+            or "held out metadata" in existing_lower
+            or "row provides a keyword prompt" in existing_lower
+        ):
+            proposal.existing_methods = (
+                f"For {keyword}, plausible existing directions include spatiotemporal forecasting models, "
+                "physics-aware simulation, and multi-source data fusion methods."
+            )
+        evaluation_lower = _normalize_match_text(proposal.evaluation)
+        unsupported_markers = (
+            "synthetic urban dataset",
+            "lerf dataset",
+            "3d ovs",
+            "polycam",
+            "scannet",
+        )
+        if any(marker in evaluation_lower for marker in unsupported_markers):
+            proposal.evaluation = (
+                f"Evaluate on realistic benchmark tasks for {keyword}, compare against strong data-driven and "
+                "hybrid baselines, report task-specific quantitative metrics, and include ablations over the main components."
+            )
+
+    return proposal
 
 
 def _trace_payload(result: ChatCompletionResult, *, messages: list[dict[str, str]]) -> dict[str, object]:
@@ -1011,27 +1667,18 @@ class OpenAICompatibleCollaborationBackend:
         )
 
     def choose_action(self, graph: IdeaGraph, round_name: str, role: str) -> ActionDecision:
+        allowed_actions = _dynamic_allowed_actions(graph, round_name)
         messages = [
-            {"role": "system", "content": _action_system_prompt(role, round_name)},
+            {"role": "system", "content": _action_system_prompt(graph, role, round_name, allowed_actions)},
             {"role": "user", "content": _action_user_prompt(graph, round_name, role)},
         ]
         payload, trace = self._chat_json_object(role=role, messages=messages)
 
-        phase = resolve_round_phase(round_name)
         kind = _coerce_string(payload.get("kind"))
-        if kind not in phase.allowed_actions:
-            raise ValueError(f"Invalid action kind '{kind}' for round {round_name}.")
-
         target_ids = payload.get("target_ids", [])
         if not isinstance(target_ids, list):
             raise ValueError("Action payload must contain a list field 'target_ids'.")
         normalized_target_ids = [_coerce_string(item) for item in target_ids if _coerce_string(item)]
-        expected_target_count = ACTION_TARGET_COUNTS[kind]
-        if len(normalized_target_ids) != expected_target_count:
-            raise ValueError(
-                f"Action kind '{kind}' for round {round_name} expects {expected_target_count} target ids, "
-                f"but received {len(normalized_target_ids)}."
-            )
 
         action_payload_raw = payload.get("payload", {})
         if not isinstance(action_payload_raw, dict):
@@ -1044,6 +1691,22 @@ class OpenAICompatibleCollaborationBackend:
             payload=action_payload_raw,
             rationale=_coerce_string(payload.get("rationale")),
         )
+        kind, normalized_target_ids, action_payload, rationale = _salvage_action_decision(
+            graph,
+            role=role,
+            kind=kind,
+            target_ids=normalized_target_ids,
+            payload=action_payload,
+            rationale=_coerce_string(payload.get("rationale")),
+        )
+        if kind not in allowed_actions:
+            raise ValueError(f"Invalid action kind '{kind}' for round {round_name}.")
+        expected_target_count = ACTION_TARGET_COUNTS[kind]
+        if len(normalized_target_ids) != expected_target_count:
+            raise ValueError(
+                f"Action kind '{kind}' for round {round_name} expects {expected_target_count} target ids, "
+                f"but received {len(normalized_target_ids)}."
+            )
         branch_id = _coerce_string(action_payload.get("branch_id"))
         if not branch_id:
             raise ValueError("Action payload must contain 'branch_id'.")
@@ -1071,7 +1734,7 @@ class OpenAICompatibleCollaborationBackend:
             kind=kind,
             target_ids=normalized_target_ids,
             payload={str(key): value for key, value in action_payload.items()},
-            rationale=_coerce_string(payload.get("rationale")),
+            rationale=_coerce_string(rationale),
             trace=trace,
         )
 
@@ -1093,4 +1756,4 @@ class OpenAICompatibleCollaborationBackend:
             caveats=_coerce_string(payload.get("caveats") or payload.get("limitations")),
         )
         graph.metadata["final_synthesis_trace"] = trace
-        return proposal
+        return _postprocess_final_proposal(graph, proposal)

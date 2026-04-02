@@ -401,10 +401,15 @@ def _archive_candidate_entries(root: Path, title: str, *, limit: int = 24) -> li
 def _best_title_verified_zip_entry(root: Path, title: str) -> str:
     cache_dir = _paper_snippets_cache_dir(root)
     normalized_target = _normalize_title_key(title)
+    ordered_target_tokens = _title_tokens(title)
+    target_tokens = set(ordered_target_tokens)
+    strong_target_tokens = {token for token in target_tokens if len(token) >= 7}
+    lead_strong_token = next((token for token in ordered_target_tokens if len(token) >= 7), "")
     if not normalized_target:
         return ""
 
     best_score = 0.0
+    best_coverage = 0.0
     best_entry = ""
     for entry in _archive_candidate_entries(root, title):
         try:
@@ -419,14 +424,23 @@ def _best_title_verified_zip_entry(root: Path, title: str) -> str:
         candidate_title = _normalize_title_key(snippet.raw_title or snippet.resolved_title)
         if not candidate_title:
             continue
+        candidate_tokens = set(_title_tokens(snippet.raw_title or snippet.resolved_title))
+        token_overlap = len(target_tokens & candidate_tokens)
+        coverage = token_overlap / max(1, len(target_tokens))
+        if coverage < 0.5:
+            continue
+        if strong_target_tokens and not any(token in candidate_tokens for token in strong_target_tokens):
+            continue
+        if lead_strong_token and lead_strong_token not in candidate_tokens:
+            continue
         ratio = SequenceMatcher(None, normalized_target, candidate_title).ratio()
-        token_overlap = len(set(_title_tokens(title)) & set(_title_tokens(snippet.raw_title or snippet.resolved_title)))
         score = ratio + (0.08 * token_overlap)
         if score > best_score:
             best_score = score
+            best_coverage = coverage
             best_entry = entry
 
-    return best_entry if best_score >= 0.82 else ""
+    return best_entry if best_score >= 0.82 and best_coverage >= 0.5 else ""
 
 
 def _load_paper_snippet(root: Path, *, raw_path: str = "", fallback_title: str = "") -> dict[str, Any]:

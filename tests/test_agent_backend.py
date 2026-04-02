@@ -9,12 +9,30 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from idea_graph.agent_backend import _action_system_prompt, _seed_system_prompt, _synthesis_system_prompt
-from idea_graph.agent_backend import _prompt_safe_metadata, _resolve_symbolic_reference_text
+from idea_graph.agent_backend import (
+    _action_system_prompt,
+    _dynamic_allowed_actions,
+    _prompt_safe_metadata,
+    _resolve_symbolic_reference_text,
+    _salvage_action_decision,
+    _seed_system_prompt,
+    _synthesis_system_prompt,
+)
 from idea_graph.collaboration_protocol import resolve_round_phase
+from idea_graph.engine import build_seed_graphs, create_edge, merge_seed_graphs
+from idea_graph.models import IdeaGraph
 
 
 class AgentBackendPromptTests(unittest.TestCase):
+    def _build_graph(self) -> IdeaGraph:
+        graph = IdeaGraph(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+        )
+        build_seed_graphs(graph)
+        merge_seed_graphs(graph)
+        return graph
+
     def test_round_phase_resolves_for_extended_runs(self) -> None:
         self.assertEqual(resolve_round_phase("Round1").key, "structure")
         self.assertEqual(resolve_round_phase("Round2").key, "stress_test")
@@ -23,11 +41,13 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertEqual(resolve_round_phase("Round5").key, "repair")
 
     def test_action_prompt_discourages_defaulting_to_one_action_kind(self) -> None:
-        prompt = _action_system_prompt("MechanismProposer", "Round5")
+        graph = self._build_graph()
+        allowed_actions = _dynamic_allowed_actions(graph, "Round5")
+        prompt = _action_system_prompt(graph, "MechanismProposer", "Round5", allowed_actions)
         self.assertIn("Do not default to a specific action kind", prompt)
         self.assertIn("propose_repair", prompt)
-        self.assertIn("freeze_branch", prompt)
-        self.assertIn("reference_paper_snippets[0].abstract", prompt)
+        self.assertIn("Freeze a branch only when preserving it as an alternative", prompt)
+        self.assertIn("Never return field references", prompt)
         self.assertNotIn('{"kind":"add_support_edge","target_ids":["N001","N002"]', prompt)
 
     def test_seed_prompt_does_not_force_fixed_anchor_type(self) -> None:
@@ -97,6 +117,64 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertIn("self-supervised depth estimation", resolved)
         self.assertIn("Paper B", resolved)
         self.assertNotIn("reference_paper_snippets[0].abstract", resolved)
+
+    def test_duplicate_support_edge_is_salvaged_without_repeating_the_same_pair(self) -> None:
+        graph = self._build_graph()
+        source = next(node for node in graph.active_nodes() if node.type == "Method")
+        target = next(node for node in graph.active_nodes() if node.type == "Problem")
+        create_edge(
+            graph,
+            source_id=source.id,
+            relation="supports",
+            target_id=target.id,
+            role=source.role,
+            branch_id=source.branch_id,
+            note="Existing support edge for salvage test.",
+        )
+
+        kind, target_ids, payload, _ = _salvage_action_decision(
+            graph,
+            role=source.role,
+            kind="add_support_edge",
+            target_ids=[source.id, target.id],
+            payload={"branch_id": source.branch_id},
+            rationale="Test duplicate support salvage.",
+        )
+
+        self.assertIn(kind, {"add_support_edge", "attach_evidence", "freeze_branch"})
+        if kind == "add_support_edge":
+            self.assertNotEqual(target_ids, [source.id, target.id])
+        if kind == "attach_evidence":
+            self.assertIn("evidence", payload)
+
+    def test_duplicate_evidence_request_can_fall_forward_to_direct_grounding(self) -> None:
+        graph = self._build_graph()
+        target = next(node for node in graph.active_nodes() if node.type == "Hypothesis")
+        create_edge(
+            graph,
+            source_id=target.id,
+            relation="requires_evidence",
+            target_id=target.id,
+            role=target.role,
+            branch_id=target.branch_id,
+            note="Existing evidence request for salvage test.",
+        )
+
+        kind, target_ids, payload, _ = _salvage_action_decision(
+            graph,
+            role=target.role,
+            kind="request_evidence",
+            target_ids=[target.id],
+            payload={"branch_id": target.branch_id},
+            rationale="Test duplicate evidence-request salvage.",
+        )
+
+        self.assertIn(kind, {"request_evidence", "attach_evidence", "freeze_branch"})
+        if kind == "request_evidence":
+            self.assertNotEqual(target_ids, [target.id])
+        if kind == "attach_evidence":
+            self.assertEqual(target_ids, [target.id])
+            self.assertTrue(payload.get("evidence"))
 
 
 if __name__ == "__main__":

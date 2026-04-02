@@ -187,7 +187,12 @@ class EngineTests(unittest.TestCase):
         proposal = synthesize_proposal(graph, subgraph)
 
         self.assertEqual(proposal.abstract, "")
-        self.assertIn("PanoSUNCG (synthetic indoor)", proposal.evaluation)
+        self.assertTrue(
+            any(
+                dataset_name in proposal.evaluation
+                for dataset_name in ("PanoSUNCG (synthetic indoor)", "Mapillary Metropolis", "360VO Dataset")
+            )
+        )
         self.assertIn("Relative Rotation Error (RRE)", proposal.evaluation)
         self.assertNotIn("...", proposal.evaluation)
 

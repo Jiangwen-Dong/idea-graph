@@ -7,11 +7,12 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+import unicodedata
 from zipfile import ZipFile
 
 from pypdf import PdfReader
 
-PAPER_SNIPPET_CACHE_VERSION = "v3"
+PAPER_SNIPPET_CACHE_VERSION = "v4"
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,16 @@ class PaperSnippet:
 def _clean_text(value: Any) -> str:
     if value is None:
         return ""
-    return " ".join(str(value).split()).strip()
+    text = unicodedata.normalize("NFKC", str(value))
+    text = (
+        text.replace("\u00ad", "")
+        .replace("ﬁ", "fi")
+        .replace("ﬂ", "fl")
+        .replace("•", " ")
+        .replace("\xa0", " ")
+    )
+    text = "".join(ch if unicodedata.category(ch)[0] != "C" else " " for ch in text)
+    return " ".join(text.split()).strip()
 
 
 def _normalize_key(text: str) -> str:
@@ -64,9 +74,16 @@ def _guess_title(text: str) -> str:
     for line in lines[:8]:
         if len(line) < 8:
             continue
+        if len(line) > 180:
+            continue
         if re.fullmatch(r"\d+", line):
             continue
-        if line.lower() in {"abstract", "introduction"}:
+        lowered = line.lower()
+        if lowered in {"abstract", "introduction"}:
+            continue
+        if lowered.startswith(("figure ", "fig. ", "table ", "keywords", "authors", "ccs concepts")):
+            continue
+        if sum(ch.isdigit() for ch in line) > 8:
             continue
         if len(line.split()) > 2:
             return line
@@ -109,10 +126,72 @@ def _section_slice(text: str, headings: tuple[str, ...], stop_headings: tuple[st
         if idx != -1:
             end = min(end, idx)
     snippet = _clean_text(text[start:end])
-    return snippet[:max_chars].rstrip()
+    return _clean_section_excerpt(snippet[:max_chars].rstrip())
 
 
 def _fallback_excerpt(text: str, *, max_chars: int = 1600) -> str:
+    cleaned = _clean_text(text)
+    return _clean_section_excerpt(cleaned[:max_chars].rstrip(), max_sentences=3)
+
+
+def _looks_noisy_sentence(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return True
+    lowered = cleaned.casefold()
+    if len(cleaned) < 35:
+        return True
+    if re.search(r"\b\d{2,}:\d{1,2}\b", cleaned):
+        return True
+    if sum(ch.isdigit() for ch in cleaned) > max(8, len(cleaned) // 10):
+        return True
+    noisy_starts = (
+        "figure ",
+        "fig. ",
+        "table ",
+        "copyright ",
+        "publication rights ",
+        "acm reference format",
+        "ccs concepts",
+        "keywords",
+        "authors",
+        "project website",
+        "arxiv:",
+    )
+    if lowered.startswith(noisy_starts):
+        return True
+    noisy_markers = ("et al .", "doi.org/", "publication date:", "article ")
+    if any(marker in lowered for marker in noisy_markers):
+        return True
+    return False
+
+
+def _sentence_candidates(text: str) -> list[str]:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", cleaned)
+    candidates: list[str] = []
+    for part in parts:
+        sentence = _clean_text(part)
+        if not sentence:
+            continue
+        if sentence[-1] not in ".!?":
+            sentence = sentence + "."
+        candidates.append(sentence)
+    return candidates
+
+
+def _clean_section_excerpt(text: str, *, max_sentences: int = 2, max_chars: int = 420) -> str:
+    useful: list[str] = []
+    for sentence in _sentence_candidates(text):
+        if _looks_noisy_sentence(sentence):
+            continue
+        useful.append(sentence)
+        if len(useful) >= max_sentences:
+            break
+    if useful:
+        return _clean_text(" ".join(useful))[:max_chars].rstrip()
     cleaned = _clean_text(text)
     return cleaned[:max_chars].rstrip()
 

@@ -38,24 +38,24 @@ class PilotMethodPlan:
 PILOT_METHOD_PLANS: dict[str, PilotMethodPlan] = {
     "direct": PilotMethodPlan(
         baseline_name="direct",
-        restarts=4,
+        restarts=1,
         max_rounds=1,
         stop_when_mature=True,
-        rationale="One-pass lower bound, with multiple iid restarts for a more stable low-cost reference.",
+        rationale="One-pass single-agent lower bound under the shared benchmark-facing task definition.",
     ),
     "self-refine": PilotMethodPlan(
         baseline_name="self-refine",
-        restarts=2,
+        restarts=1,
         max_rounds=1,
         stop_when_mature=True,
-        rationale="Draft-critique-revise control baseline with two independent trajectories.",
+        rationale="Single-agent draft-critique-revise control baseline.",
     ),
     "scipip-proxy": PilotMethodPlan(
         baseline_name="scipip-proxy",
-        restarts=2,
+        restarts=1,
         max_rounds=1,
         stop_when_mature=True,
-        rationale="Structured decomposition proxy with self-refinement and two independent trajectories.",
+        rationale="Structured decomposition proxy with one coherent generation trajectory.",
     ),
     "ai-researcher-proxy": PilotMethodPlan(
         baseline_name="ai-researcher-proxy",
@@ -67,9 +67,9 @@ PILOT_METHOD_PLANS: dict[str, PilotMethodPlan] = {
     "ours-delayed-consensus": PilotMethodPlan(
         baseline_name="ours-delayed-consensus",
         restarts=1,
-        max_rounds=2,
+        max_rounds=5,
         stop_when_mature=True,
-        rationale="Main graph-mediated method with delayed consensus and maturity-based early stopping.",
+        rationale="Main graph-mediated method with structure, stress-test, and repair phases plus maturity-based early stopping.",
     ),
 }
 
@@ -160,7 +160,7 @@ def selection_score(evaluation_payload: dict[str, Any]) -> float:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a small cost-aware ideation pilot (legacy filename retained for compatibility)."
+        description="Run a small quality-first ideation batch (legacy filename retained for compatibility)."
     )
     parser.add_argument(
         "--benchmark-root",
@@ -201,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--pilot-name",
-        default="cost-aware-pilot",
+        default="quality-batch",
         help="Short suffix for the pilot directory name.",
     )
     return parser
@@ -220,7 +220,7 @@ def mean_or_zero(values: list[float]) -> float:
 
 def format_markdown_summary(pilot_payload: dict[str, Any]) -> str:
     lines: list[str] = []
-    lines.append("# Cost-Aware Baseline Pilot")
+    lines.append("# Quality-First Baseline Batch")
     lines.append("")
     lines.append("## Setup")
     lines.append("")
@@ -253,14 +253,14 @@ def format_markdown_summary(pilot_payload: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Selected Runs")
     lines.append("")
-    lines.append("| Baseline | Mean Overall | Mean Benchmark Align | Mean Expert Quality | Mean Graph Process | Mean Calls | Mean Tokens | Score / 10k Tokens |")
+    lines.append("| Baseline | Mean Overall | Mean Benchmark Align | Mean Expert Quality | Mean Graph Process | Mean Calls | Mean Tokens | Token Multiplier vs Direct |")
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for row in pilot_payload.get("aggregate_rows", []):
         lines.append(
             f"| `{row['baseline_name']}` | {row['mean_overall_score']:.2f} | "
             f"{row['mean_benchmark_alignment']:.2f} | {row['mean_expert_style_quality']:.2f} | "
             f"{row['mean_graph_process']:.2f} | {row['mean_llm_call_count']:.2f} | "
-            f"{row['mean_total_tokens']:.0f} | {row['score_per_10k_tokens']:.3f} |"
+            f"{row['mean_total_tokens']:.0f} | {row['token_multiplier_vs_direct']:.2f}x |"
         )
     lines.append("")
     lines.append("## Key Findings")
@@ -319,7 +319,7 @@ def main() -> None:
                 metadata = dict(prepared_instance.metadata)
                 metadata["pilot_name"] = args.pilot_name
                 metadata["pilot_restart"] = restart
-                metadata["pilot_budget_plan"] = asdict(plan)
+                metadata["pilot_method_plan"] = asdict(plan)
                 prepared_instance = ExperimentInstance(
                     name=prepared_instance.name,
                     topic=prepared_instance.topic,
@@ -404,7 +404,6 @@ def main() -> None:
         mean_graph = mean_or_zero([row["graph_process"] for row in rows])
         mean_calls = mean_or_zero([float(row["llm_call_count"]) for row in rows])
         mean_tokens = mean_or_zero([float(row["total_tokens"]) for row in rows])
-        score_per_10k_tokens = 0.0 if mean_tokens <= 0 else round((10000.0 * mean_overall) / mean_tokens, 3)
         aggregate_rows.append(
             {
                 "baseline_name": baseline_name,
@@ -414,19 +413,22 @@ def main() -> None:
                 "mean_graph_process": mean_graph,
                 "mean_llm_call_count": mean_calls,
                 "mean_total_tokens": mean_tokens,
-                "score_per_10k_tokens": score_per_10k_tokens,
                 "selected_run_dirs": [row["run_dir"] for row in rows],
             }
+        )
+
+    direct_tokens = next(
+        (row["mean_total_tokens"] for row in aggregate_rows if row["baseline_name"] == "direct"),
+        0.0,
+    )
+    for row in aggregate_rows:
+        row["token_multiplier_vs_direct"] = (
+            0.0 if direct_tokens <= 0 else round(row["mean_total_tokens"] / direct_tokens, 2)
         )
 
     ranked_by_overall = sorted(
         aggregate_rows,
         key=lambda item: (item["mean_overall_score"], item["mean_benchmark_alignment"]),
-        reverse=True,
-    )
-    ranked_by_efficiency = sorted(
-        aggregate_rows,
-        key=lambda item: item["score_per_10k_tokens"],
         reverse=True,
     )
     findings: list[str] = []
@@ -436,12 +438,6 @@ def main() -> None:
             f"`{top['baseline_name']}` achieved the strongest mean pilot score "
             f"({top['mean_overall_score']:.2f}/10 overall; {top['mean_benchmark_alignment']:.2f}/10 benchmark alignment)."
         )
-    if ranked_by_efficiency:
-        efficient = ranked_by_efficiency[0]
-        findings.append(
-            f"`{efficient['baseline_name']}` delivered the best score efficiency in this pilot "
-            f"({efficient['score_per_10k_tokens']:.3f} score per 10k tokens)."
-        )
     if aggregate_rows:
         ours_row = next((row for row in aggregate_rows if row["baseline_name"] == "ours-delayed-consensus"), None)
         direct_row = next((row for row in aggregate_rows if row["baseline_name"] == "direct"), None)
@@ -449,6 +445,11 @@ def main() -> None:
             delta = round(ours_row["mean_overall_score"] - direct_row["mean_overall_score"], 2)
             findings.append(
                 f"The main method's mean overall score differed from the direct baseline by {delta:+.2f} points in this pilot."
+            )
+            findings.append(
+                f"The main method used a multi-round graph-editing profile "
+                f"({ours_row['mean_llm_call_count']:.1f} calls; {ours_row['token_multiplier_vs_direct']:.1f}x direct tokens), "
+                "so quality and cost should be reported on separate axes."
             )
 
     next_steps = [
