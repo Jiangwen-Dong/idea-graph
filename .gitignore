@@ -6,3 +6,4 @@ data/benchmarks/
 .pytest_cache/
 .tmp-tests/
 .tmp-baselines/
+.tmp-external-baseline-runs/

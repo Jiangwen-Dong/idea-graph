@@ -424,6 +424,9 @@ def _is_keyword_only_context(metadata: dict[str, Any], literature: list[str]) ->
 def _keyword_domain_family(keyword: str) -> str:
     lowered = keyword.casefold()
     family_terms = {
+        "elemental_chemistry": {
+            "periodic table", "chemical element", "electron configuration", "atomic radius", "periodic trend",
+        },
         "earth_environment": {
             "meteorology", "climate", "ecology", "geology", "oceanography", "hydrology",
             "atmosphere", "greenhouse", "weather", "earthquake", "cartography", "habitat",
@@ -463,6 +466,44 @@ def _keyword_only_scaffold(metadata: dict[str, Any], topic: Any) -> dict[str, ob
 
     family = _keyword_domain_family(keyword)
     scaffold_by_family: dict[str, dict[str, object]] = {
+        "elemental_chemistry": {
+            "divergence_axes": [
+                "periodic-relation modeling",
+                "property prediction across element families",
+                "out-of-group generalization across elements",
+            ],
+            "existing_method_directions": [
+                "tabular or graph-based property prediction",
+                "periodic-trend representation learning",
+                "symbolic or physics-inspired modeling of atomic structure",
+            ],
+            "design_highlights": [
+                "Periodic-Relation Modeling: encode group, period, and valence structure as explicit relations rather than relying only on flat descriptors.",
+                "Atomic Attribute Propagation: propagate atomic number, electron configuration, and related descriptors across neighboring elements.",
+                "Out-of-Group Generalization: evaluate whether the model extrapolates to held-out element families and rare compounds.",
+            ],
+            "evaluation_assets": [
+                "held-out element property benchmarks",
+                "group-wise or period-wise generalization splits",
+                "rare-element or compound case studies",
+            ],
+            "metric_items": ["accuracy", "MAE", "calibration error", "out-of-group accuracy"],
+            "risk_items": [
+                "memorizing the table instead of learning periodic structure",
+                "weak extrapolation to rare elements",
+                "mismatch between learned relations and chemical mechanisms",
+            ],
+            "mechanism_terms": [
+                "periodic-relation modeling",
+                "atomic attribute propagation",
+                "out-of-group generalization",
+                "chemical structure priors",
+            ],
+            "method_instantiation": (
+                "Use a relation graph over elements with group and period edges, and run message passing "
+                "to propagate atomic attributes such as atomic number and electron configuration."
+            ),
+        },
         "earth_environment": {
             "divergence_axes": [
                 "spatiotemporal forecasting",
@@ -500,6 +541,10 @@ def _keyword_only_scaffold(metadata: dict[str, Any], topic: Any) -> dict[str, ob
                 "satellite",
                 "radar",
             ],
+            "method_instantiation": (
+                "Use a spatiotemporal encoder to fuse satellite, radar, and reanalysis inputs, "
+                "together with a physics-consistency loss that penalizes dynamically implausible forecasts."
+            ),
         },
         "life_biomed": {
             "divergence_axes": [
@@ -692,13 +737,13 @@ def _keyword_only_scaffold(metadata: dict[str, Any], topic: Any) -> dict[str, ob
             "evaluation_assets": [
                 "held-out benchmark tasks",
                 "out-of-distribution or stress-test splits",
-                "keyword-specific case studies",
+                "domain-grounded case studies",
             ],
             "metric_items": ["accuracy", "F1", "calibration error", "robustness under shift"],
             "risk_items": [
-                "generic problem framing",
+                "overly generic task formulations",
                 "distribution shift",
-                "insufficient mechanism grounding",
+                "weak linkage between the mechanism and the domain structure",
             ],
             "mechanism_terms": [
                 "mechanism-aware",

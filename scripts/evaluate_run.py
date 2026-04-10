@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
 
 from idea_graph.benchmark_scoring import evaluate_benchmark_native, format_benchmark_native_markdown
 from idea_graph.evaluation import evaluate_graph, format_evaluation_markdown
+from idea_graph.fs_utils import read_text_file, write_text_file
 from idea_graph.models import (
     Branch,
     Edge,
@@ -187,7 +188,7 @@ def main() -> None:
     if not graph_path.exists():
         raise SystemExit(f"Could not find graph.json at {graph_path}")
 
-    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    payload = json.loads(read_text_file(graph_path))
     if not isinstance(payload, dict):
         raise SystemExit(f"{graph_path} does not contain a JSON object.")
 
@@ -200,33 +201,33 @@ def main() -> None:
         native_settings = OpenAICompatibleSettings.from_json_file(args.llm_config)
         native_evaluation = evaluate_benchmark_native(graph, settings=native_settings)
 
-    (args.run_dir / "evaluation.json").write_text(
+    write_text_file(
+        args.run_dir / "evaluation.json",
         json.dumps(evaluation.as_dict(), indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
     )
-    (args.run_dir / "evaluation.md").write_text(
+    write_text_file(
+        args.run_dir / "evaluation.md",
         format_evaluation_markdown(evaluation),
-        encoding="utf-8",
     )
     if native_evaluation is not None:
-        (args.run_dir / "benchmark_native_evaluation.json").write_text(
+        write_text_file(
+            args.run_dir / "benchmark_native_evaluation.json",
             json.dumps(native_evaluation.as_dict(), indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
         )
-        (args.run_dir / "benchmark_native_evaluation.md").write_text(
+        write_text_file(
+            args.run_dir / "benchmark_native_evaluation.md",
             format_benchmark_native_markdown(native_evaluation),
-            encoding="utf-8",
         )
     summary_path = args.run_dir / "summary.json"
     if summary_path.exists():
-        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary_payload = json.loads(read_text_file(summary_path))
         if isinstance(summary_payload, dict):
             summary_payload["idea_evaluation"] = evaluation.as_dict()
             if native_evaluation is not None:
                 summary_payload["benchmark_native_evaluation"] = native_evaluation.as_dict()
-            summary_path.write_text(
+            write_text_file(
+                summary_path,
                 json.dumps(summary_payload, indent=2, ensure_ascii=False, default=str),
-                encoding="utf-8",
             )
 
     print("== Idea Evaluation ==")

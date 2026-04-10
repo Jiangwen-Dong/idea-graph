@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 import re
 
+from .fs_utils import write_text_file
 from .benchmark_scoring import (
     BenchmarkNativeEvaluation,
     BenchmarkNativeMetric,
@@ -131,17 +132,17 @@ def write_run_artifacts(
         summary_payload["instance_metadata"] = instance.metadata
     evaluation_payload = summary_payload.get("idea_evaluation", {})
 
-    (run_dir / "graph.json").write_text(
+    write_text_file(
+        run_dir / "graph.json",
         json.dumps(graph_payload, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
     )
-    (run_dir / "summary.json").write_text(
+    write_text_file(
+        run_dir / "summary.json",
         json.dumps(summary_payload, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
     )
-    (run_dir / "evaluation.json").write_text(
+    write_text_file(
+        run_dir / "evaluation.json",
         json.dumps(evaluation_payload, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
     )
 
     proposal = summary_payload["final_proposal"]
@@ -164,16 +165,16 @@ def write_run_artifacts(
             continue
         final_proposal_lines.extend([f"## {heading}", value, ""])
 
-    (run_dir / "final_proposal.md").write_text("\n".join(final_proposal_lines), encoding="utf-8")
+    write_text_file(run_dir / "final_proposal.md", "\n".join(final_proposal_lines))
     if evaluation_payload:
-        (run_dir / "evaluation.md").write_text(
+        write_text_file(
+            run_dir / "evaluation.md",
             format_evaluation_markdown(evaluation),
-            encoding="utf-8",
         )
     if native_evaluation_payload:
-        (run_dir / "benchmark_native_evaluation.json").write_text(
+        write_text_file(
+            run_dir / "benchmark_native_evaluation.json",
             json.dumps(native_evaluation_payload, indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
         )
         if isinstance(native_evaluation_payload, dict):
             native_evaluation = BenchmarkNativeEvaluation(
@@ -211,9 +212,9 @@ def write_run_artifacts(
                         if str(item).strip()
                     ],
                 )
-            (run_dir / "benchmark_native_evaluation.md").write_text(
+            write_text_file(
+                run_dir / "benchmark_native_evaluation.md",
                 format_benchmark_native_markdown(native_evaluation),
-                encoding="utf-8",
             )
 
     return run_dir

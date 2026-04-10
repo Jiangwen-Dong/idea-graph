@@ -173,6 +173,67 @@ benchmark-faithful experiment-plan specificity, stronger non-generic method
 details, and broader small-batch validation on both benchmarks before paper
 table refresh.
 
+### 2026-04-11
+
+- Rechecked the active EIG refinement diff with the current test suite and kept
+  the code changes focused on four concrete needs:
+  - weak-context proposal cleanup
+  - weak-context method instantiation for `LiveIdeaBench`
+  - clearer functional role names in shell progress
+  - long-path-safe benchmark-evaluation artifact I/O on Windows
+- Added and verified the new long-path-safe helper:
+  - `src/idea_graph/fs_utils.py`
+  - plus regression coverage in `tests/test_fs_utils.py`
+- Tightened `pyproject.toml` so `pytest` only collects under `tests/`, which
+  avoids accidental artifact collection from deep `outputs/` paths.
+- Confirmed the prompt/synthesis cleanup is covered by new tests in:
+  - `tests/test_agent_backend.py`
+  - `tests/test_literature_grounding.py`
+  - `tests/test_engine.py`
+- Updated `docs/paper_experiment_tracker.md` to record:
+  - the weak-context `R008F` meteorology rerun
+  - the refreshed cross-benchmark small `M1` packet
+  - today’s infrastructure fixes and the current recommendation
+- Confirmed the current reference small-`M1` packet is:
+  - `outputs/quality_batches/20260411-000159-refreshed-m1-mini-synthesis-cleanup-v2-native`
+- Current small-`M1` interpretation:
+  - `ours-eig` is strongest overall on the refreshed 4-case cross-benchmark
+    packet
+  - `ours-eig` is clearly strongest on `AI_Idea_Bench_2025`
+  - `ours-eig` ties `self-refine` on mean native `LiveIdeaBench` score, but
+    remains stronger by local alignment
+  - the only visible instability is stochastic weak-context meteorology
+- Repository cleanup completed:
+  - deleted `.tmp-external-baseline-runs/` because it contained only transient
+    external-baseline scratch runs already superseded by preserved `outputs/`
+    artifacts
+  - added `.tmp-external-baseline-runs/` to `.gitignore` so future baseline
+    scratch runs do not re-enter version control
+  - restored the accidental dirty state in
+    `.tmp-baselines/Virtual-Scientists` so the parent repository is not left
+    with unrelated submodule noise
+
+## Current Next Step Queue
+
+1. Optional narrow weak-context stabilization:
+   - one more EIG-only refinement pass for meteorology-like
+     `LiveIdeaBench` cases if we want lower run-to-run variance before larger
+     benchmark slices
+2. `M2` core automatic batch:
+   - launch the benchmark-native larger slice once the weak-context decision is
+     made
+   - recommended priority order:
+     - `AI_Idea_Bench_2025` core slice
+     - `LiveIdeaBench` core slice
+3. Paper artifacts:
+   - refresh paper-ready tables and benchmark result notes from the frozen
+     small-`M1` reference packet
+4. Mechanism validation:
+   - run the planned EIG ablations on utility ranking, maturity stop, and flat
+     synthesis after the larger automatic slice is stable
+5. Human evaluation packet:
+   - only after proposal formatting and benchmark-facing behavior stay stable
+
 ### 2026-04-10
 
 - Archived legacy timestamped run folders from `2026-03-24` to `2026-04-01`

@@ -133,6 +133,33 @@ class LiteratureGroundingTests(unittest.TestCase):
         self.assertNotIn("Benchmark keyword:", grounding.existing_methods_summary)
         self.assertTrue(grounding.weak_context_scaffold)
         self.assertIn("divergence_axes", grounding.weak_context_scaffold)
+        self.assertIn("method_instantiation", grounding.weak_context_scaffold)
+
+    def test_periodic_table_keyword_avoids_generic_scaffold_placeholders(self) -> None:
+        grounding = build_literature_grounding(
+            literature=[
+                "Benchmark keyword: periodic table",
+                "This benchmark row provides a keyword prompt rather than retrieved literature.",
+            ],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "periodic table",
+                "benchmark_input_packet": {
+                    "benchmark": "liveideabench",
+                    "keyword": "periodic table",
+                    "reference_packet": [],
+                },
+            },
+        )
+
+        scaffold = grounding.weak_context_scaffold
+        self.assertTrue(scaffold)
+        self.assertNotEqual(scaffold.get("domain_family"), "general_science")
+        self.assertTrue(any("periodic" in item.lower() or "element" in item.lower() for item in grounding.design_highlights))
+        self.assertNotIn("keyword-specific case studies", " ".join(grounding.dataset_items).lower())
+        self.assertNotIn("generic problem framing", grounding.experiment_plan_summary.lower())
+        self.assertNotIn("insufficient mechanism grounding", grounding.existing_methods_summary.lower())
+        self.assertIn("method_instantiation", scaffold)
 
 
 if __name__ == "__main__":

@@ -80,11 +80,19 @@ too early.
 
 ## Current Planning Priority
 
-The next paper-critical step is not another proxy batch. It is `M0`:
+`M0` is complete and the current reference small-`M1` packet is:
 
-- verify end-to-end benchmark-native scoring on one case from each benchmark
-- verify exact `ai-researcher` execution on a benchmark packet
-- make a hard decision on `virsci`
+- `outputs/quality_batches/20260411-000159-refreshed-m1-mini-synthesis-cleanup-v2-native`
 
-Only after that should we launch the first protocol-consistent multi-system
-batch.
+The next paper-critical decision is whether to spend one more narrow refinement
+pass on weak-context `LiveIdeaBench` meteorology stability before larger runs.
+
+If we keep the current packet as the frozen small-`M1` reference, the next run
+order should be:
+
+1. optional weak-context stabilization for `ours-eig` on meteorology-like
+   `LiveIdeaBench` rows
+2. `M2` benchmark-native core automatic slice on `AI_Idea_Bench_2025`
+3. `M2` benchmark-native core automatic slice on `LiveIdeaBench`
+4. EIG ablations after the larger automatic results are stable
+5. shared human blind review after proposal formatting is stable

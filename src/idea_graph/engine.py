@@ -8,6 +8,7 @@ from typing import Callable
 from .agent_backend import (
     ActionDecision,
     CollaborationBackend,
+    ROLE_DISPLAY_NAMES,
     append_agent_trace,
 )
 from .claim_chain import select_claim_chain
@@ -38,6 +39,10 @@ def normalize_text(text: str) -> str:
 def _generation_metadata(graph: IdeaGraph) -> dict[str, object]:
     payload = graph.metadata.get("generation_safe_metadata", graph.metadata)
     return payload if isinstance(payload, dict) else graph.metadata
+
+
+def _progress_role_name(role: str) -> str:
+    return ROLE_DISPLAY_NAMES.get(role, role)
 
 
 def _weak_context_scaffold(graph: IdeaGraph) -> dict[str, object]:
@@ -2910,7 +2915,7 @@ def run_experiment(
                             progress_callback,
                             stage="action_rerank",
                             message=(
-                                f"{round_name} {role}: utility controller overrode the LLM proposal "
+                                f"{round_name} {_progress_role_name(role)}: utility controller overrode the LLM proposal "
                                 f"({llm_action.kind}) with {deterministic_ranked_action.kind}."
                             ),
                             details={
@@ -2933,7 +2938,7 @@ def run_experiment(
                         graph,
                         progress_callback,
                         stage="action_fallback",
-                        message=f"{round_name} {role}: invalid LLM action, using deterministic fallback. Error: {exc}",
+                        message=f"{round_name} {_progress_role_name(role)}: invalid LLM action, using deterministic fallback. Error: {exc}",
                         details={"round": round_name, "role": role, "error": str(exc)},
                     )
                     if deterministic_ranked_action is not None:
@@ -2957,7 +2962,7 @@ def run_experiment(
                         graph,
                         progress_callback,
                         stage="action_fallback",
-                        message=f"{round_name} {role}: LLM action could not be applied, using deterministic fallback. Error: {exc}",
+                        message=f"{round_name} {_progress_role_name(role)}: LLM action could not be applied, using deterministic fallback. Error: {exc}",
                         details={"round": round_name, "role": role, "error": str(exc)},
                     )
                     if deterministic_ranked_action is not None:
@@ -2976,7 +2981,7 @@ def run_experiment(
                 progress_callback,
                 stage="action_applied",
                 message=(
-                    f"{round_name} {role}: applied {action.kind} "
+                    f"{round_name} {_progress_role_name(role)}: applied {action.kind} "
                     f"via "
                     f"{'LLM proposal' if action_source == 'llm' else 'utility controller override' if action_source == 'utility_controller_override' else 'deterministic fallback' if action_source == 'deterministic_fallback' else 'utility-ranked deterministic policy'}."
                 ),

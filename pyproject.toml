@@ -15,3 +15,12 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+    "outputs",
+    "data",
+    ".tmp-baselines",
+    ".tmp-external-baseline-runs",
+]

@@ -1734,11 +1734,182 @@ def _is_noisy_proposal_sentence(sentence: str) -> bool:
         "captured in diverse real scenarios",
         "project website",
         "see the project website",
-        "figure",
-        "table",
         "et al",
     )
-    return any(marker in normalized for marker in noisy_markers)
+    if any(marker in normalized for marker in noisy_markers):
+        return True
+    return bool(
+        re.search(r"\bfigure\s*\d+\b", normalized)
+        or re.search(r"\btable\s*\d+\b", normalized)
+        or normalized.startswith("figure ")
+        or normalized.startswith("table ")
+    )
+
+
+def _replace_weak_context_placeholder_phrases(text: Any) -> str:
+    cleaned = _coerce_string(text)
+    if not cleaned:
+        return ""
+    replacements = {
+        "keyword-specific case studies": "domain-grounded case studies",
+        "generic problem framing": "overly generic task formulations",
+        "insufficient mechanism grounding": "weak linkage between the mechanism and the domain structure",
+    }
+    for source, target in replacements.items():
+        cleaned = re.sub(source, target, cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def _remove_sentences_with_phrases(text: Any, phrases: tuple[str, ...]) -> str:
+    sentences = _split_sentences(text)
+    if not sentences:
+        return _coerce_string(text)
+    normalized_phrases = [_normalize_match_text(item) for item in phrases if item]
+    kept = [
+        sentence
+        for sentence in sentences
+        if not any(phrase in _normalize_match_text(sentence) for phrase in normalized_phrases)
+    ]
+    return " ".join(kept) if kept else ""
+
+
+def _compose_weak_context_existing_methods(
+    keyword: str,
+    directions: list[str],
+    risk_items: list[str],
+) -> str:
+    direction_text = _join_natural_strings(directions[:3]) or "strong task-specific predictive models"
+    summary = f"Common approaches for tasks centered on {keyword} include {direction_text}."
+    if risk_items:
+        summary = _append_unique_sentence(
+            summary,
+            f"These families often struggle with {_join_natural_strings(risk_items[:2])}.",
+        )
+    return summary
+
+
+def _compose_weak_context_focus_claim(keyword: str, method_terms: list[str]) -> str:
+    focus_terms = _unique_strings(method_terms[:2])
+    if len(focus_terms) >= 2:
+        return (
+            f"The key claim is that combining {focus_terms[0]} with {focus_terms[1]} "
+            f"will generalize better than generic predictors for tasks centered on {keyword}."
+        )
+    if focus_terms:
+        return (
+            f"The key claim is that explicitly modeling {focus_terms[0]} "
+            f"will generalize better than generic predictors for tasks centered on {keyword}."
+        )
+    return (
+        f"The key claim is that an explicit mechanism tailored to {keyword} "
+        "will generalize better than a generic predictor."
+    )
+
+
+def _compose_weak_context_method(keyword: str, method_terms: list[str]) -> str:
+    focus_terms = _unique_strings(method_terms[:3])
+    if focus_terms:
+        return (
+            f"The method centers on {_join_natural_strings(focus_terms)}, "
+            f"keeping the model tied to {keyword} rather than relying on a generic predictor."
+        )
+    return (
+        f"The method introduces an explicit inductive bias tailored to {keyword}, "
+        "together with robustness checks for distribution shift."
+    )
+
+
+def _method_has_concrete_detail(text: Any) -> bool:
+    markers = (
+        "encoder",
+        "decoder",
+        "attention",
+        "message passing",
+        "graph",
+        "loss",
+        "objective",
+        "constraint",
+        "module",
+        "backbone",
+        "network",
+        "message-passing",
+        "electron configuration",
+        "group and period",
+    )
+    return _contains_any_term(_coerce_string(text), list(markers))
+
+
+def _compose_weak_context_evaluation(
+    keyword: str,
+    evaluation_assets: list[str],
+    metric_items: list[str],
+    compare_directions: list[str],
+    method_terms: list[str],
+    risk_items: list[str],
+) -> str:
+    asset_text = _join_natural_strings(evaluation_assets[:3]) or f"{keyword}-relevant benchmark tasks"
+    metric_text = _join_natural_strings(metric_items[:4]) or "task-relevant accuracy and robustness metrics"
+    compare_text = _join_natural_strings(compare_directions[:3]) or "strong task-specific baselines"
+    ablation_text = _join_natural_strings(_unique_strings(method_terms[:2])) or "the main proposed components"
+    evaluation = (
+        f"Evaluate on {asset_text}. "
+        f"Report {metric_text}. "
+        f"Compare against {compare_text}. "
+        f"Include ablations on {ablation_text}."
+    )
+    if risk_items:
+        evaluation = _append_unique_sentence(
+            evaluation,
+            f"Stress test {_join_natural_strings(risk_items[:2])}.",
+        )
+    return evaluation
+
+
+def _rewrite_imperative_method_sentences(text: Any) -> str:
+    sentences = _split_sentences(text)
+    if not sentences:
+        return _coerce_string(text)
+    rewritten: list[str] = []
+    for sentence in sentences:
+        stripped = sentence.strip()
+        if not re.match(r"^Use\s+", stripped, flags=re.IGNORECASE):
+            rewritten.append(stripped)
+            continue
+        match = re.match(r"^Use\s+.+?\s+approach\s+to\s+(.+?)\.?$", stripped, flags=re.IGNORECASE)
+        if match:
+            rewritten.append(f"The method is designed to {match.group(1).strip().rstrip('.')}.")
+            continue
+        rewritten.append(f"The method uses {re.sub(r'^Use\s+', '', stripped, flags=re.IGNORECASE).rstrip('.')}.")
+    return " ".join(rewritten)
+
+
+def _has_fragmentary_benchmark_plan(text: Any) -> bool:
+    for sentence in _split_sentences(text):
+        lowered = _normalize_match_text(sentence)
+        word_count = len(sentence.split())
+        if lowered.startswith("evaluate on ") and word_count <= 8:
+            return True
+        if lowered.startswith("report ") and word_count <= 8:
+            return True
+    return False
+
+
+def _compose_grounded_benchmark_evaluation(
+    dataset_items: list[str],
+    metric_items: list[str],
+    reference_titles: list[str],
+    design_anchor_terms: list[str],
+) -> str:
+    dataset_text = _join_natural_strings(dataset_items[:3]) or "the benchmark datasets"
+    metric_text = _join_natural_strings(metric_items[:4]) or "task-relevant quantitative metrics"
+    compare_text = _join_natural_strings(reference_titles[:2]) or "strong benchmark baselines"
+    ablation_text = _join_natural_strings(design_anchor_terms[:2]) or "the main proposed components"
+    return (
+        f"Evaluate on {dataset_text}. "
+        f"Report {metric_text}. "
+        f"Compare against {compare_text}. "
+        f"Include ablations on {ablation_text}."
+    )
 
 
 def _clean_proposal_section_text(text: Any) -> str:
@@ -1805,6 +1976,13 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
     design_anchor_terms = _design_anchor_terms(grounding.design_highlights[:4])
     design_support_terms = _design_support_terms(grounding.design_highlights[:4])
     weak_context_scaffold = grounding.weak_context_scaffold if isinstance(grounding.weak_context_scaffold, dict) else {}
+    scaffold_directions = _list_of_strings(weak_context_scaffold.get("existing_method_directions"))[:3]
+    scaffold_risk_items = _list_of_strings(weak_context_scaffold.get("risk_items"))[:3]
+    scaffold_method_terms = _list_of_strings(weak_context_scaffold.get("mechanism_terms"))[:4]
+    scaffold_design_highlights = _list_of_strings(weak_context_scaffold.get("design_highlights"))[:3]
+    scaffold_evaluation_assets = _list_of_strings(weak_context_scaffold.get("evaluation_assets"))[:3]
+    scaffold_metric_items = _list_of_strings(weak_context_scaffold.get("metric_items"))[:5]
+    scaffold_method_instantiation = _coerce_string(weak_context_scaffold.get("method_instantiation"))
     packet = graph.metadata.get("benchmark_input_packet", {})
     reference_packet = packet.get("reference_packet", []) if isinstance(packet, dict) else []
     keyword = _coerce_string(
@@ -1829,6 +2007,26 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
         "guide rendering",
         "stronger representation",
     )
+    weak_context_existing_markers = (
+        "safe starting directions",
+        "benchmark keyword",
+        "held out metadata",
+        "row provides a keyword prompt",
+        "generic problem framing",
+        "insufficient mechanism grounding",
+    )
+    weak_context_instruction_markers = (
+        "The central mechanism should stay explicitly targeted",
+        "Focus the method on",
+    )
+    weak_context_residue_markers = (
+        "keyword-specific case studies",
+        "generic problem framing",
+        "insufficient mechanism grounding",
+        "overly generic task formulations",
+    )
+
+    proposal.method = _rewrite_imperative_method_sentences(proposal.method)
 
     if grounding.design_highlights and not _contains_any_term(proposal.method, design_support_terms):
         proposal.method = _append_unique_sentence(
@@ -1889,11 +2087,19 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
         keyword_sentence = f"This matters directly for {keyword}."
         if keyword and keyword.casefold() not in _normalize_match_text(proposal.problem):
             proposal.problem = _append_unique_sentence(proposal.problem, keyword_sentence)
+        proposal.hypothesis = _remove_sentences_with_phrases(
+            proposal.hypothesis,
+            (weak_context_instruction_markers[0],),
+        )
         if keyword and keyword.casefold() not in _normalize_match_text(proposal.hypothesis):
             proposal.hypothesis = _append_unique_sentence(
                 proposal.hypothesis,
-                f"The central mechanism should stay explicitly targeted at {keyword}.",
+                _compose_weak_context_focus_claim(keyword, scaffold_method_terms),
             )
+        proposal.method = _remove_sentences_with_phrases(
+            proposal.method,
+            (weak_context_instruction_markers[1],),
+        )
         existing_lower = _normalize_match_text(proposal.existing_methods)
         if (
             "benchmark keyword" in existing_lower
@@ -1905,24 +2111,33 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
                 "physics-aware simulation, and multi-source data fusion methods."
             )
         if weak_context_scaffold:
-            directions = _list_of_strings(weak_context_scaffold.get("existing_method_directions"))[:3]
-            if directions:
-                proposal.existing_methods = (
-                    f"For {keyword}, safe starting directions include {_join_natural_strings(directions)}."
+            if scaffold_directions and (
+                not proposal.existing_methods
+                or _contains_any_phrase(proposal.existing_methods, weak_context_existing_markers)
+                or _normalize_match_text(proposal.existing_methods).startswith("however")
+            ):
+                proposal.existing_methods = _compose_weak_context_existing_methods(
+                    keyword,
+                    scaffold_directions,
+                    scaffold_risk_items,
                 )
-            risk_items = _list_of_strings(weak_context_scaffold.get("risk_items"))[:3]
-            if risk_items and "however" not in _normalize_match_text(proposal.existing_methods):
+            elif scaffold_risk_items and "however" not in _normalize_match_text(proposal.existing_methods):
                 proposal.existing_methods = _append_unique_sentence(
                     proposal.existing_methods,
-                    f"However, these directions often struggle with {_join_natural_strings(risk_items)}.",
+                    f"However, these directions often struggle with {_join_natural_strings(scaffold_risk_items)}.",
                 )
-            method_terms = _list_of_strings(weak_context_scaffold.get("mechanism_terms"))[:4]
-            if _contains_any_phrase(proposal.method, generic_method_markers) and method_terms:
-                proposal.method = (
-                    f"Focus the method on {keyword} with {method_terms[0]}, {method_terms[1] if len(method_terms) > 1 else method_terms[0]}, "
-                    f"and explicit robustness to {method_terms[2] if len(method_terms) > 2 else 'distribution shift'}."
+            if (
+                not proposal.method
+                or _contains_any_phrase(proposal.method, generic_method_markers)
+                or _contains_any_phrase(proposal.method, (weak_context_instruction_markers[1],))
+            ) and scaffold_method_terms:
+                proposal.method = _compose_weak_context_method(keyword, scaffold_method_terms)
+            if scaffold_method_instantiation and not _method_has_concrete_detail(proposal.method):
+                proposal.method = _append_unique_sentence(
+                    proposal.method,
+                    _rewrite_imperative_method_sentences(scaffold_method_instantiation),
                 )
-            design_highlights = _list_of_strings(weak_context_scaffold.get("design_highlights"))[:3]
+            design_highlights = scaffold_design_highlights
             covered_highlight_count = sum(
                 1
                 for item in design_highlights
@@ -1948,32 +2163,33 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
             "scannet",
         )
         if any(marker in evaluation_lower for marker in unsupported_markers):
-            proposal.evaluation = (
-                f"Evaluate on realistic benchmark tasks for {keyword}, compare against strong data-driven and "
-                "hybrid baselines, report task-specific quantitative metrics, and include ablations over the main components."
+            proposal.evaluation = _compose_weak_context_evaluation(
+                keyword,
+                scaffold_evaluation_assets,
+                scaffold_metric_items,
+                scaffold_directions,
+                scaffold_method_terms,
+                scaffold_risk_items,
             )
         if weak_context_scaffold and (
             _contains_any_phrase(proposal.evaluation, generic_evaluation_markers)
             or "realistic benchmark tasks" in evaluation_lower
             or "task-specific quantitative metrics" in evaluation_lower
+            or _contains_any_phrase(proposal.evaluation, weak_context_residue_markers)
         ):
-            evaluation_assets = _list_of_strings(weak_context_scaffold.get("evaluation_assets"))[:2]
-            metric_items = _list_of_strings(weak_context_scaffold.get("metric_items"))[:3]
-            method_terms = _list_of_strings(weak_context_scaffold.get("mechanism_terms"))[:2]
-            compare_directions = _list_of_strings(weak_context_scaffold.get("existing_method_directions"))[:2]
-            asset_text = ", ".join(evaluation_assets) if evaluation_assets else f"{keyword}-specific benchmark tasks"
-            metric_text = ", ".join(metric_items) if metric_items else "accuracy and robustness metrics"
-            compare_text = ", ".join(compare_directions) if compare_directions else "strong reference-inspired baselines"
-            ablation_text = ", ".join(method_terms) if method_terms else "the main proposed components"
-            proposal.evaluation = (
-                f"Evaluate {keyword} on {asset_text}. Report {metric_text}. "
-                f"Compare against {compare_text}, and include ablations on {ablation_text}."
+            proposal.evaluation = _compose_weak_context_evaluation(
+                keyword,
+                scaffold_evaluation_assets,
+                scaffold_metric_items,
+                scaffold_directions,
+                scaffold_method_terms,
+                scaffold_risk_items,
             )
         if weak_context_scaffold:
-            evaluation_assets = _list_of_strings(weak_context_scaffold.get("evaluation_assets"))[:3]
-            metric_items = _list_of_strings(weak_context_scaffold.get("metric_items"))[:5]
-            risk_items = _list_of_strings(weak_context_scaffold.get("risk_items"))[:2]
-            compare_directions = _list_of_strings(weak_context_scaffold.get("existing_method_directions"))[:3]
+            evaluation_assets = scaffold_evaluation_assets
+            metric_items = scaffold_metric_items
+            risk_items = scaffold_risk_items[:2]
+            compare_directions = scaffold_directions
             matched_assets = _matching_terms(proposal.evaluation, evaluation_assets)
             matched_metrics = _matching_terms(proposal.evaluation, metric_items)
             if evaluation_assets and len(matched_assets) < len(evaluation_assets):
@@ -2001,13 +2217,34 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
                     f"Compare against {_join_natural_strings(compare_directions)}.",
                 )
 
+    if (
+        not keyword_only_mode
+        and grounding.dataset_items
+        and grounding.metric_items
+        and _has_fragmentary_benchmark_plan(proposal.evaluation)
+    ):
+        proposal.evaluation = _compose_grounded_benchmark_evaluation(
+            grounding.dataset_items,
+            grounding.metric_items,
+            grounding.reference_titles,
+            design_anchor_terms,
+        )
+
     proposal.method = _remove_exact_scaffold_method_sentences(
         proposal.method,
         grounding.design_highlights[:4],
     )
+    proposal.hypothesis = _replace_weak_context_placeholder_phrases(proposal.hypothesis)
+    proposal.existing_methods = _replace_weak_context_placeholder_phrases(proposal.existing_methods)
+    proposal.method = _replace_weak_context_placeholder_phrases(proposal.method)
+    proposal.evaluation = _replace_weak_context_placeholder_phrases(proposal.evaluation)
+    proposal.caveats = _replace_weak_context_placeholder_phrases(proposal.caveats)
+    proposal.problem = _clean_proposal_section_text(proposal.problem)
+    proposal.hypothesis = _clean_proposal_section_text(proposal.hypothesis)
     proposal.existing_methods = _clean_proposal_section_text(proposal.existing_methods)
     proposal.method = _clean_proposal_section_text(proposal.method)
     proposal.evaluation = _clean_proposal_section_text(proposal.evaluation)
+    proposal.caveats = _clean_proposal_section_text(proposal.caveats)
     return proposal
 
 

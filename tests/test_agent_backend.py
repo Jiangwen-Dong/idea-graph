@@ -538,7 +538,7 @@ class AgentBackendPromptTests(unittest.TestCase):
 
         processed = _postprocess_final_proposal(graph, proposal)
 
-        self.assertIn("however", processed.existing_methods.lower())
+        self.assertIn("common approaches for tasks centered on meteorology", processed.existing_methods.lower())
         self.assertTrue(
             any(
                 item in processed.existing_methods.lower()
@@ -686,6 +686,243 @@ class AgentBackendPromptTests(unittest.TestCase):
 
         self.assertNotIn("Use multi-source data fusion", processed.method)
         self.assertIn("reanalysis signals", processed.method)
+
+    def test_postprocess_final_proposal_rewrites_weak_context_instruction_leakage(self) -> None:
+        graph = IdeaGraph(
+            topic="Ideation topic keyword: meteorology",
+            literature=[
+                "Benchmark keyword: meteorology",
+                "This benchmark row provides a keyword prompt rather than retrieved literature.",
+            ],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "meteorology",
+                "benchmark_input_packet": {
+                    "benchmark": "liveideabench",
+                    "topic": "Ideation topic keyword: meteorology",
+                    "keyword": "meteorology",
+                    "reference_packet": [],
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Physics-Guided Multi-Source Forecasting for Regional Severe Weather",
+            problem=(
+                "Current forecasting models fail to maintain physical consistency during extreme weather events, "
+                "leading to unreliable predictions in regions with sparse observational data. This matters directly for meteorology."
+            ),
+            existing_methods=(
+                "For meteorology, safe starting directions include spatiotemporal forecasting models, "
+                "physics-aware simulation or data-assimilation pipelines, and multi-source environmental data fusion. "
+                "However, these directions often struggle with regional distribution shift, rare-event imbalance, "
+                "and tradeoffs between physical consistency and predictive flexibility."
+            ),
+            motivation=(
+                "Improving severe-weather prediction accuracy in data-scarce regions requires integrating domain "
+                "knowledge with diverse data sources while maintaining robustness against distributional changes."
+            ),
+            hypothesis=(
+                "Integrating physics-guided forecasting with multi-source data fusion can enhance the accuracy and "
+                "robustness of severe-weather predictions in regions with sparse observational networks. "
+                "The central mechanism should stay explicitly targeted at meteorology."
+            ),
+            method=(
+                "Focus the method on meteorology with physics-guided forecasting, data fusion, "
+                "and explicit robustness to spatiotemporal forecasting."
+            ),
+            evaluation=(
+                "Evaluate on regional severe-weather case studies using RMSE, MAE, and CRPS. "
+                "Stress test the model's performance under regional distribution shift and rare-event imbalance scenarios. "
+                "Compare against baseline models using event F1 and calibration error metrics. "
+                "Also validate on reanalysis-based forecasting tasks and satellite and radar nowcasting benchmarks."
+            ),
+            significance="This approach could improve reliable severe-weather forecasting.",
+            caveats="Regional distribution shift may still reduce generalizability.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertNotIn("The central mechanism should stay explicitly targeted", processed.hypothesis)
+        self.assertNotIn("Focus the method on", processed.method)
+        self.assertNotIn("safe starting directions", processed.existing_methods.lower())
+        self.assertIn("physics-guided forecasting", processed.method.lower())
+        self.assertIn("data fusion", processed.method.lower())
+
+    def test_postprocess_final_proposal_adds_concrete_weak_context_method_instantiation(self) -> None:
+        graph = IdeaGraph(
+            topic="Ideation topic keyword: meteorology",
+            literature=[
+                "Benchmark keyword: meteorology",
+                "This benchmark row provides a keyword prompt rather than retrieved literature.",
+            ],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "meteorology",
+                "benchmark_input_packet": {
+                    "benchmark": "liveideabench",
+                    "topic": "Ideation topic keyword: meteorology",
+                    "keyword": "meteorology",
+                    "reference_packet": [],
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Physics-Guided Multi-Source Forecasting",
+            problem="Regional severe-weather forecasting remains difficult under sparse observations.",
+            existing_methods="Current methods remain limited.",
+            motivation="Better weather forecasts matter.",
+            hypothesis="Physics-guided forecasting with data fusion can improve robustness.",
+            method="The method centers on physics-guided forecasting, data fusion, and spatiotemporal forecasting, keeping the model tied to meteorology rather than relying on a generic predictor.",
+            evaluation="Evaluate on realistic benchmark tasks for meteorology, compare against strong baselines, and report task-specific quantitative metrics.",
+            significance="This could improve weather prediction.",
+            caveats="Regional shift may reduce robustness.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertTrue(
+            any(
+                marker in processed.method.lower()
+                for marker in ("spatiotemporal encoder", "physics-consistency loss", "physics consistency objective")
+            )
+        )
+
+    def test_postprocess_final_proposal_repairs_periodic_table_scaffold_residue(self) -> None:
+        graph = IdeaGraph(
+            topic="Ideation topic keyword: periodic table",
+            literature=[
+                "Benchmark keyword: periodic table",
+                "This benchmark row provides a keyword prompt rather than retrieved literature.",
+            ],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "periodic table",
+                "benchmark_input_packet": {
+                    "benchmark": "liveideabench",
+                    "topic": "Ideation topic keyword: periodic table",
+                    "keyword": "periodic table",
+                    "reference_packet": [],
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Mechanism-Aware Modeling for Periodic Table Predictions",
+            problem=(
+                "Current models lack explicit inductive bias for understanding periodic table relationships, "
+                "leading to poor generalization across chemical properties and element interactions."
+            ),
+            existing_methods=(
+                "However, these directions often struggle with generic problem framing, distribution shift, "
+                "and insufficient mechanism grounding."
+            ),
+            motivation=(
+                "Explicitly encoding periodic trends as inductive biases can improve prediction accuracy "
+                "and robustness in chemical property inference."
+            ),
+            hypothesis=(
+                "A mechanism-aware model that encodes periodic trends as relational inductive biases using graph "
+                "neural networks with explicit atomic property propagation will outperform generic predictors on "
+                "out-of-distribution tasks. The central mechanism should stay explicitly targeted at periodic table."
+            ),
+            method=(
+                "Design a graph-based representation where nodes represent elements and edges encode periodic trends "
+                "such as electron configuration or atomic radius variations. Integrate multiview data including "
+                "chemical properties and historical context to enhance robustness. Test under distribution shifts "
+                "and perform ablation studies to evaluate the impact of each component."
+            ),
+            evaluation=(
+                "Evaluate on held-out benchmark tasks and out-of-distribution splits using accuracy, F1, calibration "
+                "error, and robustness under shift. Stress-test the model with novel chemical interactions and compare "
+                "against baseline predictive models. Include ablations on Mechanism-Aware Modeling, Multiview Integration. "
+                "Also validate on out-of-distribution or stress-test splits and keyword-specific case studies. "
+                "Stress test generic problem framing and distribution shift."
+            ),
+            significance="This approach could improve predictive modeling over periodic structures.",
+            caveats=(
+                "Overfitting to specific periodic trends may reduce generalization to novel chemical systems, "
+                "and insufficient mechanism grounding could limit effectiveness."
+            ),
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertNotIn("The central mechanism should stay explicitly targeted", processed.hypothesis)
+        self.assertNotIn("keyword-specific case studies", processed.evaluation.lower())
+        self.assertNotIn("generic problem framing", processed.evaluation.lower())
+        self.assertNotIn("insufficient mechanism grounding", processed.existing_methods.lower())
+        self.assertFalse(processed.existing_methods.startswith("However"))
+        self.assertIn("periodic table", processed.existing_methods.lower())
+
+    def test_postprocess_final_proposal_rewrites_imperative_aiib_method_and_fragmentary_eval(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is 3D language field modeling.",
+            literature=["LERF", "Mip-NeRF360", "3D Gaussian Splatting"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "literature_grounding": {
+                    "source": "paper_snippets",
+                    "reference_titles": [
+                        "LERF",
+                        "Mip-NeRF360",
+                        "3D Gaussian Splatting",
+                    ],
+                    "design_highlights": [
+                        "Hierarchical Querying: support open-vocabulary retrieval over 3D volumes without region proposals.",
+                    ],
+                    "dataset_items": [
+                        "LERF dataset",
+                        "App Polycam",
+                    ],
+                    "metric_items": [
+                        "localization accuracy",
+                        "PSNR",
+                        "SSIM",
+                    ],
+                    "existing_methods_summary": (
+                        "The provided literature context includes LERF, Mip-NeRF360, and 3D Gaussian Splatting."
+                    ),
+                    "experiment_plan_summary": (
+                        "Evaluate on LERF dataset and App Polycam. Report localization accuracy, PSNR, and SSIM."
+                    ),
+                    "weak_context_scaffold": {},
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Hierarchical Language-Driven Radiance Fields with Lerf",
+            problem=(
+                "Current 3D language field modeling approaches struggle to achieve high visual quality and support "
+                "open-vocabulary queries without region proposals or masks."
+            ),
+            existing_methods="Current methods remain limited.",
+            motivation=(
+                "Integrating language understanding into 3D radiance fields can enable more natural and flexible "
+                "scene interactions, particularly for complex, open-ended queries."
+            ),
+            hypothesis="A hierarchical language-aware field can improve open-vocabulary querying.",
+            method=(
+                "Use Lerf's approach to embed language into radiance fields without region proposals, enabling "
+                "hierarchical querying of 3D volumes. Integrate CLIP embeddings as the language module and refine "
+                "the hierarchical query processing to handle long-tail vocabulary."
+            ),
+            evaluation=(
+                "Evaluate the ability of the proposed model to support open-vocabulary queries across a volumetric "
+                "scene without region proposals. Compare against baseline methods like Mip-NeRF360 and 3D Gaussian "
+                "Splatting using quantitative metrics such as PSNR and SSIM, and conduct ablation studies on the "
+                "impact of language embedding integration. Evaluate on LERF dataset, App Polycam. Report "
+                "localization accuracy, accuracy, IoU."
+            ),
+            significance="This could improve open-vocabulary 3D scene understanding.",
+            caveats="The method may increase compute cost.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertNotIn("Use Lerf's approach", processed.method)
+        self.assertIn("embed language into radiance fields", processed.method.lower())
+        self.assertNotIn("Evaluate on LERF dataset, App Polycam.", processed.evaluation)
+        self.assertIn("Compare against", processed.evaluation)
+        self.assertIn("ablation", processed.evaluation.lower())
 
 
 if __name__ == "__main__":

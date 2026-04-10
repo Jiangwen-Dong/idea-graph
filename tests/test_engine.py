@@ -131,6 +131,18 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(any("Run complete" in message for message in messages))
         self.assertIn("progress_log", graph.metadata)
 
+    def test_progress_callback_uses_functional_role_display_names(self) -> None:
+        messages: list[str] = []
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            progress_callback=messages.append,
+        )
+
+        self.assertIsNotNone(graph.final_proposal)
+        self.assertTrue(any("TaskFramer" in message for message in messages))
+        self.assertTrue(any("LiteratureGrounder" in message for message in messages))
+
     def test_deterministic_synthesis_produces_richer_structured_fields(self) -> None:
         graph = run_experiment(
             topic="graph-based scientific ideation",
