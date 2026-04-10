@@ -75,6 +75,20 @@ class ExperimentPlanTests(unittest.TestCase):
         )
         self.assertEqual(instance.literature, self._instance().literature)
 
+    def test_main_method_plan_includes_exact_ai_researcher(self) -> None:
+        self.assertIn("ai-researcher", MAIN_METHOD_PLANS)
+
+        instance = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=MAIN_METHOD_PLANS["ai-researcher"],
+        )
+
+        self.assertEqual(instance.metadata["method_name"], "ai-researcher")
+        self.assertEqual(instance.metadata["runner_baseline_name"], "ai-researcher")
+        self.assertEqual(instance.metadata["baseline_name"], "ai-researcher")
+        self.assertGreater(len(instance.metadata["benchmark_input_packet"]["reference_packet"]), 0)
+        self.assertEqual(instance.literature, self._instance().literature)
+
     def test_no_reference_grounding_plan_strips_reference_packet_and_grounding(self) -> None:
         instance = prepare_instance_for_method_plan(
             self._instance(),

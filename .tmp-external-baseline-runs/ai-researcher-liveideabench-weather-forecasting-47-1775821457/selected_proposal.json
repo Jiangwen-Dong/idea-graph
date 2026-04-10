@@ -1,0 +1,12 @@
+{
+  "title": "Multi-Modal Fusion of Satellite and Ground Sensor Data for Urban Weather Forecasting",
+  "abstract": "",
+  "problem": "Urban areas face unique microclimatic challenges that are not well captured by conventional weather models due to complex interactions between buildings, terrain, and human activities This matters directly for weather forecasting.",
+  "existing_methods": "Current methods rely on numerical weather prediction (NWP) models and sparse ground-based sensor networks, which lack the spatial resolution and real-time adaptability needed for urban environments.",
+  "motivation": "Accurate urban weather forecasting is critical for disaster response, smart city planning, and public safety, yet existing systems fail to integrate diverse data sources effectively.",
+  "hypothesis": "Fusing satellite imagery with high-frequency ground sensor data can significantly improve the accuracy and timeliness of urban weather forecasts compared to single-modal approaches.",
+  "method": "Propose a hybrid model that integrates convolutional neural networks (CNNs) for satellite image analysis with recurrent neural networks (RNNs) for time-series sensor data. Use attention mechanisms to dynamically weigh the contribution of each data source based on environmental conditions.",
+  "evaluation": "Evaluate the model using city-scale datasets such as the Chicago Climate Dataset and compare performance against traditional NWP models and standalone sensor-based systems using metrics like mean absolute error (MAE) and root mean square error (RMSE).",
+  "significance": "This approach could enable more precise and responsive urban weather forecasting, supporting better decision-making in climate-sensitive applications.",
+  "caveats": "The method assumes access to high-resolution satellite data and dense IoT sensor networks, which may not be available in all urban regions."
+}

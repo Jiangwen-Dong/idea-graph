@@ -5,24 +5,48 @@ import json
 import re
 from typing import Any, Protocol
 
+from .claim_chain import select_claim_chain
 from .collaboration_protocol import (
     ACTION_PROMPT_HINTS,
     ACTION_REQUIRED_PAYLOAD_FIELDS,
     ACTION_TARGET_COUNTS,
     resolve_round_phase,
 )
-from .literature_grounding import build_literature_grounding
+from .literature_grounding import LiteratureGrounding, build_literature_grounding
 from .llm import ChatCompletionResult, OpenAICompatibleChatClient
 from .models import FinalProposal, IdeaGraph
 from .schema import EDGE_TYPES, NODE_TYPES, ROLE_NAMES
 from .settings import OpenAICompatibleSettings
 
+ROLE_DISPLAY_NAMES = {
+    "ImpactReframer": "TaskFramer",
+    "NoveltyExaminer": "LiteratureGrounder",
+    "MechanismProposer": "MethodArchitect",
+    "EvaluationDesigner": "ExperimentDesigner",
+    "FeasibilityCritic": "SkepticRepairer",
+}
+
 ROLE_GUIDANCE = {
-    "MechanismProposer": "Prefer hypotheses and methods that define a concrete research mechanism.",
-    "FeasibilityCritic": "Prefer risks, assumptions, and evaluation pressure tests that surface practical failure modes.",
-    "NoveltyExaminer": "Prefer novelty claims, overlap checks, and evidence requests grounded in nearby prior work.",
-    "EvaluationDesigner": "Prefer evaluations, datasets, metrics, and dependency structure that make claims testable.",
-    "ImpactReframer": "Prefer problem framing, significance, and alternative research directions with interpretable tradeoffs.",
+    "MechanismProposer": (
+        "MethodArchitect: own one core mechanism and the design choices that make it work. "
+        "Prefer hypotheses and methods that define a concrete research mechanism."
+    ),
+    "FeasibilityCritic": (
+        "SkepticRepairer: own mismatch detection, risks, assumptions, and concrete repairs that keep the idea realistic. "
+        "Prefer risks, assumptions, repair candidates, and evaluation pressure tests that surface practical failure modes."
+    ),
+    "NoveltyExaminer": (
+        "LiteratureGrounder: own the visible reference-based gap, overlap boundaries, novelty boundaries, and novelty positioning relative to the provided literature only. "
+        "Prefer literature-grounded gap statements, overlap checks, and evidence requests grounded in nearby prior work."
+    ),
+    "EvaluationDesigner": (
+        "ExperimentDesigner: own the evaluation logic that directly tests the mechanism. "
+        "Prefer evaluations, datasets or tasks, metrics, baselines, and ablations that make claims testable."
+    ),
+    "ImpactReframer": (
+        "TaskFramer: own the exact benchmark task, the concrete failure mode or bottleneck, and why the problem matters. "
+        "Prefer problem framing, significance, and alternative research directions with interpretable tradeoffs."
+    ),
 }
 
 ROLE_PREFERRED_ANCHOR_TYPES = {
@@ -37,6 +61,10 @@ SYMBOLIC_REFERENCE_PATTERN = re.compile(
     r"(?:paper_grounding\.)?reference_paper_snippets\[(\d+)\](?:\.(\w+))?",
     re.IGNORECASE,
 )
+
+
+def _role_prompt_name(role: str) -> str:
+    return ROLE_DISPLAY_NAMES.get(role, role)
 
 
 @dataclass(frozen=True)
@@ -495,6 +523,7 @@ def _compact_benchmark_packet(graph: IdeaGraph, *, max_references: int = 4, snip
     return {
         "benchmark": _coerce_string(packet.get("benchmark")),
         "topic": _coerce_string(packet.get("topic") or graph.topic),
+        "keyword": _coerce_string(packet.get("keyword") or graph.metadata.get("keyword")),
         "task_instruction": _truncate_text(packet.get("task_instruction"), max_chars=220),
         "reference_packet": compact_references,
         "constraints": _list_of_strings(packet.get("constraints"))[:4],
@@ -504,12 +533,16 @@ def _compact_benchmark_packet(graph: IdeaGraph, *, max_references: int = 4, snip
 def _compact_generation_context(graph: IdeaGraph) -> dict[str, object]:
     safe_metadata = _prompt_safe_metadata(graph.metadata)
     grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata).as_dict()
+    weak_context_scaffold = grounding.get("weak_context_scaffold", {})
+    weak_context_mode = bool(weak_context_scaffold)
     return {
         "benchmark_packet": _compact_benchmark_packet(graph),
         "design_highlights": _list_of_strings(grounding.get("design_highlights"))[:3],
         "design_anchor_terms": _design_anchor_terms(_list_of_strings(grounding.get("design_highlights"))[:4]),
         "dataset_items": _list_of_strings(grounding.get("dataset_items"))[:4],
         "metric_items": _list_of_strings(grounding.get("metric_items"))[:6],
+        "weak_context_mode": weak_context_mode,
+        "weak_context_scaffold": weak_context_scaffold if isinstance(weak_context_scaffold, dict) else {},
     }
 
 
@@ -669,6 +702,45 @@ def _design_anchor_terms(design_highlights: list[str]) -> list[str]:
         if label:
             anchors.append(label)
     return _unique_strings(anchors)[:4]
+
+
+def _design_support_terms(design_highlights: list[str]) -> list[str]:
+    terms: list[str] = []
+    for item in design_highlights:
+        cleaned = _coerce_string(item)
+        if not cleaned:
+            continue
+        label = cleaned
+        detail = ""
+        if ":" in cleaned:
+            label, detail = cleaned.split(":", 1)
+            detail = detail.strip().rstrip(".")
+        label = label.strip()
+        if label:
+            terms.append(label)
+        if detail:
+            terms.append(detail)
+            for piece in re.split(r",|;|\band\b|\bor\b", detail):
+                normalized = " ".join(piece.split())
+                if len(normalized.split()) >= 2:
+                    terms.append(normalized)
+    return _unique_strings(terms)[:12]
+
+
+def _naturalize_design_highlight(design_highlight: Any) -> str:
+    cleaned = _coerce_string(design_highlight).rstrip(".")
+    if not cleaned:
+        return ""
+    if ":" not in cleaned:
+        return _first_sentence(cleaned)
+    label, detail = cleaned.split(":", 1)
+    label = label.strip()
+    detail = detail.strip().rstrip(".")
+    if not label:
+        return _first_sentence(detail)
+    if not detail:
+        return f"Use {label.casefold()} as a core component."
+    return f"Use {label.casefold()} to {detail}."
 
 
 def _best_attach_evidence_text(
@@ -1217,7 +1289,8 @@ def _baseline_prompt_instruction(metadata: dict[str, Any]) -> str:
 def _seed_system_prompt(role: str) -> str:
     preferred_anchor_types = ROLE_PREFERRED_ANCHOR_TYPES.get(role, tuple(NODE_TYPES))
     return (
-        f"You are the {role} agent in a delayed-consensus scientific ideation system. "
+        f"You are the {_role_prompt_name(role)} agent in a delayed-consensus scientific ideation system. "
+        f"(Internal role id: {role}.) "
         f"{ROLE_GUIDANCE.get(role, '')} "
         "Return strict JSON only. Do not use markdown. "
         "Create one partial seed graph, not a complete abstract. "
@@ -1234,10 +1307,12 @@ def _seed_system_prompt(role: str) -> str:
 
 
 def _seed_user_prompt(graph: IdeaGraph, role: str) -> str:
+    context_packet = _compact_generation_context(graph)
+    weak_context_mode = bool(context_packet.get("weak_context_mode"))
     payload = {
         "role": role,
         "topic": graph.topic,
-        "context_packet": _compact_generation_context(graph),
+        "context_packet": context_packet,
         "baseline_context": _baseline_prompt_instruction(graph.metadata),
         "constraints": {
             "exactly_one_anchor": True,
@@ -1245,6 +1320,21 @@ def _seed_user_prompt(graph: IdeaGraph, role: str) -> str:
             "no_full_abstract": True,
         },
     }
+    if weak_context_mode:
+        payload["weak_context_guidance"] = {
+            "enabled": True,
+            "goal": (
+                "Use the weak-context scaffold to open one concrete but distinct branch. "
+                "Favor divergent thinking across problem framing, mechanism choice, and evaluation design "
+                "instead of converging immediately to a generic solution."
+            ),
+            "divergence_axes": _list_of_strings(
+                context_packet.get("weak_context_scaffold", {}).get("divergence_axes")
+                if isinstance(context_packet.get("weak_context_scaffold"), dict)
+                else []
+            )[:3],
+            "design_highlights": _list_of_strings(context_packet.get("design_highlights"))[:3],
+        }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -1255,6 +1345,7 @@ def _action_system_prompt(
     allowed_actions: tuple[str, ...],
 ) -> str:
     phase = resolve_round_phase(round_name)
+    weak_context_mode = bool(_compact_generation_context(graph).get("weak_context_mode"))
     action_lines = []
     for action_kind in allowed_actions:
         hint = ACTION_PROMPT_HINTS[action_kind]
@@ -1278,8 +1369,17 @@ def _action_system_prompt(
             "Do not invent a new repair. Prefer attaching grounding to a weak node, adding one missing support edge, "
             "or freezing a coherent branch."
         )
+    weak_context_instruction = ""
+    if weak_context_mode:
+        weak_context_instruction = (
+            " This is a keyword-only weak-context benchmark. Preserve useful divergence for longer: "
+            "prefer edits that make the graph more keyword-specific, add one concrete mechanism or evaluation anchor, "
+            "or keep distinct branches alive when they reflect different scaffold directions. "
+            "Do not freeze a generic branch just because it is locally coherent."
+        )
     return (
-        f"You are the {role} agent in round {round_name} of delayed-consensus scientific collaboration. "
+        f"You are the {_role_prompt_name(role)} agent in round {round_name} of delayed-consensus scientific collaboration. "
+        f"(Internal role id: {role}.) "
         f"Current phase: {phase.title}. "
         f"Round objective: {phase.objective} "
         f"{ROLE_GUIDANCE.get(role, '')} "
@@ -1293,6 +1393,7 @@ def _action_system_prompt(
         "Use request_evidence mainly when the current prompt does not already provide one concrete supporting clue. "
         f"{decision_focus} "
         f"{phase_specific_instruction}"
+        f"{weak_context_instruction}"
         "Return strict JSON only. Do not use markdown. "
         f"Allowed action kinds for this phase: {', '.join(allowed_actions)}. "
         "Use existing node IDs and branch IDs from the provided graph snapshot. "
@@ -1357,6 +1458,7 @@ def _action_user_prompt(graph: IdeaGraph, round_name: str, role: str) -> str:
         "action_requirements": action_requirements,
         "benchmark_focus": {
             "topic": context_packet.get("benchmark_packet", {}).get("topic"),
+            "keyword": context_packet.get("benchmark_packet", {}).get("keyword"),
             "reference_titles": [
                 item.get("title", "")
                 for item in context_packet.get("benchmark_packet", {}).get("reference_packet", [])
@@ -1371,6 +1473,18 @@ def _action_user_prompt(graph: IdeaGraph, round_name: str, role: str) -> str:
         "repair_priority_targets": _repair_priority_targets(graph),
         "decision_instruction": decision_instruction,
     }
+    weak_context_scaffold = context_packet.get("weak_context_scaffold", {})
+    if isinstance(weak_context_scaffold, dict) and weak_context_scaffold:
+        payload["weak_context_guidance"] = {
+            "enabled": True,
+            "goal": (
+                "Increase keyword-specific structure before convergence. Prefer edits that make the graph mention the "
+                "benchmark keyword together with one concrete mechanism family and one concrete evaluation anchor."
+            ),
+            "divergence_axes": _list_of_strings(weak_context_scaffold.get("divergence_axes"))[:3],
+            "mechanism_terms": _list_of_strings(weak_context_scaffold.get("mechanism_terms"))[:5],
+            "risk_items": _list_of_strings(weak_context_scaffold.get("risk_items"))[:3],
+        }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -1390,10 +1504,13 @@ def _synthesis_system_prompt() -> str:
         "When design highlights or design_anchor_terms are provided, explicitly reuse at least one concrete module, bottleneck, or mechanism name rather than writing only a high-level combination. "
         "When selected nodes contain Repair, Risk, Assumption, or NoveltyClaim content, use them to sharpen method details, caveats, or novelty positioning instead of dropping them. "
         "When dataset_items or metric_items are provided, mention at least one dataset and one metric explicitly in the evaluation field rather than using vague placeholders like 'benchmark datasets' or generic metrics. "
+        "Favor clean natural prose over copied snippet fragments. If a literature fragment looks truncated, noisy, or copied from OCR/PDF extraction, omit it instead of reproducing it. "
         "Existing Methods should name 2-3 concrete reference directions when the input provides them, and should state one concrete limitation instead of only listing titles. "
         "The Method section should describe 2-4 concrete design choices and how they interact. "
         "The Evaluation section should name datasets, metrics, baselines, and at least one ablation or stress test when the input supports them. "
         "If the context is keyword-only and does not support named datasets, stay cautious and do not invent benchmark names. "
+        "If a weak_context_scaffold is provided, use it to make the proposal keyword-specific and to keep one divergent mechanism family explicit. "
+        "Prefer one coherent method story rather than stitching together several loosely related mechanisms. "
         "Make the method concrete by naming 2-4 distinct design choices or stages when the graph supports them. "
         "Make the evaluation concrete by naming candidate datasets, baselines, metrics, and at least one ablation or stress test when the context supports them. "
         "Use the fields to produce a proposal that is richer than isolated graph nodes but shorter than a full manuscript. "
@@ -1422,6 +1539,7 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             local_node_ids.add(edge.target_id)
     safe_metadata = _prompt_safe_metadata(graph.metadata)
     grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata)
+    selected_claim_chain = select_claim_chain(graph, node_ids=local_node_ids or None)
     latest_round = graph.round_summaries[-1][1] if graph.round_summaries else None
     payload = {
         "topic": graph.topic,
@@ -1442,6 +1560,7 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             "metric_items": grounding.metric_items[:6],
             "existing_methods_summary": _truncate_text(grounding.existing_methods_summary, max_chars=320),
             "experiment_plan_summary": _truncate_text(grounding.experiment_plan_summary, max_chars=260),
+            "weak_context_scaffold": grounding.weak_context_scaffold if isinstance(grounding.weak_context_scaffold, dict) else {},
         },
         "specificity_requirements": {
             "reuse_design_anchor_terms": _design_anchor_terms(grounding.design_highlights[:4]),
@@ -1449,10 +1568,12 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             "mention_metric_items": grounding.metric_items[:3],
             "name_reference_titles": grounding.reference_titles[:3],
             "include_ablation": True,
+            "keep_keyword_explicit": _coerce_string(graph.metadata.get("keyword")),
         },
         "writing_target": {
             "style": "compact structured research idea",
             "length": "sectioned proposal, shorter than a paper",
+            "must_follow_claim_chain": True,
             "must_not_do": [
                 "do not merely copy node text verbatim into multiple sections",
                 "do not fabricate detailed prior-work claims without support",
@@ -1468,6 +1589,7 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             "evaluation_should_include_dataset_metric_baseline_and_ablation_when_supported": True,
             "problem_and_motivation_should_not_repeat_each_other": True,
         },
+        "selected_claim_chain": selected_claim_chain or {},
         "latest_round_snapshot": (
             {
                 "support_coverage": latest_round.support_coverage,
@@ -1554,6 +1676,29 @@ def _contains_any_term(text: str, terms: list[str]) -> bool:
     return False
 
 
+def _matching_terms(text: str, terms: list[str]) -> list[str]:
+    haystack = _normalize_match_text(text)
+    if not haystack:
+        return []
+    matches: list[str] = []
+    for term in terms:
+        needle = _normalize_match_text(term)
+        if needle and needle in haystack:
+            matches.append(_coerce_string(term))
+    return _unique_strings(matches)
+
+
+def _join_natural_strings(items: list[str]) -> str:
+    cleaned = [item.strip() for item in items if item and item.strip()]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    if len(cleaned) == 2:
+        return f"{cleaned[0]} and {cleaned[1]}"
+    return f"{', '.join(cleaned[:-1])}, and {cleaned[-1]}"
+
+
 def _append_unique_sentence(base_text: str, sentence: str) -> str:
     base = _coerce_string(base_text)
     addition = _coerce_string(sentence)
@@ -1572,10 +1717,94 @@ def _contains_any_phrase(text: str, phrases: tuple[str, ...]) -> bool:
     return any(_normalize_match_text(phrase) in normalized for phrase in phrases if phrase)
 
 
+def _split_sentences(text: Any) -> list[str]:
+    cleaned = _coerce_string(text)
+    if not cleaned:
+        return []
+    return [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", cleaned) if sentence.strip()]
+
+
+def _is_noisy_proposal_sentence(sentence: str) -> bool:
+    normalized = _normalize_match_text(sentence)
+    if not normalized:
+        return True
+    noisy_markers = (
+        "experiments were conducted on paper introduces",
+        "paper introduces",
+        "captured in diverse real scenarios",
+        "project website",
+        "see the project website",
+        "figure",
+        "table",
+        "et al",
+    )
+    return any(marker in normalized for marker in noisy_markers)
+
+
+def _clean_proposal_section_text(text: Any) -> str:
+    sentences = _split_sentences(text)
+    if not sentences:
+        return _coerce_string(text)
+    kept: list[str] = []
+    seen: set[str] = set()
+    for sentence in sentences:
+        normalized = _normalize_match_text(sentence)
+        if not normalized or normalized in seen:
+            continue
+        if _is_noisy_proposal_sentence(sentence):
+            continue
+        kept.append(sentence)
+        seen.add(normalized)
+    return " ".join(kept) if kept else _coerce_string(text)
+
+
+def _remove_exact_scaffold_method_sentences(method_text: str, design_highlights: list[str]) -> str:
+    sentences = _split_sentences(method_text)
+    if len(sentences) <= 1:
+        return _coerce_string(method_text)
+    scaffold_sentences = {
+        _normalize_match_text(_naturalize_design_highlight(item))
+        for item in design_highlights
+        if _naturalize_design_highlight(item)
+    }
+    if not scaffold_sentences:
+        return _coerce_string(method_text)
+    kept_sentences = [
+        sentence
+        for sentence in sentences
+        if _normalize_match_text(sentence) not in scaffold_sentences
+    ]
+    if not kept_sentences:
+        return _coerce_string(method_text)
+    return " ".join(kept_sentences)
+
+
+def _postprocess_grounding(graph: IdeaGraph) -> LiteratureGrounding:
+    stored = graph.metadata.get("literature_grounding", {})
+    if isinstance(stored, dict) and stored:
+        return LiteratureGrounding(
+            source=_coerce_string(stored.get("source")),
+            target_paper=_coerce_string(stored.get("target_paper")),
+            reference_titles=_list_of_strings(stored.get("reference_titles")),
+            design_highlights=_list_of_strings(stored.get("design_highlights")),
+            dataset_items=_list_of_strings(stored.get("dataset_items")),
+            metric_items=_list_of_strings(stored.get("metric_items")),
+            existing_methods_summary=_coerce_string(stored.get("existing_methods_summary")),
+            experiment_plan_summary=_coerce_string(stored.get("experiment_plan_summary")),
+            weak_context_scaffold=(
+                dict(stored.get("weak_context_scaffold", {}))
+                if isinstance(stored.get("weak_context_scaffold"), dict)
+                else {}
+            ),
+        )
+    return build_literature_grounding(literature=graph.literature, metadata=graph.metadata)
+
+
 def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> FinalProposal:
-    safe_metadata = _prompt_safe_metadata(graph.metadata)
-    grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata)
+    grounding = _postprocess_grounding(graph)
     design_anchor_terms = _design_anchor_terms(grounding.design_highlights[:4])
+    design_support_terms = _design_support_terms(grounding.design_highlights[:4])
+    weak_context_scaffold = grounding.weak_context_scaffold if isinstance(grounding.weak_context_scaffold, dict) else {}
     packet = graph.metadata.get("benchmark_input_packet", {})
     reference_packet = packet.get("reference_packet", []) if isinstance(packet, dict) else []
     keyword = _coerce_string(
@@ -1601,10 +1830,10 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
         "stronger representation",
     )
 
-    if design_anchor_terms and not _contains_any_term(proposal.method, design_anchor_terms):
+    if grounding.design_highlights and not _contains_any_term(proposal.method, design_support_terms):
         proposal.method = _append_unique_sentence(
             proposal.method,
-            _first_sentence(grounding.design_highlights[0], max_chars=220),
+            _naturalize_design_highlight(grounding.design_highlights[0]),
         )
 
     if design_anchor_terms and not _contains_any_phrase(proposal.evaluation, ("ablation", "stress test")):
@@ -1657,6 +1886,14 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
         )
 
     if keyword_only_mode:
+        keyword_sentence = f"This matters directly for {keyword}."
+        if keyword and keyword.casefold() not in _normalize_match_text(proposal.problem):
+            proposal.problem = _append_unique_sentence(proposal.problem, keyword_sentence)
+        if keyword and keyword.casefold() not in _normalize_match_text(proposal.hypothesis):
+            proposal.hypothesis = _append_unique_sentence(
+                proposal.hypothesis,
+                f"The central mechanism should stay explicitly targeted at {keyword}.",
+            )
         existing_lower = _normalize_match_text(proposal.existing_methods)
         if (
             "benchmark keyword" in existing_lower
@@ -1667,6 +1904,41 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
                 f"For {keyword}, plausible existing directions include spatiotemporal forecasting models, "
                 "physics-aware simulation, and multi-source data fusion methods."
             )
+        if weak_context_scaffold:
+            directions = _list_of_strings(weak_context_scaffold.get("existing_method_directions"))[:3]
+            if directions:
+                proposal.existing_methods = (
+                    f"For {keyword}, safe starting directions include {_join_natural_strings(directions)}."
+                )
+            risk_items = _list_of_strings(weak_context_scaffold.get("risk_items"))[:3]
+            if risk_items and "however" not in _normalize_match_text(proposal.existing_methods):
+                proposal.existing_methods = _append_unique_sentence(
+                    proposal.existing_methods,
+                    f"However, these directions often struggle with {_join_natural_strings(risk_items)}.",
+                )
+            method_terms = _list_of_strings(weak_context_scaffold.get("mechanism_terms"))[:4]
+            if _contains_any_phrase(proposal.method, generic_method_markers) and method_terms:
+                proposal.method = (
+                    f"Focus the method on {keyword} with {method_terms[0]}, {method_terms[1] if len(method_terms) > 1 else method_terms[0]}, "
+                    f"and explicit robustness to {method_terms[2] if len(method_terms) > 2 else 'distribution shift'}."
+                )
+            design_highlights = _list_of_strings(weak_context_scaffold.get("design_highlights"))[:3]
+            covered_highlight_count = sum(
+                1
+                for item in design_highlights
+                if _contains_any_term(proposal.method, _design_support_terms([item]))
+            )
+            if design_highlights and covered_highlight_count < min(2, len(design_highlights)):
+                for item in design_highlights:
+                    if _contains_any_term(proposal.method, _design_support_terms([item])):
+                        continue
+                    proposal.method = _append_unique_sentence(
+                        proposal.method,
+                        _naturalize_design_highlight(item),
+                    )
+                    covered_highlight_count += 1
+                    if covered_highlight_count >= min(2, len(design_highlights)):
+                        break
         evaluation_lower = _normalize_match_text(proposal.evaluation)
         unsupported_markers = (
             "synthetic urban dataset",
@@ -1680,7 +1952,62 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
                 f"Evaluate on realistic benchmark tasks for {keyword}, compare against strong data-driven and "
                 "hybrid baselines, report task-specific quantitative metrics, and include ablations over the main components."
             )
+        if weak_context_scaffold and (
+            _contains_any_phrase(proposal.evaluation, generic_evaluation_markers)
+            or "realistic benchmark tasks" in evaluation_lower
+            or "task-specific quantitative metrics" in evaluation_lower
+        ):
+            evaluation_assets = _list_of_strings(weak_context_scaffold.get("evaluation_assets"))[:2]
+            metric_items = _list_of_strings(weak_context_scaffold.get("metric_items"))[:3]
+            method_terms = _list_of_strings(weak_context_scaffold.get("mechanism_terms"))[:2]
+            compare_directions = _list_of_strings(weak_context_scaffold.get("existing_method_directions"))[:2]
+            asset_text = ", ".join(evaluation_assets) if evaluation_assets else f"{keyword}-specific benchmark tasks"
+            metric_text = ", ".join(metric_items) if metric_items else "accuracy and robustness metrics"
+            compare_text = ", ".join(compare_directions) if compare_directions else "strong reference-inspired baselines"
+            ablation_text = ", ".join(method_terms) if method_terms else "the main proposed components"
+            proposal.evaluation = (
+                f"Evaluate {keyword} on {asset_text}. Report {metric_text}. "
+                f"Compare against {compare_text}, and include ablations on {ablation_text}."
+            )
+        if weak_context_scaffold:
+            evaluation_assets = _list_of_strings(weak_context_scaffold.get("evaluation_assets"))[:3]
+            metric_items = _list_of_strings(weak_context_scaffold.get("metric_items"))[:5]
+            risk_items = _list_of_strings(weak_context_scaffold.get("risk_items"))[:2]
+            compare_directions = _list_of_strings(weak_context_scaffold.get("existing_method_directions"))[:3]
+            matched_assets = _matching_terms(proposal.evaluation, evaluation_assets)
+            matched_metrics = _matching_terms(proposal.evaluation, metric_items)
+            if evaluation_assets and len(matched_assets) < len(evaluation_assets):
+                missing_assets = [item for item in evaluation_assets if item not in matched_assets]
+                if missing_assets:
+                    proposal.evaluation = _append_unique_sentence(
+                        proposal.evaluation,
+                        f"Also validate on {_join_natural_strings(missing_assets)}.",
+                    )
+            if metric_items and len(matched_metrics) < len(metric_items):
+                missing_metrics = [item for item in metric_items if item not in matched_metrics]
+                if missing_metrics:
+                    proposal.evaluation = _append_unique_sentence(
+                        proposal.evaluation,
+                        f"Also report {_join_natural_strings(missing_metrics)}.",
+                    )
+            if risk_items and not _contains_any_term(proposal.evaluation, risk_items):
+                proposal.evaluation = _append_unique_sentence(
+                    proposal.evaluation,
+                    f"Stress test {_join_natural_strings(risk_items)}.",
+                )
+            if compare_directions and not _contains_any_phrase(proposal.evaluation, ("compare against", "baseline")):
+                proposal.evaluation = _append_unique_sentence(
+                    proposal.evaluation,
+                    f"Compare against {_join_natural_strings(compare_directions)}.",
+                )
 
+    proposal.method = _remove_exact_scaffold_method_sentences(
+        proposal.method,
+        grounding.design_highlights[:4],
+    )
+    proposal.existing_methods = _clean_proposal_section_text(proposal.existing_methods)
+    proposal.method = _clean_proposal_section_text(proposal.method)
+    proposal.evaluation = _clean_proposal_section_text(proposal.evaluation)
     return proposal
 
 

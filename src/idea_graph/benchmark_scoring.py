@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Callable
 
 from .benchmarks.ai_idea_bench_2025 import load_ai_idea_bench_2025_records
 from .llm import OpenAICompatibleChatClient
@@ -209,6 +209,43 @@ class _NativeJudge:
         payload = _extract_json_object(result.content)
         payload["_raw_response"] = result.raw_response
         return payload
+
+    def score_json_validated(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        validator: Callable[[dict[str, Any]], bool],
+        repair_instruction: str,
+        max_tokens: int = 900,
+    ) -> dict[str, Any]:
+        if self.client is None:
+            raise RuntimeError("Benchmark-native scoring needs an OpenAI-compatible judge configuration.")
+        attempt_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        max_attempts = max(1, int(getattr(self.settings, "max_retries", 0) or 0) + 1)
+        last_payload: dict[str, Any] | None = None
+        for attempt in range(max_attempts):
+            result = self.client.create_chat_completion(
+                messages=attempt_messages,
+                model=self.settings.model if self.settings is not None else None,
+                max_tokens=max_tokens,
+                temperature=0.0,
+            )
+            payload = _extract_json_object(result.content)
+            payload["_raw_response"] = result.raw_response
+            last_payload = payload
+            if validator(payload):
+                return payload
+            if attempt + 1 >= max_attempts:
+                break
+            attempt_messages = attempt_messages + [
+                {"role": "assistant", "content": result.content},
+                {"role": "user", "content": repair_instruction},
+            ]
+        return last_payload or {}
 
 
 def _summary_from_metrics(metrics: list[BenchmarkNativeMetric]) -> dict[str, float]:
@@ -416,6 +453,70 @@ def _extract_nested_score(payload: dict[str, Any], *path: str) -> float:
         return 0.0
 
 
+def _extract_i2t_alignment(payload: dict[str, Any]) -> dict[str, object]:
+    def _extract_section(*section_names: str, flat_prefixes: tuple[str, ...] = ()) -> tuple[float, str]:
+        for name in section_names:
+            section = payload.get(name)
+            if isinstance(section, dict):
+                score = (
+                    section.get("alignment")
+                    if section.get("alignment") is not None
+                    else section.get("score")
+                )
+                try:
+                    numeric = float(score)
+                except (TypeError, ValueError):
+                    numeric = 0.0
+                comments = _clean_text(
+                    section.get("comments")
+                    or section.get("rationale")
+                    or section.get("explanation")
+                )
+                if numeric or comments:
+                    return numeric, comments
+        for prefix in flat_prefixes:
+            for score_key in (f"{prefix}_alignment", f"{prefix}_score", prefix):
+                try:
+                    numeric = float(payload.get(score_key))
+                    break
+                except (TypeError, ValueError):
+                    numeric = 0.0
+            comments = _clean_text(
+                payload.get(f"{prefix}_comments")
+                or payload.get(f"{prefix}_rationale")
+                or payload.get(f"{prefix}_explanation")
+            )
+            if numeric or comments:
+                return numeric, comments
+        return 0.0, ""
+
+    motivation_alignment, motivation_comments = _extract_section(
+        "motivation",
+        "motivation_alignment",
+        flat_prefixes=("motivation",),
+    )
+    experiment_alignment, experiment_comments = _extract_section(
+        "experiment_plan",
+        "experiment",
+        "experiment_alignment",
+        flat_prefixes=("experiment_plan", "experiment"),
+    )
+    return {
+        "motivation_alignment": motivation_alignment,
+        "motivation_comments": motivation_comments,
+        "experiment_alignment": experiment_alignment,
+        "experiment_comments": experiment_comments,
+    }
+
+
+def _has_valid_i2t_alignment(payload: dict[str, Any]) -> bool:
+    extracted = _extract_i2t_alignment(payload)
+    return (
+        1.0 <= float(extracted["motivation_alignment"]) <= 5.0
+        and 1.0 <= float(extracted["experiment_alignment"]) <= 5.0
+    )
+
+
 def _ai_idea_bench_native_evaluation(
     graph: IdeaGraph,
     judge: _NativeJudge,
@@ -466,25 +567,36 @@ def _ai_idea_bench_native_evaluation(
 
     if judge.available():
         system_prompt, user_prompt = _i2t_prompts(topic, motivation_text, experiment_text)
-        payload = judge.score_json(system_prompt=system_prompt, user_prompt=user_prompt)
+        payload = judge.score_json_validated(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            validator=_has_valid_i2t_alignment,
+            repair_instruction=(
+                "Your last response did not match the required topic-alignment schema. "
+                "Return one JSON object only in the exact form "
+                '{"motivation":{"alignment":4,"comments":"..."},"experiment_plan":{"alignment":5,"comments":"..."}} '
+                "with integer scores from 1 to 5."
+            ),
+        )
+        extracted_i2t = _extract_i2t_alignment(payload)
         metrics.append(
             _metric(
                 key="i2t_motivation",
                 display_name="I2T Motivation",
-                score=_extract_nested_score(payload, "motivation", "alignment"),
+                score=float(extracted_i2t["motivation_alignment"]),
                 max_score=5.0,
                 rationale="Official-style idea-to-topic alignment for the motivation component.",
-                details={"comments": _clean_text(payload.get("motivation", {}).get("comments")) if isinstance(payload.get("motivation"), dict) else ""},
+                details={"comments": _clean_text(extracted_i2t["motivation_comments"])},
             )
         )
         metrics.append(
             _metric(
                 key="i2t_experiment",
                 display_name="I2T Experiment",
-                score=_extract_nested_score(payload, "experiment_plan", "alignment"),
+                score=float(extracted_i2t["experiment_alignment"]),
                 max_score=5.0,
                 rationale="Official-style idea-to-topic alignment for the experiment-plan component.",
-                details={"comments": _clean_text(payload.get("experiment_plan", {}).get("comments")) if isinstance(payload.get("experiment_plan"), dict) else ""},
+                details={"comments": _clean_text(extracted_i2t["experiment_comments"])},
             )
         )
 

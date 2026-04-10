@@ -52,6 +52,14 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         stop_when_mature=True,
         rationale="Single-agent draft-critique-revise baseline.",
     ),
+    "ai-researcher": ExperimentMethodPlan(
+        name="ai-researcher",
+        baseline_name="ai-researcher",
+        restarts=1,
+        max_rounds=1,
+        stop_when_mature=True,
+        rationale="Exact literature-grounded AI-Researcher baseline under the shared benchmark-facing I/O contract.",
+    ),
     "scipip-proxy": ExperimentMethodPlan(
         name="scipip-proxy",
         baseline_name="scipip-proxy",

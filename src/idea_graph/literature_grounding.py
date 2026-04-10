@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import re
 from typing import Any
 
@@ -15,6 +15,7 @@ class LiteratureGrounding:
     metric_items: list[str]
     existing_methods_summary: str
     experiment_plan_summary: str
+    weak_context_scaffold: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -85,7 +86,19 @@ def _looks_noisy_sentence(text: str) -> bool:
     digit_count = sum(1 for ch in cleaned if ch.isdigit())
     if digit_count > 8:
         return True
-    noisy_markers = (" arxiv:", "fig.", "figure ", "table ", "et al .", "et al.", "doi:")
+    noisy_markers = (
+        " arxiv:",
+        "fig.",
+        "figure ",
+        "table ",
+        "et al .",
+        "et al.",
+        "doi:",
+        "project website",
+        "paper introduces",
+        "novel dataset captured",
+        "captured in diverse real scenarios",
+    )
     lowered = cleaned.casefold()
     if any(marker in lowered for marker in noisy_markers):
         return True
@@ -103,14 +116,48 @@ def _join_natural(items: list[str]) -> str:
     return ", ".join(cleaned[:-1]) + f", and {cleaned[-1]}"
 
 
+def _clean_topic_prompt(topic: Any) -> str:
+    cleaned = _clean_text(topic).rstrip(".")
+    for prefix in ("The topic of this paper is ", "Ideation topic keyword: "):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].strip()
+    return cleaned or _clean_text(topic)
+
+
+def _benchmark_packet(metadata: dict[str, Any]) -> dict[str, Any]:
+    payload = metadata.get("benchmark_input_packet", {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def _benchmark(metadata: dict[str, Any]) -> str:
+    packet = _benchmark_packet(metadata)
+    return _clean_text(metadata.get("benchmark") or packet.get("benchmark"))
+
+
+def _keyword(metadata: dict[str, Any], topic: Any = "") -> str:
+    packet = _benchmark_packet(metadata)
+    return _clean_text(metadata.get("keyword") or packet.get("keyword") or _clean_topic_prompt(topic))
+
+
+def _is_liveideabench_boilerplate(text: str) -> bool:
+    lowered = _clean_text(text).casefold()
+    return lowered.startswith("benchmark keyword:") or lowered.startswith(
+        "this benchmark row provides a keyword prompt"
+    ) or lowered.startswith("use the keyword as the ideation seed")
+
+
 def _reference_titles(literature: list[str], metadata: dict[str, Any]) -> list[str]:
     titles = metadata.get("reference_titles", [])
     extracted: list[str] = []
     if isinstance(titles, list):
-        extracted.extend(_clean_text(item) for item in titles if _clean_text(item))
+        extracted.extend(
+            _clean_text(item)
+            for item in titles
+            if _clean_text(item) and not _is_liveideabench_boilerplate(_clean_text(item))
+        )
     for item in literature:
         title = _clean_text(str(item).split("|", 1)[0])
-        if title:
+        if title and not _is_liveideabench_boilerplate(title):
             extracted.append(title)
     return _unique_strings(extracted)
 
@@ -259,6 +306,13 @@ def _dataset_items(metadata: dict[str, Any]) -> list[str]:
         cleaned = re.sub(r"\s+and report .*$", "", cleaned, flags=re.IGNORECASE)
         if not cleaned or "[" in cleaned or cleaned.casefold().startswith("such methods include"):
             return ""
+        lowered = cleaned.casefold()
+        if lowered.startswith(("paper introduces ", "this paper introduces ", "we introduce ")):
+            return ""
+        if "novel dataset captured" in lowered or "captured in diverse real scenarios" in lowered:
+            return ""
+        if len(cleaned.split()) > 14 and "(" not in cleaned and ")" not in cleaned and "dataset" not in lowered:
+            return ""
         if _looks_noisy_sentence(cleaned):
             return ""
         return cleaned.strip(" .")
@@ -352,6 +406,315 @@ def _metric_items(metadata: dict[str, Any]) -> list[str]:
     return _unique_strings(items + filtered_extras)
 
 
+def _is_keyword_only_context(metadata: dict[str, Any], literature: list[str]) -> bool:
+    if _benchmark(metadata).casefold() != "liveideabench":
+        return False
+    keyword = _keyword(metadata)
+    if not keyword:
+        return False
+    packet = _benchmark_packet(metadata)
+    reference_packet = packet.get("reference_packet", []) if isinstance(packet, dict) else []
+    if isinstance(reference_packet, list) and reference_packet:
+        return False
+    if _reference_paper_snippets(metadata):
+        return False
+    return not _reference_titles(literature, metadata)
+
+
+def _keyword_domain_family(keyword: str) -> str:
+    lowered = keyword.casefold()
+    family_terms = {
+        "earth_environment": {
+            "meteorology", "climate", "ecology", "geology", "oceanography", "hydrology",
+            "atmosphere", "greenhouse", "weather", "earthquake", "cartography", "habitat",
+        },
+        "life_biomed": {
+            "neurology", "pathology", "histology", "meiosis", "viruses", "immunotherapy",
+            "multiple sclerosis", "endocrinology", "monoclonal antibodies", "biology", "genomics",
+            "medicine", "disease", "protein", "cell", "microbiome",
+        },
+        "chem_materials": {
+            "chemistry", "photochemistry", "supramolecular chemistry", "materials", "catalysis",
+            "battery", "polymer", "molecule", "spectroscopy", "mass spectrometry",
+        },
+        "physics_engineering": {
+            "mechanics", "optics", "refraction", "microelectronics", "proton", "measurement",
+            "petroleum engineering", "supercomputing", "magnetic resonance imaging", "robotics",
+        },
+        "computation_systems": {
+            "linear programming", "geographic information systems", "computer vision", "machine learning",
+            "information retrieval", "database", "network", "optimization", "programming",
+        },
+        "social_human": {
+            "cognitive psychology", "diversity in science", "scientific literacy", "economics",
+            "education", "policy", "behavior", "humancomputer interaction",
+        },
+    }
+    for family, terms in family_terms.items():
+        if any(term in lowered for term in terms):
+            return family
+    return "general_science"
+
+
+def _keyword_only_scaffold(metadata: dict[str, Any], topic: Any) -> dict[str, object]:
+    keyword = _keyword(metadata, topic)
+    if not keyword:
+        return {}
+
+    family = _keyword_domain_family(keyword)
+    scaffold_by_family: dict[str, dict[str, object]] = {
+        "earth_environment": {
+            "divergence_axes": [
+                "spatiotemporal forecasting",
+                "multi-source sensing and data assimilation",
+                "uncertainty-aware extreme-event analysis",
+            ],
+            "existing_method_directions": [
+                "spatiotemporal forecasting models",
+                "physics-aware simulation or data-assimilation pipelines",
+                "multi-source environmental data fusion",
+            ],
+            "design_highlights": [
+                "Physics-Guided Forecasting: combine learned prediction with domain constraints or dynamical consistency.",
+                "Multi-Source Data Fusion: integrate satellite, radar, station, or reanalysis signals to improve coverage.",
+                "Uncertainty Calibration: model rare events and regional shift with calibrated confidence estimates.",
+            ],
+            "evaluation_assets": [
+                "reanalysis-based forecasting tasks",
+                "satellite and radar nowcasting benchmarks",
+                "regional severe-weather case studies",
+            ],
+            "metric_items": ["RMSE", "MAE", "CRPS", "event F1", "calibration error"],
+            "risk_items": [
+                "regional distribution shift",
+                "rare-event imbalance",
+                "tradeoffs between physical consistency and predictive flexibility",
+            ],
+            "mechanism_terms": [
+                "physics-guided forecasting",
+                "data fusion",
+                "spatiotemporal forecasting",
+                "uncertainty calibration",
+                "extreme-event modeling",
+                "reanalysis",
+                "satellite",
+                "radar",
+            ],
+        },
+        "life_biomed": {
+            "divergence_axes": [
+                "mechanism discovery",
+                "multimodal representation learning",
+                "robust decision support under data scarcity",
+            ],
+            "existing_method_directions": [
+                "biological mechanism modeling",
+                "multi-omics or multimodal fusion",
+                "clinical or experimental decision support",
+            ],
+            "design_highlights": [
+                "Mechanism-Aware Modeling: encode pathway or structural priors rather than using only black-box predictors.",
+                "Multimodal Fusion: integrate heterogeneous measurements such as imaging, sequences, or assays.",
+                "Robust Decision Support: emphasize uncertainty, subgroup robustness, and low-sample generalization.",
+            ],
+            "evaluation_assets": [
+                "held-out cohort or assay benchmarks",
+                "cross-lab or cross-population transfer tasks",
+                "mechanism-grounded case studies",
+            ],
+            "metric_items": ["AUROC", "AUPRC", "F1", "calibration error", "subgroup robustness"],
+            "risk_items": [
+                "small-sample overfitting",
+                "distribution shift across cohorts",
+                "weak biological interpretability",
+            ],
+            "mechanism_terms": [
+                "mechanism-aware",
+                "multimodal fusion",
+                "cohort robustness",
+                "pathway prior",
+                "uncertainty-aware",
+            ],
+        },
+        "chem_materials": {
+            "divergence_axes": [
+                "property prediction",
+                "structure-conditioned generation or search",
+                "mechanism-aware simulation acceleration",
+            ],
+            "existing_method_directions": [
+                "property-prediction models",
+                "structure-aware inverse design",
+                "simulation-accelerated screening",
+            ],
+            "design_highlights": [
+                "Structure-Conditioned Search: couple candidate generation with explicit structural validity checks.",
+                "Property-Aware Representation: encode molecular or material structure for target-property prediction.",
+                "Simulation-Guided Filtering: use coarse simulation or surrogate checks before expensive evaluation.",
+            ],
+            "evaluation_assets": [
+                "property-prediction benchmarks",
+                "structure-validity screening tasks",
+                "candidate-ranking case studies",
+            ],
+            "metric_items": ["MAE", "RMSE", "top-k hit rate", "validity", "novelty"],
+            "risk_items": [
+                "distribution shift to novel chemistries",
+                "validity-performance tradeoffs",
+                "surrogate mismatch with real simulation",
+            ],
+            "mechanism_terms": [
+                "structure-conditioned",
+                "property prediction",
+                "simulation-guided",
+                "candidate ranking",
+            ],
+        },
+        "physics_engineering": {
+            "divergence_axes": [
+                "inverse modeling",
+                "constraint-aware control or design",
+                "measurement-efficient inference",
+            ],
+            "existing_method_directions": [
+                "physics-constrained inference",
+                "control or optimization under constraints",
+                "measurement-efficient estimation",
+            ],
+            "design_highlights": [
+                "Constraint-Aware Inference: enforce conservation laws, geometry, or hardware limits in the model.",
+                "Measurement-Efficient Estimation: trade off sensing cost against prediction quality.",
+                "Robust Control or Design: stress test under perturbations, noise, or operating shifts.",
+            ],
+            "evaluation_assets": [
+                "simulation-to-real transfer tasks",
+                "noise-robust estimation benchmarks",
+                "resource-constrained design case studies",
+            ],
+            "metric_items": ["RMSE", "constraint violation", "latency", "energy cost", "robustness under noise"],
+            "risk_items": [
+                "sim-to-real mismatch",
+                "constraint violation under shift",
+                "resource-quality tradeoffs",
+            ],
+            "mechanism_terms": [
+                "constraint-aware",
+                "measurement-efficient",
+                "robust control",
+                "inverse modeling",
+            ],
+        },
+        "computation_systems": {
+            "divergence_axes": [
+                "resource-efficient optimization",
+                "structured representation or retrieval",
+                "robust decision-making under shift",
+            ],
+            "existing_method_directions": [
+                "optimization or search algorithms",
+                "representation learning and retrieval",
+                "robust or adaptive decision systems",
+            ],
+            "design_highlights": [
+                "Structured Search: decompose the problem into explicit subproblems instead of one monolithic predictor.",
+                "Resource-Aware Adaptation: trade off accuracy against latency, memory, or compute.",
+                "Robust Generalization: evaluate under distribution shift, noisy inputs, or adversarial settings.",
+            ],
+            "evaluation_assets": [
+                "held-out benchmark suites",
+                "out-of-distribution or shift benchmarks",
+                "latency-constrained deployment tasks",
+            ],
+            "metric_items": ["accuracy", "F1", "latency", "memory use", "robustness under shift"],
+            "risk_items": [
+                "overfitting to benchmark heuristics",
+                "resource-performance tradeoffs",
+                "weak generalization out of distribution",
+            ],
+            "mechanism_terms": [
+                "structured search",
+                "resource-aware adaptation",
+                "robust generalization",
+                "retrieval",
+                "optimization",
+            ],
+        },
+        "social_human": {
+            "divergence_axes": [
+                "measurement and assessment",
+                "intervention design",
+                "heterogeneity and fairness analysis",
+            ],
+            "existing_method_directions": [
+                "measurement and predictive assessment",
+                "behavioral or policy intervention studies",
+                "fairness and subgroup analysis",
+            ],
+            "design_highlights": [
+                "Measurement-Aware Modeling: define explicit constructs before optimizing predictors.",
+                "Intervention-Oriented Design: connect model outputs to actionable interventions.",
+                "Heterogeneity Analysis: quantify subgroup differences, fairness, or contextual variation.",
+            ],
+            "evaluation_assets": [
+                "cross-context benchmark studies",
+                "subgroup or fairness analyses",
+                "intervention simulation tasks",
+            ],
+            "metric_items": ["accuracy", "F1", "calibration error", "fairness gap", "policy utility"],
+            "risk_items": [
+                "construct mismatch",
+                "subgroup harms",
+                "weak transfer across populations",
+            ],
+            "mechanism_terms": [
+                "measurement-aware",
+                "intervention-oriented",
+                "heterogeneity analysis",
+                "fairness",
+            ],
+        },
+        "general_science": {
+            "divergence_axes": [
+                "prediction",
+                "mechanism understanding",
+                "robust evaluation under shift",
+            ],
+            "existing_method_directions": [
+                "predictive modeling",
+                "mechanism-aware representation learning",
+                "robust or uncertainty-aware evaluation",
+            ],
+            "design_highlights": [
+                "Mechanism-Aware Modeling: add an explicit inductive bias tied to the keyword rather than a generic predictor.",
+                "Multiview Integration: combine complementary data views or evidence sources when available.",
+                "Robust Evaluation: test under shift, uncertainty, and component ablations instead of only a headline score.",
+            ],
+            "evaluation_assets": [
+                "held-out benchmark tasks",
+                "out-of-distribution or stress-test splits",
+                "keyword-specific case studies",
+            ],
+            "metric_items": ["accuracy", "F1", "calibration error", "robustness under shift"],
+            "risk_items": [
+                "generic problem framing",
+                "distribution shift",
+                "insufficient mechanism grounding",
+            ],
+            "mechanism_terms": [
+                "mechanism-aware",
+                "multiview integration",
+                "robust evaluation",
+                "uncertainty-aware",
+            ],
+        },
+    }
+    selected = dict(scaffold_by_family.get(family, scaffold_by_family["general_science"]))
+    selected["keyword"] = keyword
+    selected["domain_family"] = family
+    selected["topic"] = _clean_topic_prompt(topic)
+    return selected
+
+
 def build_literature_grounding(
     *,
     literature: list[str],
@@ -363,6 +726,24 @@ def build_literature_grounding(
     design_highlights = _design_highlights(metadata)
     dataset_items = _dataset_items(metadata)
     metric_items = _metric_items(metadata)
+    weak_context_scaffold = (
+        _keyword_only_scaffold(metadata, metadata.get("topic", ""))
+        if _is_keyword_only_context(metadata, literature)
+        else {}
+    )
+    if weak_context_scaffold:
+        if not design_highlights:
+            design_highlights = _unique_strings(
+                [_clean_text(item) for item in weak_context_scaffold.get("design_highlights", [])]
+            )[:3]
+        if not dataset_items:
+            dataset_items = _unique_strings(
+                [_clean_text(item) for item in weak_context_scaffold.get("evaluation_assets", [])]
+            )[:4]
+        if not metric_items:
+            metric_items = _unique_strings(
+                [_clean_text(item) for item in weak_context_scaffold.get("metric_items", [])]
+            )[:6]
     paper_grounding = _paper_grounding(metadata)
     paper_grounding_source = "paper_snippets" if paper_grounding.get("reference_paper_snippets") or paper_grounding.get("target_paper_snippet") else ""
 
@@ -389,6 +770,24 @@ def build_literature_grounding(
             + _join_natural([item.rstrip(".") for item in design_highlights[:3]])
             + "."
         )
+    if weak_context_scaffold:
+        keyword = _clean_text(weak_context_scaffold.get("keyword"))
+        directions = _unique_strings(
+            [_clean_text(item) for item in weak_context_scaffold.get("existing_method_directions", [])]
+        )[:3]
+        divergence_axes = _unique_strings(
+            [_clean_text(item) for item in weak_context_scaffold.get("divergence_axes", [])]
+        )[:3]
+        if directions:
+            existing_parts.append(
+                f"For {keyword}, safe starting directions include " + _join_natural(directions) + "."
+            )
+        if divergence_axes:
+            existing_parts.append(
+                "For divergent thinking under weak context, prioritize branches around "
+                + _join_natural(divergence_axes)
+                + "."
+            )
     if not existing_parts:
         existing_parts.append(
             "Only limited literature context is available, so the existing-method summary is provisional."
@@ -399,6 +798,12 @@ def build_literature_grounding(
         experiment_parts.append("Evaluate on " + _join_natural(dataset_items) + ".")
     if metric_items:
         experiment_parts.append("Report " + _join_natural(metric_items) + ".")
+    if weak_context_scaffold:
+        risk_items = _unique_strings(
+            [_clean_text(item) for item in weak_context_scaffold.get("risk_items", [])]
+        )[:2]
+        if risk_items:
+            experiment_parts.append("Stress test " + _join_natural(risk_items) + ".")
     if not experiment_parts:
         experiment_parts.append(
             "Compare against strong baselines using task-relevant datasets, ablations, and quantitative metrics."
@@ -406,6 +811,8 @@ def build_literature_grounding(
 
     if paper_grounding_source:
         source = paper_grounding_source
+    elif weak_context_scaffold:
+        source = "keyword_scaffold"
     elif any([method_summary, dataset_items, metric_items, design_highlights]):
         source = "metadata_structured"
     else:
@@ -419,4 +826,5 @@ def build_literature_grounding(
         metric_items=metric_items,
         existing_methods_summary=" ".join(existing_parts),
         experiment_plan_summary=" ".join(experiment_parts),
+        weak_context_scaffold=weak_context_scaffold,
     )

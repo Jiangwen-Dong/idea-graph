@@ -19,10 +19,13 @@ from idea_graph.agent_backend import (
 )
 from idea_graph.baselines import (
     BASELINE_SPECS,
+    _ai_researcher_expansion_system_prompt,
     _ai_researcher_focus_constraints,
     _ai_researcher_proxy_postprocess_proposal,
     _ai_researcher_topic_fidelity_score,
     _baseline_postprocess_proposal,
+    _direct_system_prompt,
+    _refine_system_prompt,
     attach_baseline_metadata,
     run_baseline_experiment,
 )
@@ -210,6 +213,15 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIn("virsci-proxy", BASELINE_SPECS)
         self.assertNotIn("research-agent-proxy", BASELINE_SPECS)
         self.assertTrue(BASELINE_SPECS["ai-researcher-proxy"].is_proxy)
+
+    def test_generation_prompts_discourage_noisy_fragment_copying(self) -> None:
+        direct_prompt = _direct_system_prompt(BASELINE_SPECS["direct"])
+        refine_prompt = _refine_system_prompt(BASELINE_SPECS["self-refine"])
+        ai_prompt = _ai_researcher_expansion_system_prompt(BASELINE_SPECS["ai-researcher-proxy"])
+
+        self.assertIn("Do not copy raw extraction fragments", direct_prompt)
+        self.assertIn("noisy copied snippet fragments", refine_prompt)
+        self.assertIn("one coherent proposal with one main mechanism", ai_prompt)
 
     def test_external_baseline_requires_config(self) -> None:
         instance = attach_baseline_metadata(

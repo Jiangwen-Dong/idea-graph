@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 import unittest
@@ -11,6 +12,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from idea_graph.agent_backend import ActionDecision
+from idea_graph.claim_chain import select_claim_chain
 from idea_graph.engine import (
     build_seed_graphs,
     choose_round_action,
@@ -26,6 +28,7 @@ from idea_graph.engine import (
     utility_breakdown,
 )
 from idea_graph.models import FinalProposal, IdeaGraph, MaturitySnapshot
+from idea_graph.models import UtilityBreakdown
 
 
 class InvalidActionBackend:
@@ -256,6 +259,215 @@ class EngineTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(graph.round_summaries), 2)
 
+    def test_select_final_subgraph_prefers_claim_chain_when_available(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is human pose and shape estimation using LiDAR in uncontrolled environments.",
+            literature=["LiDAR-Aid Inertial Poser", "Learning from Synthetic Humans", "SLOPER4D"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_input_packet": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "topic": "Human pose and shape estimation using LiDAR in uncontrolled environments.",
+                },
+            },
+        )
+        problem_branch = create_branch(graph, "ImpactReframer")
+        gap_branch = create_branch(graph, "NoveltyExaminer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+        risk_branch = create_branch(graph, "FeasibilityCritic")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="LiDAR HPS estimation degrades under occlusion in uncontrolled environments.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.85,
+        )
+        gap = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Current LiDAR-inertial methods do not model occlusion-driven distribution shift.",
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+            confidence=0.82,
+            evidence=["LiDAR-inertial baselines are brittle under occlusion."],
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text="Use geometry-aware synthetic occlusion generation with mesh-aligned distillation.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.87,
+            evidence=["Synthetic augmentation can close real-world gaps."],
+        )
+        evaluation = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on SLOPER4D with MPJPE and occlusion-stress ablations.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.84,
+        )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="Synthetic occlusion may still mismatch free-environment sensor noise.",
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+            confidence=0.76,
+        )
+
+        create_edge(
+            graph,
+            source_id=gap.id,
+            relation="supports",
+            target_id=problem.id,
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+        )
+        create_edge(
+            graph,
+            source_id=method.id,
+            relation="supports",
+            target_id=gap.id,
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+        )
+        create_edge(
+            graph,
+            source_id=evaluation.id,
+            relation="depends_on",
+            target_id=method.id,
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+        )
+        create_edge(
+            graph,
+            source_id=risk.id,
+            relation="contradicts",
+            target_id=method.id,
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+        )
+
+        chain = select_claim_chain(graph)
+        final_subgraph = select_final_subgraph(graph)
+
+        assert chain is not None
+        self.assertTrue(chain["coverage"]["is_synthesis_ready"])
+        self.assertEqual(final_subgraph.get("selection_mode"), "claim_chain")
+        self.assertEqual(set(final_subgraph["node_ids"]), set(chain["subgraph"]["node_ids"]))
+
+    def test_maturity_requires_complete_claim_chain(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is human pose and shape estimation using LiDAR in uncontrolled environments.",
+            literature=["LiDAR-Aid Inertial Poser", "SLOPER4D"],
+            metadata={"benchmark": "AI_Idea_Bench_2025"},
+        )
+        problem_branch = create_branch(graph, "ImpactReframer")
+        gap_branch = create_branch(graph, "NoveltyExaminer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="LiDAR HPS estimation degrades under occlusion in uncontrolled environments.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.85,
+        )
+        gap = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Current LiDAR-inertial methods do not model occlusion-driven distribution shift.",
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+            confidence=0.82,
+            evidence=["LiDAR-inertial baselines are brittle under occlusion."],
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text="Use geometry-aware synthetic occlusion generation with mesh-aligned distillation.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.87,
+            evidence=["Synthetic augmentation can close real-world gaps."],
+        )
+        hypothesis = create_node(
+            graph,
+            node_type="Hypothesis",
+            text="Mesh-aligned occlusion synthesis will improve robustness.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.83,
+        )
+        evaluation = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on SLOPER4D with MPJPE and occlusion-stress ablations.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.84,
+            evidence=["Use MPJPE and occlusion-stratified evaluation."],
+        )
+
+        create_edge(
+            graph,
+            source_id=gap.id,
+            relation="supports",
+            target_id=problem.id,
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+        )
+        create_edge(
+            graph,
+            source_id=method.id,
+            relation="supports",
+            target_id=gap.id,
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+        )
+        create_edge(
+            graph,
+            source_id=hypothesis.id,
+            relation="refines",
+            target_id=method.id,
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+        )
+        create_edge(
+            graph,
+            source_id=evaluation.id,
+            relation="depends_on",
+            target_id=method.id,
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+        )
+
+        graph.utility_history = [7.9, 8.0, 8.05]
+        with patch(
+            "idea_graph.engine.utility_breakdown",
+            return_value=UtilityBreakdown(
+                promise=0.8,
+                support=1.0,
+                coherence=0.82,
+                evidence=0.42,
+                novelty=0.7,
+                contradiction_penalty=0.0,
+                open_risk_penalty=0.0,
+                size_penalty=0.0,
+                total=8.2,
+            ),
+        ):
+            snapshot = maturity_snapshot(graph)
+
+        self.assertFalse(snapshot.is_mature)
+
     def test_choose_round_action_handles_missing_impact_hypothesis_in_late_rounds(self) -> None:
         graph = self._build_seed_graph()
         for node in graph.active_nodes():
@@ -344,7 +556,7 @@ class EngineTests(unittest.TestCase):
                 "idea_graph_min_rounds_before_maturity": 2,
             },
         )
-        graph.utility_history = [7.6, 7.8]
+        graph.utility_history = [7.6]
         branch = create_branch(graph, "MechanismProposer")
         problem = create_node(
             graph,
@@ -386,6 +598,14 @@ class EngineTests(unittest.TestCase):
             branch_id=branch.id,
             confidence=0.78,
         )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="The generic hybrid design may fail under seasonal distribution shift.",
+            role="FeasibilityCritic",
+            branch_id=branch.id,
+            confidence=0.76,
+        )
         for source in (hypothesis, method, eval_plan, novelty):
             create_edge(
                 graph,
@@ -396,6 +616,15 @@ class EngineTests(unittest.TestCase):
                 branch_id=branch.id,
             )
             source.evidence.append("Benchmark keyword: meteorology")
+        risk_edge = create_edge(
+            graph,
+            source_id=risk.id,
+            relation="contradicts",
+            target_id=method.id,
+            role=risk.role,
+            branch_id=branch.id,
+        )
+        risk_edge.resolved = True
 
         generic_snapshot = maturity_snapshot(graph)
         self.assertFalse(generic_snapshot.is_mature)
@@ -410,9 +639,15 @@ class EngineTests(unittest.TestCase):
             "and CRPS, and run ablations on multimodal fusion and uncertainty calibration."
         )
         novelty.text = "The idea targets meteorology with uncertainty-aware multimodal forecasting rather than a generic hybrid model."
+        risk.text = "Multimodal meteorology fusion may overfit rare seasonal events, so uncertainty calibration and seasonal transfer stress tests are necessary."
 
-        specific_snapshot = maturity_snapshot(graph)
-        self.assertTrue(specific_snapshot.is_mature)
+        graph.utility_history = [7.6]
+        specific_round2_snapshot = maturity_snapshot(graph)
+        self.assertFalse(specific_round2_snapshot.is_mature)
+
+        graph.utility_history = [7.6, 7.8]
+        specific_round3_snapshot = maturity_snapshot(graph)
+        self.assertTrue(specific_round3_snapshot.is_mature)
 
 
 if __name__ == "__main__":

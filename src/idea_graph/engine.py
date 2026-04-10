@@ -10,6 +10,7 @@ from .agent_backend import (
     CollaborationBackend,
     append_agent_trace,
 )
+from .claim_chain import select_claim_chain
 from .collaboration_protocol import (
     ACTION_REQUIRED_PAYLOAD_FIELDS,
     ACTION_TARGET_COUNTS,
@@ -32,6 +33,68 @@ from .schema import ROLE_NAMES, build_seed_template
 
 def normalize_text(text: str) -> str:
     return " ".join("".join(ch.lower() if ch.isalnum() else " " for ch in text).split())
+
+
+def _generation_metadata(graph: IdeaGraph) -> dict[str, object]:
+    payload = graph.metadata.get("generation_safe_metadata", graph.metadata)
+    return payload if isinstance(payload, dict) else graph.metadata
+
+
+def _weak_context_scaffold(graph: IdeaGraph) -> dict[str, object]:
+    grounding = build_literature_grounding(
+        literature=graph.literature,
+        metadata=_generation_metadata(graph),
+    )
+    payload = grounding.weak_context_scaffold
+    return payload if isinstance(payload, dict) else {}
+
+
+def _keyword_only_specificity_score(graph: IdeaGraph, node_ids: set[str] | None = None) -> float:
+    scaffold = _weak_context_scaffold(graph)
+    if not scaffold:
+        return 1.0
+
+    active_nodes = _subgraph_nodes(graph, node_ids)
+    text = " ".join(
+        part
+        for node in active_nodes
+        for part in [node.text, *node.evidence]
+        if part
+    )
+    normalized_text = normalize_text(text)
+    if not normalized_text:
+        return 0.0
+
+    keyword = normalize_text(str(scaffold.get("keyword", "")))
+    mechanism_terms = [
+        normalize_text(str(item))
+        for item in scaffold.get("mechanism_terms", [])
+        if normalize_text(str(item))
+    ]
+    evaluation_terms = [
+        normalize_text(str(item))
+        for item in [
+            *scaffold.get("evaluation_assets", []),
+            *scaffold.get("metric_items", []),
+        ]
+        if normalize_text(str(item))
+    ]
+
+    keyword_signal = 1.0 if keyword and keyword in normalized_text else 0.0
+    mechanism_hits = sum(1 for item in mechanism_terms if item in normalized_text)
+    mechanism_signal = min(1.0, mechanism_hits / 2.0) if mechanism_terms else 0.0
+    evaluation_hits = sum(1 for item in evaluation_terms if item in normalized_text)
+    evaluation_signal = min(1.0, evaluation_hits / 2.0) if evaluation_terms else 0.0
+    return round(
+        max(
+            0.0,
+            min(
+                1.0,
+                (0.40 * keyword_signal) + (0.35 * mechanism_signal) + (0.25 * evaluation_signal),
+            ),
+        ),
+        2,
+    )
 
 
 def find_active_nodes(
@@ -2174,7 +2237,10 @@ def _compute_maturity_snapshot(
     unresolved_ratio = 0.0 if not contradictions else round(len(unresolved) / len(contradictions), 2)
 
     active_types = {node.type for node in active_nodes}
-    completeness = {"Problem", "Hypothesis", "Method", "EvalPlan"}.issubset(active_types)
+    structural_completeness = {"Problem", "Hypothesis", "Method", "EvalPlan"}.issubset(active_types)
+    claim_chain = select_claim_chain(graph, node_ids=active_node_ids or None)
+    claim_chain_ready = bool(claim_chain and claim_chain.get("coverage", {}).get("is_synthesis_ready"))
+    completeness = structural_completeness and claim_chain_ready
 
     breakdown = utility_breakdown(graph, active_node_ids or None)
     utility = breakdown.total
@@ -2184,6 +2250,8 @@ def _compute_maturity_snapshot(
     else:
         history = [*graph.utility_history, utility]
     utility_stable = _utility_stability(history)
+    weak_context_specificity = _keyword_only_specificity_score(graph, active_node_ids or None)
+    weak_context_mode = bool(_weak_context_scaffold(graph))
     min_rounds_before_maturity = max(
         2,
         int(graph.metadata.get("idea_graph_min_rounds_before_maturity", 2) or 2),
@@ -2196,6 +2264,7 @@ def _compute_maturity_snapshot(
         and breakdown.coherence >= 0.7
         and breakdown.evidence >= 0.18
         and utility >= 6.6
+        and (not weak_context_mode or weak_context_specificity >= 0.62)
     )
 
     return MaturitySnapshot(
@@ -2206,19 +2275,21 @@ def _compute_maturity_snapshot(
         completeness=completeness,
         is_mature=(
             (
-                len(history) >= min_rounds_before_maturity
+                len(history) >= (max(3, min_rounds_before_maturity) if weak_context_mode else min_rounds_before_maturity)
                 and support_coverage >= 0.74
                 and unresolved_ratio <= 0.33
                 and completeness
                 and breakdown.coherence >= 0.6
                 and breakdown.evidence >= 0.12
+                and (not weak_context_mode or weak_context_specificity >= 0.55)
                 and (
                     utility_stable
                     or (
-                        len(history) >= min_rounds_before_maturity
+                        len(history) >= (max(3, min_rounds_before_maturity) if weak_context_mode else min_rounds_before_maturity)
                         and support_coverage >= 0.82
                         and breakdown.evidence >= 0.2
                         and utility >= 7.5
+                        and (not weak_context_mode or weak_context_specificity >= 0.62)
                     )
                 )
             )
@@ -2453,6 +2524,35 @@ def _legacy_select_final_subgraph(graph: IdeaGraph) -> dict[str, object]:
 
 
 def select_final_subgraph(graph: IdeaGraph) -> dict[str, object]:
+    claim_chain = select_claim_chain(graph)
+    if claim_chain is not None and claim_chain.get("coverage", {}).get("is_synthesis_ready"):
+        claim_subgraph = dict(claim_chain["subgraph"])
+        selected_node_ids = set(str(item) for item in claim_subgraph.get("node_ids", []))
+        selected_edge_ids = set(str(item) for item in claim_subgraph.get("edge_ids", []))
+        snapshot = _compute_maturity_snapshot(
+            graph,
+            update_history=False,
+            node_ids=selected_node_ids,
+        )
+        claim_subgraph.update(
+            {
+                "utility": snapshot.utility,
+                "utility_breakdown": asdict(snapshot.utility_breakdown),
+                "support_coverage": snapshot.support_coverage,
+                "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
+                "utility_stable": snapshot.utility_stable,
+                "completeness": snapshot.completeness,
+                "is_mature": snapshot.is_mature,
+                "connected": _is_connected_subgraph(
+                    selected_node_ids,
+                    [edge for edge in graph.edges if edge.id in selected_edge_ids],
+                ),
+                "selection_mode": "claim_chain",
+                "claim_chain": claim_chain,
+            }
+        )
+        return claim_subgraph
+
     candidate = _best_candidate_subgraph(graph, prefer_mature=True)
     if candidate is not None:
         return candidate

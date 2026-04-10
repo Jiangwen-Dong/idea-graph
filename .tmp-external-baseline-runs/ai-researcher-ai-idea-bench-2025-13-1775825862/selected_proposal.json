@@ -1,0 +1,12 @@
+{
+  "title": "Benchmark-Faithful 3D Language Field Modeling",
+  "abstract": "",
+  "problem": "3D language field modeling still struggles with efficient open-vocabulary localization.",
+  "existing_methods": "LERF and Gaussian Splatting are strong nearby baselines.",
+  "motivation": "We need a more efficient and better-grounded language field representation This matters because 3D language field modeling should support efficient open-vocabulary interaction in real scenes.",
+  "hypothesis": "Compact hierarchical language fields can preserve localization quality.",
+  "method": "Distill language-aware field features into a compact 3D representation with explicit localization heads The resulting representation is optimized specifically as a 3D language field rather than a generic text-guided scene generator.",
+  "evaluation": "Evaluate open-vocabulary localization accuracy and retrieval quality against strong baselines Use the LERF dataset for open-vocabulary querying analysis.",
+  "significance": "This improves benchmark-faithful 3D language field ideation This would strengthen efficient 3D language field modeling for open-vocabulary interaction.",
+  "caveats": "Performance may depend on grounding quality."
+}

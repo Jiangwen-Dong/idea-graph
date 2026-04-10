@@ -31,6 +31,7 @@ from idea_graph.experiment_plans import (
     get_method_plan_catalog,
     prepare_instance_for_method_plan,
 )
+from idea_graph.external_baselines import load_external_baseline_config
 from idea_graph.io import write_run_artifacts
 from idea_graph.instances import ExperimentInstance
 from idea_graph.settings import OpenAICompatibleSettings
@@ -177,6 +178,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="Path to the OpenAI-compatible backend config JSON.",
+    )
+    parser.add_argument(
+        "--external-baseline-config",
+        type=Path,
+        default=None,
+        help="Optional JSON config for exact external baselines such as ai-researcher.",
     )
     parser.add_argument(
         "--output-dir",
@@ -469,6 +476,7 @@ def main() -> None:
     args = build_parser().parse_args()
     settings = OpenAICompatibleSettings.from_json_file(args.llm_config)
     backend = OpenAICompatibleCollaborationBackend(settings)
+    external_baseline_config = load_external_baseline_config(args.external_baseline_config)
 
     method_catalog = get_method_plan_catalog(args.plan_preset)
     requested_methods = (
@@ -526,6 +534,7 @@ def main() -> None:
                         prepared_instance,
                         baseline_name=plan.baseline_name,
                         collaboration_backend=backend,
+                        external_baseline_config=external_baseline_config,
                         progress_callback=lambda message, mn=method_name, bb=target.benchmark, ss=target.display_selector, rr=restart: print_progress(
                             f"[{bb}][{ss}][{mn}][r{rr}] {message}"
                         ),

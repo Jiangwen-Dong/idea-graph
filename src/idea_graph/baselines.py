@@ -644,6 +644,47 @@ def _ai_researcher_proxy_postprocess_proposal(graph: IdeaGraph, proposal: FinalP
     )
 
 
+def _split_sentences(text: Any) -> list[str]:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return []
+    return [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", cleaned) if sentence.strip()]
+
+
+def _is_noisy_sentence(text: str) -> bool:
+    lowered = _clean_text(text).casefold()
+    if not lowered:
+        return True
+    noisy_markers = (
+        "experiments were conducted on paper introduces",
+        "paper introduces",
+        "captured in diverse real scenarios",
+        "project website",
+        "see the project website",
+        "figure",
+        "table",
+        "et al",
+    )
+    return any(marker in lowered for marker in noisy_markers)
+
+
+def _clean_section_text(text: Any) -> str:
+    sentences = _split_sentences(text)
+    if not sentences:
+        return _clean_text(text)
+    kept: list[str] = []
+    seen: set[str] = set()
+    for sentence in sentences:
+        normalized = _clean_text(sentence).casefold()
+        if not normalized or normalized in seen:
+            continue
+        if _is_noisy_sentence(sentence):
+            continue
+        kept.append(sentence)
+        seen.add(normalized)
+    return " ".join(kept) if kept else _clean_text(text)
+
+
 def _baseline_postprocess_proposal(
     graph: IdeaGraph,
     baseline: BaselineSpec,
@@ -737,11 +778,16 @@ def _baseline_postprocess_proposal(
             "report task-specific quantitative metrics, and include ablations over the main components."
         )
 
-    significance = proposal.significance or f"If successful, the idea would improve benchmark-faithful reasoning for {topic}."
+    significance = proposal.significance or f"If successful, the idea would make {topic} more accurate, robust, or testable."
     if topic and topic.lower() not in significance.lower():
-        significance = significance.rstrip(".") + f" This would provide a clearer research direction for {topic}."
+        significance = significance.rstrip(".") + f" This could make progress on {topic} more reliable and testable."
 
     caveats = proposal.caveats or "The idea may still depend on incomplete literature context and should be validated with targeted ablations."
+
+    existing_methods = _clean_section_text(existing_methods)
+    method = _clean_section_text(method)
+    evaluation = _clean_section_text(evaluation)
+    significance = _clean_section_text(significance)
 
     return FinalProposal(
         title=title,
@@ -877,6 +923,8 @@ def _direct_system_prompt(baseline: BaselineSpec) -> str:
         "Benchmark fidelity matters more than writing style. "
         "Each section must add distinct information instead of repeating the same sentence in different fields. "
         "Keep the idea specific, testable, and grounded in the visible references. "
+        "Do not copy raw extraction fragments from literature snippets; if a dataset or method fragment looks noisy or truncated, omit it. "
+        "Prefer one coherent mechanism and one coherent evaluation story rather than several loosely connected ideas. "
         'JSON schema: {"title":"...","problem":"...","existing_methods":"...","motivation":"...",'
         '"hypothesis":"...","method":"...","evaluation":"...","significance":"...","caveats":"..."}'
     )
@@ -903,7 +951,7 @@ def _critique_system_prompt(baseline: BaselineSpec) -> str:
         f"{guidance} "
         "Return strict JSON only. Do not use markdown. "
         "Critique the current draft using only the benchmark packet and return concise revision guidance. "
-        "Focus on benchmark fidelity, literature grounding, unsupported claims, vague evaluation design, and repetition across sections. "
+        "Focus on benchmark fidelity, literature grounding, unsupported claims, vague evaluation design, repetition across sections, noisy copied snippet fragments, and overcomplicated mechanism drift. "
         'JSON schema: {"strengths":["..."],"weaknesses":["..."],"revision_focus":["..."]}'
     )
 
@@ -928,6 +976,8 @@ def _refine_system_prompt(baseline: BaselineSpec) -> str:
         "Return strict JSON only. Do not use markdown. "
         "Revise the draft to improve grounding, coherence, benchmark fidelity, and testability while keeping the output concise. "
         "Do not add generic filler; prefer sharper, more benchmark-faithful content. "
+        "If the draft contains noisy copied snippet fragments, remove them rather than elaborating on them. "
+        "If the draft contains multiple loosely connected mechanisms, simplify to one coherent method story. "
         'JSON schema: {"title":"...","problem":"...","existing_methods":"...","motivation":"...",'
         '"hypothesis":"...","method":"...","evaluation":"...","significance":"...","caveats":"..."}'
     )
@@ -1026,7 +1076,8 @@ def _ai_researcher_expansion_system_prompt(baseline: BaselineSpec) -> str:
         f"{guidance} "
         "Stage 2 expands one seed idea into one full structured proposal. "
         "Preserve benchmark faithfulness: if the seed drifts away from the benchmark task, pull it back toward the benchmark topic instead of amplifying the drift. "
-        "Keep the method concrete, grounded in the provided packet, and non-repetitive across sections. "
+        "Keep one coherent proposal with one main mechanism, grounded in the provided packet, and non-repetitive across sections. "
+        "Do not copy raw extraction fragments from literature snippets; if a detail looks noisy or truncated, omit it. "
         "Return strict JSON only, with no markdown or commentary. "
         'JSON schema: {"title":"...","problem":"...","existing_methods":"...","motivation":"...",'
         '"hypothesis":"...","method":"...","evaluation":"...","significance":"...","caveats":"..."}'
@@ -1057,6 +1108,7 @@ def _ai_researcher_ranking_system_prompt(baseline: BaselineSpec) -> str:
         "Rank the expanded candidates and choose the single best one. "
         "Benchmark fidelity is the first gate: a candidate that sounds exciting but drifts away from the benchmark task should lose. "
         "Use topic fidelity, literature grounding, novelty, significance, feasibility, clarity, and experiment quality. "
+        "Penalize noisy copied snippet fragments, unsupported dataset mentions, and multi-mechanism proposals that lack one clear core idea. "
         "Do not reward longer text unless it improves substance. "
         "Return strict JSON only, with no markdown or commentary. "
         'JSON schema: {"selected_index":0,"reason":"...","scores":[{"index":0,"topic_fidelity":1,"novelty":1,"significance":1,"feasibility":1,"clarity":1,"literature_grounding":1,"experiment_quality":1,"overall":1}]}'

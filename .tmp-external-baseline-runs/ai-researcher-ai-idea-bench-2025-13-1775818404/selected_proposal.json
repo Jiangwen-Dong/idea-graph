@@ -1,0 +1,12 @@
+{
+  "title": "Efficient Language-Guided Radiance Field Reconstruction for 3D Language Field Modeling",
+  "abstract": "",
+  "problem": "Current methods for radiance field reconstruction struggle to incorporate open-vocabulary language inputs efficiently, especially in complex scenes with high visual fidelity In particular, scalable 3D language field modeling remains difficult when queries must stay open-vocabulary and mask-free.",
+  "existing_methods": "Methods like Gaussian Splatting [2022] achieve real-time rendering but lack integration with language inputs. Lerf [CLIP embeddings] supports open-vocabulary queries but requires region proposals or masks, limiting scalability and efficiency.",
+  "motivation": "Combining the strengths of Gaussian Splatting and CLIP embeddings can enable more efficient and accurate radiance field reconstruction guided by natural language descriptions, addressing a critical gap in 3D language field modeling.",
+  "hypothesis": "Integrating CLIP embeddings with Gaussian Splatting can significantly improve the efficiency and accuracy of radiance field reconstruction while enabling open-vocabulary language guidance within a 3D language field.",
+  "method": "Propose a framework that embeds natural language descriptions into CLIP embeddings and fuses them with Gaussian Splatting during radiance field reconstruction. This approach avoids region proposals or masks, allowing hierarchical and scalable language-guided rendering across complex scenes The resulting representation is optimized specifically as a 3D language field rather than a generic text-guided scene generator.",
+  "evaluation": "Evaluate on benchmark datasets using quantitative metrics such as PSNR and SSIM, alongside qualitative assessments of language-guided accuracy. Compare against existing methods like Lerf and Gaussian Splatting to validate performance improvements.",
+  "significance": "This work advances 3D language field modeling by enabling efficient and high-fidelity radiance field reconstruction through natural language guidance, bridging the gap between visual and linguistic representations.",
+  "caveats": "The method assumes access to CLIP embeddings and may face challenges in handling ambiguous or long-tail language queries without additional refinement."
+}

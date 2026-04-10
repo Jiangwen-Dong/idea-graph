@@ -84,6 +84,29 @@ class LiteratureGroundingTests(unittest.TestCase):
         self.assertTrue("accuracy" in grounding.metric_items or "IoU" in grounding.metric_items)
         self.assertIn("Evaluate on", grounding.experiment_plan_summary)
 
+    def test_noisy_reference_snippet_dataset_fragments_are_filtered(self) -> None:
+        grounding = build_literature_grounding(
+            literature=["LiDAR HPS"],
+            metadata={
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "FreeMotion",
+                            "evaluation": (
+                                "Experiments were conducted on paper introduces FreeMotion, a novel dataset "
+                                "captured in diverse real scenarios with multi-modal and multi-view data. "
+                                "Report Chamfer distance (SUCD)."
+                            ),
+                            "method": "Fuse LiDAR and inertial sensing for human pose estimation.",
+                        }
+                    ]
+                }
+            },
+        )
+
+        self.assertNotIn("paper introduces", grounding.experiment_plan_summary.lower())
+        self.assertNotIn("freemotion", " ".join(grounding.dataset_items).lower())
+
     def test_keyword_only_liveideabench_gets_safe_weak_context_scaffold(self) -> None:
         grounding = build_literature_grounding(
             literature=[
