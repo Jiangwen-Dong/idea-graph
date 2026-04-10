@@ -9,7 +9,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from idea_graph.benchmark_scoring import evaluate_benchmark_native
+from idea_graph.benchmark_scoring import _extract_json_object, evaluate_benchmark_native
 from idea_graph.models import FinalProposal, IdeaGraph
 
 
@@ -77,6 +77,14 @@ class BenchmarkScoringTests(unittest.TestCase):
         self.assertEqual(evaluation.protocol_name, "liveideabench_public_rubric_v1")
         self.assertFalse(metrics["originality"].available)
         self.assertEqual(evaluation.benchmark, "liveideabench")
+
+    def test_extract_json_object_accepts_valid_prefix_before_extra_text(self) -> None:
+        payload = _extract_json_object('{"score": 4, "rationale": "ok"} trailing commentary')
+        self.assertEqual(payload["score"], 4)
+
+    def test_extract_json_object_repairs_trailing_commas(self) -> None:
+        payload = _extract_json_object('{"scores":{"a":1,},"overall_average":7,}')
+        self.assertEqual(payload["overall_average"], 7)
 
 
 if __name__ == "__main__":

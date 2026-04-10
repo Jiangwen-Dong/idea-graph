@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from .benchmarks.ai_idea_bench_2025 import load_ai_idea_bench_2025_records
@@ -46,25 +47,56 @@ def _round_score(value: float) -> float:
 
 def _extract_json_object(text: str) -> dict[str, Any]:
     cleaned = text.strip()
+    candidates = [cleaned]
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        payload = json.loads(cleaned)
-        if isinstance(payload, dict):
-            return payload
-    except json.JSONDecodeError:
-        pass
+        fence_stripped = cleaned.strip("`")
+        if fence_stripped.startswith("json"):
+            fence_stripped = fence_stripped[4:].strip()
+        candidates.append(fence_stripped)
 
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    decoder = json.JSONDecoder()
+    errors: list[Exception] = []
+
+    def _try_parse(candidate: str) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(candidate)
+            if isinstance(payload, dict):
+                return payload
+        except json.JSONDecodeError as exc:
+            errors.append(exc)
+        try:
+            payload, _ = decoder.raw_decode(candidate)
+            if isinstance(payload, dict):
+                return payload
+        except json.JSONDecodeError as exc:
+            errors.append(exc)
+
+        repaired = re.sub(r",(\s*[}\]])", r"\1", candidate)
+        if repaired != candidate:
+            try:
+                payload, _ = decoder.raw_decode(repaired)
+                if isinstance(payload, dict):
+                    return payload
+            except json.JSONDecodeError as exc:
+                errors.append(exc)
+        return None
+
+    for candidate in candidates:
+        parsed = _try_parse(candidate)
+        if parsed is not None:
+            return parsed
+
+    brace_positions = [idx for idx, char in enumerate(cleaned) if char == "{"]
+    for start in brace_positions:
+        parsed = _try_parse(cleaned[start:])
+        if parsed is not None:
+            return parsed
+
+    if "{" not in cleaned or "}" not in cleaned:
         raise ValueError("Model response did not contain a JSON object.")
-    payload = json.loads(cleaned[start : end + 1])
-    if not isinstance(payload, dict):
-        raise ValueError("Model response JSON must be an object.")
-    return payload
+    if errors:
+        raise errors[-1]
+    raise ValueError("Model response JSON must be an object.")
 
 
 def _normalize_text(value: Any) -> str:

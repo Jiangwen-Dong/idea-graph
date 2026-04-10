@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 import unittest
-from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -12,133 +10,136 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from idea_graph.evaluation import evaluate_graph
-from idea_graph.engine import run_experiment
-from idea_graph.instances import ExperimentInstance
-from idea_graph.io import write_run_artifacts
+from idea_graph.models import FinalProposal, GraphAction, IdeaGraph, MaturitySnapshot
 
 
 class EvaluationTests(unittest.TestCase):
-    def _benchmark_metadata(self) -> dict[str, object]:
-        return {
-            "benchmark": "AI_Idea_Bench_2025",
-            "benchmark_index": 15,
-            "target_paper": "PanoPose",
-            "motivation": (
-                "Traditional SfM methods struggle with scale estimation in textureless scenes and straight-line camera motion."
-            ),
-            "method_summary": (
-                "PanoPose combines a depth-net, a pose-net, rotation-only pre-training, and a fusion block "
-                "to estimate scaled relative poses from panoramic images."
-            ),
-            "reference_titles": [
-                "Unsupervised learning of depth and ego-motion from video",
-                "Digging into self-supervised monocular depth estimation",
-            ],
-            "raw_record": {
-                "summary": {
-                    "split_topic": [
-                        {"keyword": "scaled relative poses"},
-                        {"keyword": "panoramic images"},
-                    ],
-                    "method": {
-                        "datasets": (
-                            "Experiments were conducted on several datasets, including "
-                            "PanoSUNCG (synthetic indoor) and Mapillary Metropolis (real-world panoramic images)."
-                        ),
-                        "metrics": (
-                            "Evaluation metrics include Relative Rotation Error (RRE), Relative Translation "
-                            "Angle Error (RTAE), and Relative Scale Error (RSE)."
-                        ),
-                    },
-                }
+    def _base_graph(self) -> IdeaGraph:
+        graph = IdeaGraph(
+            topic="The topic of this paper is multimodal distillation for long-video understanding.",
+            literature=[],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "motivation": "Long-video models still struggle to transfer fine-grained temporal reasoning from strong teachers.",
+                "method_summary": "Use teacher-guided temporal token selection to distill long-range reasoning into a compact student.",
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "Teacher-Guided Long-Video Distillation",
+                            "abstract": "Teacher-guided distillation improves compact long-video models.",
+                        }
+                    ]
+                },
+                "literature_grounding": {
+                    "existing_methods_summary": "Existing methods use distillation or token compression for long-video reasoning.",
+                    "dataset_items": ["Video-MME"],
+                    "metric_items": ["accuracy", "F1"],
+                    "experiment_plan_summary": "Evaluate on Video-MME with accuracy and F1 against long-video baselines.",
+                },
             },
-            "literature_grounding": {
-                "dataset_items": [
-                    "PanoSUNCG (synthetic indoor)",
-                    "Mapillary Metropolis (real-world panoramic images)",
-                ],
-                "metric_items": [
-                    "Relative Rotation Error (RRE)",
-                    "Relative Translation Angle Error (RTAE)",
-                    "Relative Scale Error (RSE)",
-                ],
-                "existing_methods_summary": (
-                    "Existing work uses self-supervised depth estimation and calibrated relative-pose methods."
+        )
+        graph.final_proposal = FinalProposal(
+            title="Curriculum Temporal Distillation For Long-Video Models",
+            problem="Compact long-video models still miss teacher-level temporal reasoning on long contexts.",
+            existing_methods="Existing methods use token pruning or distillation, but they often compress away the teacher's temporal cues.",
+            motivation="We need a distillation strategy that preserves temporal evidence rather than only logits.",
+            hypothesis="Teacher-aligned temporal curriculum signals can transfer long-range reasoning more faithfully.",
+            method="Distill a compact student with curriculum-weighted temporal evidence maps and teacher-guided segment sampling.",
+            evaluation="Evaluate on Video-MME with accuracy and F1, compare against long-video distillation baselines, and run ablations on curriculum stages.",
+            significance="This could improve efficient long-video understanding without full teacher-scale inference.",
+            caveats="The method may depend on accurate teacher evidence maps and could underperform on very noisy videos.",
+        )
+        return graph
+
+    def test_main_outcome_scores_are_output_only(self) -> None:
+        graph_without_process = self._base_graph()
+        graph_with_process = self._base_graph()
+        graph_with_process.round_summaries.append(
+            (
+                "Round3",
+                MaturitySnapshot(
+                    support_coverage=0.95,
+                    unresolved_contradiction_ratio=0.0,
+                    utility=7.2,
+                    utility_stable=True,
+                    completeness=True,
+                    is_mature=True,
                 ),
+            )
+        )
+        graph_with_process.actions.extend(
+            [
+                GraphAction(id="A001", round_name="Round1", role="MechanismProposer", kind="expand_branch", target_ids=["N001"]),
+                GraphAction(id="A002", round_name="Round2", role="NoveltyExaminer", kind="attach_evidence", target_ids=["N002"]),
+                GraphAction(id="A003", round_name="Round3", role="EvaluationDesigner", kind="freeze_branch", target_ids=[]),
+            ]
+        )
+
+        eval_without = evaluate_graph(graph_without_process)
+        eval_with = evaluate_graph(graph_with_process)
+
+        self.assertEqual(
+            eval_without.category_scores["expert_style_quality"],
+            eval_with.category_scores["expert_style_quality"],
+        )
+        self.assertEqual(
+            eval_without.category_scores["benchmark_alignment"],
+            eval_with.category_scores["benchmark_alignment"],
+        )
+        self.assertEqual(eval_without.overall_score, eval_with.overall_score)
+        self.assertNotEqual(
+            eval_without.category_scores.get("graph_process", 0.0),
+            eval_with.category_scores.get("graph_process", 0.0),
+        )
+
+    def test_overall_score_excludes_graph_process_category(self) -> None:
+        graph = self._base_graph()
+        graph.round_summaries.append(
+            (
+                "Round2",
+                MaturitySnapshot(
+                    support_coverage=1.0,
+                    unresolved_contradiction_ratio=0.0,
+                    utility=8.0,
+                    utility_stable=True,
+                    completeness=True,
+                    is_mature=True,
+                ),
+            )
+        )
+        evaluation = evaluate_graph(graph)
+        expert = evaluation.category_scores["expert_style_quality"]
+        alignment = evaluation.category_scores["benchmark_alignment"]
+        expected = round((expert + alignment) / 2.0, 2)
+        self.assertEqual(expected, evaluation.overall_score)
+
+    def test_topic_alignment_handles_sentence_final_keyword_tokens(self) -> None:
+        graph = IdeaGraph(
+            topic="Ideation topic keyword: meteorology",
+            literature=["Benchmark keyword: meteorology"],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "meteorology",
+                "raw_record": {},
             },
-        }
-
-    def _make_temp_output_root(self) -> Path:
-        root = ROOT / "tests" / "_tmp_evaluation"
-        root.mkdir(parents=True, exist_ok=True)
-        run_root = root / f"case-{uuid4().hex}"
-        run_root.mkdir(parents=True, exist_ok=True)
-        return run_root
-
-    def test_evaluate_graph_returns_benchmark_alignment_metrics_when_available(self) -> None:
-        graph = run_experiment(
-            topic="The topic of this paper is estimating scaled relative poses in panoramic images.",
-            literature=[
-                "Unsupervised learning of depth and ego-motion from video",
-                "Digging into self-supervised monocular depth estimation",
-            ],
-            metadata=self._benchmark_metadata(),
-            max_rounds=3,
-            stop_when_mature=False,
+        )
+        graph.final_proposal = FinalProposal(
+            title="Spatial-Temporal Disentanglement for Weather Pattern Forecasting",
+            problem="Current weather prediction models struggle with uncertainty. This matters directly for meteorology.",
+            existing_methods="Existing weather models often entangle spatial and temporal dynamics.",
+            motivation="Reliable forecasting matters for disaster mitigation.",
+            hypothesis="Separating spatial and temporal structure can improve meteorological forecasting.",
+            method="Use a variational architecture that disentangles atmospheric dynamics for weather prediction.",
+            evaluation="Evaluate forecasting accuracy and calibration on weather benchmarks.",
+            significance="Improves meteorology forecasting.",
+            caveats="May depend on data quality.",
         )
 
         evaluation = evaluate_graph(graph)
-        metrics = {metric.key: metric for metric in evaluation.metrics}
+        topic_metric = next(metric for metric in evaluation.metrics if metric.key == "topic_alignment")
 
-        self.assertGreater(evaluation.overall_score, 0.0)
-        self.assertIn("expert_style_quality", evaluation.category_scores)
-        self.assertIn("benchmark_alignment", evaluation.category_scores)
-        self.assertTrue(metrics["ground_truth_concordance"].available)
-        self.assertGreater(metrics["experiment_alignment"].score, 0.0)
-        self.assertGreater(metrics["topic_alignment"].score, 0.0)
-
-    def test_ground_truth_concordance_is_unavailable_without_benchmark_oracle_fields(self) -> None:
-        graph = run_experiment(
-            topic="graph-based scientific ideation",
-            literature=["paper a", "paper b", "paper c", "paper d"],
-            max_rounds=3,
-            stop_when_mature=False,
-        )
-
-        evaluation = evaluate_graph(graph)
-        metric = next(metric for metric in evaluation.metrics if metric.key == "ground_truth_concordance")
-
-        self.assertFalse(metric.available)
-        self.assertEqual(metric.score, 0.0)
-
-    def test_write_run_artifacts_emits_evaluation_files(self) -> None:
-        output_root = self._make_temp_output_root()
-        try:
-            graph = run_experiment(
-                topic="The topic of this paper is estimating scaled relative poses in panoramic images.",
-                literature=[
-                    "Unsupervised learning of depth and ego-motion from video",
-                    "Digging into self-supervised monocular depth estimation",
-                ],
-                metadata=self._benchmark_metadata(),
-                max_rounds=3,
-                stop_when_mature=False,
-            )
-            instance = ExperimentInstance(
-                name="eval-case",
-                topic=graph.topic,
-                literature=list(graph.literature),
-                source_path="test",
-                metadata=self._benchmark_metadata(),
-            )
-
-            run_dir = write_run_artifacts(graph, output_root=output_root, instance=instance)
-
-            self.assertTrue((run_dir / "evaluation.json").exists())
-            self.assertTrue((run_dir / "evaluation.md").exists())
-            self.assertIn("idea_evaluation", (run_dir / "summary.json").read_text(encoding="utf-8"))
-        finally:
-            shutil.rmtree(output_root, ignore_errors=True)
+        self.assertGreater(topic_metric.score, 0.0)
+        self.assertGreater(topic_metric.signals.get("keyword_signal", 0.0), 0.0)
 
 
 if __name__ == "__main__":

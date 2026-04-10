@@ -1,31 +1,21 @@
 {
   "ai-researcher": {
     "enabled": true,
-    "repo_path": "C:/path/to/AI-Researcher",
-    "python_executable": "python",
+    "execution_mode": "openai-compatible-bridge",
     "workspace_root": ".tmp-external-baseline-runs",
-    "engine": "gpt-4o",
-    "method": "prompting",
     "ideas_n": 4,
-    "grounding_k": 4,
-    "ranking_rounds": 3,
-    "seed": 2024,
-    "timeout_seconds": 3600,
-    "keys": {
-      "api_key": {
-        "env": "OPENAI_API_KEY"
-      },
-      "organization_id": {
-        "env": "OPENAI_ORG_ID"
-      },
-      "s2_key": {
-        "env": "S2_API_KEY"
-      },
-      "anthropic_key": {
-        "env": "ANTHROPIC_API_KEY"
-      }
+    "openai_compatible": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "model": "qwen3-8b",
+      "provider": "dashscope",
+      "reasoning_mode": "auto",
+      "temperature": 0.2,
+      "max_tokens": 1400,
+      "timeout_seconds": 90,
+      "max_retries": 2
     },
-    "env": {}
+    "repo_path": "C:/path/to/AI-Researcher"
   },
   "scipip": {
     "enabled": false,

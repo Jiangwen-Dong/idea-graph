@@ -96,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--baseline",
         choices=baseline_choices(),
-        default="ours-delayed-consensus",
+        default="ours-eig",
         help="Runnable local baseline wrapper to execute under the shared benchmark I/O contract.",
     )
     parser.add_argument(
@@ -370,7 +370,8 @@ def main() -> None:
             f"{round_name}: support={snapshot.support_coverage}, "
             f"contradictions={snapshot.unresolved_contradiction_ratio}, "
             f"utility={snapshot.utility}, stable={snapshot.utility_stable}, "
-            f"complete={snapshot.completeness}, mature={snapshot.is_mature}"
+            f"complete={snapshot.completeness}, mature={snapshot.is_mature}, "
+            f"coherence={snapshot.utility_breakdown.coherence}, promise={snapshot.utility_breakdown.promise}"
         )
     print()
 

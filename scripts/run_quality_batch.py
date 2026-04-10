@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
@@ -25,18 +25,15 @@ from idea_graph.benchmarks import (
     liveideabench_instance_from_record,
 )
 from idea_graph.evaluation import evaluate_graph
+from idea_graph.experiment_plans import (
+    ExperimentMethodPlan,
+    canonical_method_plan_name,
+    get_method_plan_catalog,
+    prepare_instance_for_method_plan,
+)
 from idea_graph.io import write_run_artifacts
 from idea_graph.instances import ExperimentInstance
 from idea_graph.settings import OpenAICompatibleSettings
-
-
-@dataclass(frozen=True)
-class MethodPlan:
-    baseline_name: str
-    restarts: int
-    max_rounds: int
-    stop_when_mature: bool
-    rationale: str
 
 
 @dataclass(frozen=True)
@@ -47,45 +44,6 @@ class BenchmarkTarget:
     instance_name: str
     topic_preview: str
     instance: ExperimentInstance
-
-
-METHOD_PLANS: dict[str, MethodPlan] = {
-    "direct": MethodPlan(
-        baseline_name="direct",
-        restarts=1,
-        max_rounds=1,
-        stop_when_mature=True,
-        rationale="Single-pass lower bound under the shared benchmark-facing output contract.",
-    ),
-    "self-refine": MethodPlan(
-        baseline_name="self-refine",
-        restarts=1,
-        max_rounds=1,
-        stop_when_mature=True,
-        rationale="Single-agent draft-critique-revise baseline.",
-    ),
-    "scipip-proxy": MethodPlan(
-        baseline_name="scipip-proxy",
-        restarts=1,
-        max_rounds=1,
-        stop_when_mature=True,
-        rationale="Structured decomposition proxy baseline.",
-    ),
-    "ai-researcher-proxy": MethodPlan(
-        baseline_name="ai-researcher-proxy",
-        restarts=1,
-        max_rounds=1,
-        stop_when_mature=True,
-        rationale="Literature-grounded candidate-generation proxy baseline.",
-    ),
-    "ours-delayed-consensus": MethodPlan(
-        baseline_name="ours-delayed-consensus",
-        restarts=1,
-        max_rounds=5,
-        stop_when_mature=True,
-        rationale="Typed-graph multi-agent collaboration with delayed consensus and maturity-based early stopping.",
-    ),
-}
 
 
 def print_progress(message: str) -> None:
@@ -163,13 +121,7 @@ def summarize_graph_usage(graph) -> dict[str, int]:
 
 
 def selection_score(evaluation_payload: dict[str, Any]) -> float:
-    overall = float(evaluation_payload.get("overall_score", 0.0) or 0.0)
-    category_scores = evaluation_payload.get("category_scores", {})
-    if not isinstance(category_scores, dict):
-        category_scores = {}
-    benchmark_alignment = float(category_scores.get("benchmark_alignment", 0.0) or 0.0)
-    expert_style_quality = float(category_scores.get("expert_style_quality", 0.0) or 0.0)
-    return (0.65 * overall) + (0.25 * benchmark_alignment) + (0.10 * expert_style_quality)
+    return float(evaluation_payload.get("overall_score", 0.0) or 0.0)
 
 
 def mean_or_zero(values: list[float]) -> float:
@@ -195,6 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Root directory for LiveIdeaBench files.",
     )
     parser.add_argument(
+        "--plan-preset",
+        choices=("main", "ablation"),
+        default="main",
+        help="Method-plan preset to use. 'main' reproduces the paper comparison, while 'ablation' exposes protocol variants.",
+    )
+    parser.add_argument(
         "--ai-indices",
         type=int,
         nargs="+",
@@ -211,14 +169,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--baselines",
         nargs="+",
-        default=[
-            "direct",
-            "self-refine",
-            "scipip-proxy",
-            "ai-researcher-proxy",
-            "ours-delayed-consensus",
-        ],
-        help="Baselines to include in the batch.",
+        default=None,
+        help="Method-plan names to include in the batch. Defaults depend on --plan-preset.",
     )
     parser.add_argument(
         "--llm-config",
@@ -297,13 +249,13 @@ def load_targets(args: argparse.Namespace) -> list[BenchmarkTarget]:
 def should_run_native_eval(
     *,
     args: argparse.Namespace,
-    baseline_name: str,
+    method_name: str,
     native_eval_count: int,
 ) -> bool:
     if not args.native_eval:
         return False
     allowed_baselines = set(args.native_eval_baselines)
-    if allowed_baselines and baseline_name not in allowed_baselines:
+    if allowed_baselines and method_name not in allowed_baselines:
         return False
     if args.native_eval_max_runs > 0 and native_eval_count >= args.native_eval_max_runs:
         return False
@@ -394,12 +346,14 @@ def overall_aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return aggregates
 
 
-def _token_multiplier_lookup(rows: list[dict[str, Any]]) -> dict[str, float]:
+def _token_multiplier_lookup(rows: list[dict[str, Any]]) -> dict[str, float | None]:
     direct_row = next((row for row in rows if row["baseline_name"] == "direct"), None)
     direct_tokens = float(direct_row["mean_total_tokens"]) if direct_row is not None else 0.0
-    lookup: dict[str, float] = {}
+    lookup: dict[str, float | None] = {}
     for row in rows:
-        lookup[str(row["baseline_name"])] = 0.0 if direct_tokens <= 0 else round(float(row["mean_total_tokens"]) / direct_tokens, 2)
+        lookup[str(row["baseline_name"])] = (
+            None if direct_tokens <= 0 else round(float(row["mean_total_tokens"]) / direct_tokens, 2)
+        )
     return lookup
 
 
@@ -421,8 +375,11 @@ def format_markdown_summary(payload: dict[str, Any]) -> str:
     lines.append("## Comparison Policy")
     lines.append("")
     for item in payload.get("method_plans", []):
+        method_name = str(item.get("name", item.get("baseline_name", "")))
+        runner_name = str(item.get("baseline_name", method_name))
+        runner_text = "" if runner_name == method_name else f", runner=`{runner_name}`"
         lines.append(
-            f"- `{item['baseline_name']}`: restarts={item['restarts']}, max_rounds={item['max_rounds']}, "
+            f"- `{method_name}`{runner_text}: restarts={item['restarts']}, max_rounds={item['max_rounds']}, "
             f"stop_when_mature={item['stop_when_mature']}. {item['rationale']}"
         )
     lines.append("")
@@ -468,11 +425,13 @@ def format_markdown_summary(payload: dict[str, Any]) -> str:
         for row in rows:
             native_value = row.get("mean_native_average_normalized_10")
             native_text = "--" if native_value is None else f"{float(native_value):.2f}"
+            multiplier_value = multiplier_lookup[row["baseline_name"]]
+            multiplier_text = "--" if multiplier_value is None else f"{float(multiplier_value):.2f}x"
             lines.append(
                 f"| `{benchmark_name}` | `{row['baseline_name']}` | {row['mean_overall_score']:.2f} | "
                 f"{row['mean_benchmark_alignment']:.2f} | {row['mean_expert_style_quality']:.2f} | "
                 f"{row['mean_graph_process']:.2f} | {row['mean_llm_call_count']:.2f} | "
-                f"{row['mean_total_tokens']:.0f} | {multiplier_lookup[row['baseline_name']]:.2f}x | {native_text} |"
+                f"{row['mean_total_tokens']:.0f} | {multiplier_text} | {native_text} |"
             )
     lines.append("")
     lines.append("## Overall Aggregate")
@@ -484,11 +443,13 @@ def format_markdown_summary(payload: dict[str, Any]) -> str:
     for row in overall_rows:
         native_value = row.get("mean_native_average_normalized_10")
         native_text = "--" if native_value is None else f"{float(native_value):.2f}"
+        multiplier_value = multiplier_lookup[row["baseline_name"]]
+        multiplier_text = "--" if multiplier_value is None else f"{float(multiplier_value):.2f}x"
         lines.append(
             f"| `{row['baseline_name']}` | {row['mean_overall_score']:.2f} | "
             f"{row['mean_benchmark_alignment']:.2f} | {row['mean_expert_style_quality']:.2f} | "
             f"{row['mean_graph_process']:.2f} | {row['mean_llm_call_count']:.2f} | "
-            f"{row['mean_total_tokens']:.0f} | {multiplier_lookup[row['baseline_name']]:.2f}x | {native_text} |"
+            f"{row['mean_total_tokens']:.0f} | {multiplier_text} | {native_text} |"
         )
     lines.append("")
     lines.append("## Key Findings")
@@ -509,9 +470,16 @@ def main() -> None:
     settings = OpenAICompatibleSettings.from_json_file(args.llm_config)
     backend = OpenAICompatibleCollaborationBackend(settings)
 
-    missing = [name for name in args.baselines if name not in METHOD_PLANS]
+    method_catalog = get_method_plan_catalog(args.plan_preset)
+    requested_methods = (
+        [canonical_method_plan_name(name) for name in args.baselines]
+        if args.baselines
+        else list(method_catalog)
+    )
+    requested_methods = list(dict.fromkeys(requested_methods))
+    missing = [name for name in requested_methods if name not in method_catalog]
     if missing:
-        raise SystemExit(f"Unsupported baseline(s): {', '.join(missing)}")
+        raise SystemExit(f"Unsupported method-plan name(s): {', '.join(missing)}")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     batch_dir = args.output_dir / f"{timestamp}-{args.batch_name}"
@@ -532,23 +500,19 @@ def main() -> None:
         print_progress(
             f"Target {target.benchmark}/{target.display_selector}: {_clean_text(target.topic_preview)}"
         )
-        for baseline_name in args.baselines:
-            plan = METHOD_PLANS[baseline_name]
+        for method_name in requested_methods:
+            plan: ExperimentMethodPlan = method_catalog[method_name]
             print_progress(
-                f"Running baseline '{baseline_name}' on {target.benchmark}/{target.display_selector}."
+                f"Running method '{method_name}' on {target.benchmark}/{target.display_selector}."
             )
             best_row: dict[str, Any] | None = None
             successful_runs = 0
             for restart in range(plan.restarts):
-                prepared_instance = attach_baseline_metadata(
-                    target.instance,
-                    baseline_name=baseline_name,
-                    io_mode="auto",
-                )
+                prepared_instance = prepare_instance_for_method_plan(target.instance, plan=plan)
                 metadata = dict(prepared_instance.metadata)
                 metadata["batch_name"] = args.batch_name
                 metadata["batch_restart"] = restart
-                metadata["batch_method_plan"] = asdict(plan)
+                metadata["batch_method_plan"] = plan.as_dict()
                 prepared_instance = ExperimentInstance(
                     name=prepared_instance.name,
                     topic=prepared_instance.topic,
@@ -560,10 +524,10 @@ def main() -> None:
                 try:
                     graph = run_baseline_experiment(
                         prepared_instance,
-                        baseline_name=baseline_name,
+                        baseline_name=plan.baseline_name,
                         collaboration_backend=backend,
-                        progress_callback=lambda message, bn=baseline_name, bb=target.benchmark, ss=target.display_selector, rr=restart: print_progress(
-                            f"[{bb}][{ss}][{bn}][r{rr}] {message}"
+                        progress_callback=lambda message, mn=method_name, bb=target.benchmark, ss=target.display_selector, rr=restart: print_progress(
+                            f"[{bb}][{ss}][{mn}][r{rr}] {message}"
                         ),
                         max_rounds=plan.max_rounds,
                         stop_when_mature=plan.stop_when_mature,
@@ -574,7 +538,8 @@ def main() -> None:
                             "benchmark": target.benchmark,
                             "selector": target.selector,
                             "display_selector": target.display_selector,
-                            "baseline_name": baseline_name,
+                            "baseline_name": method_name,
+                            "runner_baseline_name": plan.baseline_name,
                             "restart": restart,
                             "error": str(exc),
                         }
@@ -584,7 +549,7 @@ def main() -> None:
                 native_evaluation = None
                 if should_run_native_eval(
                     args=args,
-                    baseline_name=baseline_name,
+                    method_name=method_name,
                     native_eval_count=native_eval_count,
                 ):
                     try:
@@ -619,7 +584,8 @@ def main() -> None:
                     "selector": target.selector,
                     "display_selector": target.display_selector,
                     "instance_name": prepared_instance.name,
-                    "baseline_name": baseline_name,
+                    "baseline_name": method_name,
+                    "runner_baseline_name": plan.baseline_name,
                     "restart": restart,
                     "selection_score": selection_score(evaluation),
                     "overall_score": float(evaluation.get("overall_score", 0.0) or 0.0),
@@ -644,7 +610,7 @@ def main() -> None:
 
             if best_row is None:
                 print_progress(
-                    f"Baseline '{baseline_name}' failed on {target.benchmark}/{target.display_selector}."
+                    f"Method '{method_name}' failed on {target.benchmark}/{target.display_selector}."
                 )
                 continue
             best_row = dict(best_row)
@@ -677,12 +643,12 @@ def main() -> None:
             f"Across the combined small batch, `{best_overall['baseline_name']}` ranked highest by mean overall score "
             f"({best_overall['mean_overall_score']:.2f}/10)."
         )
-        ours_row = next((row for row in overall_payload if row["baseline_name"] == "ours-delayed-consensus"), None)
+        ours_row = next((row for row in overall_payload if row["baseline_name"] == "ours-eig"), None)
         direct_row = next((row for row in overall_payload if row["baseline_name"] == "direct"), None)
         if ours_row is not None and direct_row is not None:
             delta = round(float(ours_row["mean_overall_score"]) - float(direct_row["mean_overall_score"]), 2)
             findings.append(
-                f"The delayed-consensus method differed from the direct baseline by {delta:+.2f} overall points, "
+                f"The EIG method differed from the direct baseline by {delta:+.2f} overall points, "
                 "so quality and cost should be reported on separate axes."
             )
 
@@ -694,11 +660,12 @@ def main() -> None:
 
     payload = {
         "batch_name": args.batch_name,
+        "plan_preset": args.plan_preset,
         "generated_at": datetime.now().isoformat(),
         "model": settings.model,
         "ai_indices": args.ai_indices,
         "live_row_indices": args.live_row_indices,
-        "method_plans": [asdict(METHOD_PLANS[name]) for name in args.baselines],
+        "method_plans": [method_catalog[name].as_dict() for name in requested_methods],
         "raw_rows": raw_rows,
         "selected_rows": clean_selected_rows,
         "aggregate_rows": aggregate_payload,

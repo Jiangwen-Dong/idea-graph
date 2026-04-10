@@ -63,7 +63,21 @@ class GraphAction:
     target_ids: list[str]
     payload: dict[str, object] = field(default_factory=dict)
     rationale: str = ""
+    source: str = "deterministic"
     timestamp: datetime = field(default_factory=utc_now)
+
+
+@dataclass
+class UtilityBreakdown:
+    promise: float = 0.0
+    support: float = 0.0
+    coherence: float = 0.0
+    evidence: float = 0.0
+    novelty: float = 0.0
+    contradiction_penalty: float = 0.0
+    open_risk_penalty: float = 0.0
+    size_penalty: float = 0.0
+    total: float = 0.0
 
 
 @dataclass
@@ -74,6 +88,7 @@ class MaturitySnapshot:
     utility_stable: bool
     completeness: bool
     is_mature: bool
+    utility_breakdown: UtilityBreakdown = field(default_factory=UtilityBreakdown)
 
 
 @dataclass

@@ -21,6 +21,7 @@ from idea_graph.models import (
     MaturitySnapshot,
     Node,
     Provenance,
+    UtilityBreakdown,
 )
 from idea_graph.settings import OpenAICompatibleSettings
 
@@ -145,6 +146,17 @@ def graph_from_payload(payload: dict[str, object]) -> IdeaGraph:
                         utility_stable=bool(item[1].get("utility_stable", False)),
                         completeness=bool(item[1].get("completeness", False)),
                         is_mature=bool(item[1].get("is_mature", False)),
+                        utility_breakdown=UtilityBreakdown(
+                            promise=float(item[1].get("utility_breakdown", {}).get("promise", 0.0) or 0.0),
+                            support=float(item[1].get("utility_breakdown", {}).get("support", 0.0) or 0.0),
+                            coherence=float(item[1].get("utility_breakdown", {}).get("coherence", 0.0) or 0.0),
+                            evidence=float(item[1].get("utility_breakdown", {}).get("evidence", 0.0) or 0.0),
+                            novelty=float(item[1].get("utility_breakdown", {}).get("novelty", 0.0) or 0.0),
+                            contradiction_penalty=float(item[1].get("utility_breakdown", {}).get("contradiction_penalty", 0.0) or 0.0),
+                            open_risk_penalty=float(item[1].get("utility_breakdown", {}).get("open_risk_penalty", 0.0) or 0.0),
+                            size_penalty=float(item[1].get("utility_breakdown", {}).get("size_penalty", 0.0) or 0.0),
+                            total=float(item[1].get("utility_breakdown", {}).get("total", item[1].get("utility", 0.0)) or 0.0),
+                        ),
                     ),
                 )
             )

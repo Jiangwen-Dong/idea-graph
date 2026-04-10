@@ -21,6 +21,20 @@ def slugify(text: str) -> str:
     return slug or "run"
 
 
+def _action_source_counts(graph: IdeaGraph) -> dict[str, int]:
+    counts = {
+        "llm": 0,
+        "deterministic": 0,
+        "deterministic_fallback": 0,
+    }
+    for action in graph.actions:
+        source = str(getattr(action, "source", "deterministic") or "deterministic").strip()
+        if source not in counts:
+            counts[source] = 0
+        counts[source] += 1
+    return counts
+
+
 def load_instance(path: str | Path) -> ExperimentInstance:
     return ExperimentInstance.from_json_file(path)
 
@@ -59,12 +73,24 @@ def build_run_summary(
         "matured_at_round": graph.matured_at_round,
         "stopped_early": graph.metadata.get("stopped_early", False),
         "stop_reason": graph.metadata.get("stop_reason", "unknown"),
+        "action_source_counts": _action_source_counts(graph),
         "rounds": [
             {
                 "round": round_name,
                 "support_coverage": snapshot.support_coverage,
                 "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
                 "utility": snapshot.utility,
+                "utility_breakdown": {
+                    "promise": snapshot.utility_breakdown.promise,
+                    "support": snapshot.utility_breakdown.support,
+                    "coherence": snapshot.utility_breakdown.coherence,
+                    "evidence": snapshot.utility_breakdown.evidence,
+                    "novelty": snapshot.utility_breakdown.novelty,
+                    "contradiction_penalty": snapshot.utility_breakdown.contradiction_penalty,
+                    "open_risk_penalty": snapshot.utility_breakdown.open_risk_penalty,
+                    "size_penalty": snapshot.utility_breakdown.size_penalty,
+                    "total": snapshot.utility_breakdown.total,
+                },
                 "utility_stable": snapshot.utility_stable,
                 "completeness": snapshot.completeness,
                 "is_mature": snapshot.is_mature,

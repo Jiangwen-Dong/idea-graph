@@ -26,6 +26,7 @@ def detect_paper_dir() -> Path:
 
 
 PAPER_DIR = detect_paper_dir()
+ARCHIVE_ROOT = ROOT / "outputs" / "_archive" / "legacy_runs_pre_20260409"
 DEFAULT_PILOT_SUMMARY = ROOT / "outputs" / "pilots" / "20260401-161640-april01-quality-batch-v2" / "pilot_summary.json"
 DEFAULT_HARD_CASE_OLD_SUMMARY = (
     ROOT
@@ -36,7 +37,7 @@ DEFAULT_HARD_CASE_OLD_SUMMARY = (
     / "20260401-162704-ai-idea-bench-2025-18"
     / "summary.json"
 )
-DEFAULT_HARD_CASE_NEW_SUMMARY = ROOT / "outputs" / "20260401-164026-ai-idea-bench-2025-18" / "summary.json"
+DEFAULT_HARD_CASE_NEW_SUMMARY = ARCHIVE_ROOT / "20260401-164026-ai-idea-bench-2025-18" / "summary.json"
 
 
 METHOD_DISPLAY_NAMES = {
@@ -44,8 +45,16 @@ METHOD_DISPLAY_NAMES = {
     "self-refine": "Self-Refine",
     "scipip-proxy": r"\textsc{SciPIP}-Proxy",
     "ai-researcher-proxy": r"\textsc{AI-Researcher}-Proxy",
-    "ours-delayed-consensus": "Ours (Delayed Consensus)",
+    "ours-eig": "Ours (EIG Prototype)",
+    "ours-delayed-consensus": "Ours (EIG Prototype)",
 }
+
+
+def normalize_method_name(name: str) -> str:
+    cleaned = str(name).strip()
+    if cleaned == "ours-delayed-consensus":
+        return "ours-eig"
+    return cleaned
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -142,7 +151,8 @@ def render_quality_table(aggregate_rows: list[dict[str, Any]]) -> str:
     best_align = max(row["mean_benchmark_alignment"] for row in aggregate_rows)
     best_expert = max(row["mean_expert_style_quality"] for row in aggregate_rows)
     for row in aggregate_rows:
-        method = METHOD_DISPLAY_NAMES.get(row["baseline_name"], row["baseline_name"])
+        method_key = normalize_method_name(str(row["baseline_name"]))
+        method = METHOD_DISPLAY_NAMES.get(method_key, method_key)
         overall = f"{row['mean_overall_score']:.2f}"
         align = f"{row['mean_benchmark_alignment']:.2f}"
         expert = f"{row['mean_expert_style_quality']:.2f}"
@@ -168,7 +178,7 @@ def render_graph_process_table(ours_rows: list[dict[str, Any]]) -> str:
         r"\begin{table}[t]",
         r"\centering",
         r"\small",
-        r"\caption{Per-instance process diagnostics for the delayed-consensus method on the five-instance pilot. Higher support and utility are better; lower unresolved contradiction ratio (UCR) is better.}",
+        r"\caption{Per-instance process diagnostics for the current EIG prototype on the five-instance pilot. Higher support and utility are better; lower unresolved contradiction ratio (UCR) is better.}",
         r"\label{tab:pilot_graph_process}",
         r"\begin{tabular}{lccccccc}",
         r"\toprule",
@@ -214,7 +224,8 @@ def render_cost_table(aggregate_rows: list[dict[str, Any]]) -> str:
         r"\midrule",
     ]
     for row in aggregate_rows:
-        method = METHOD_DISPLAY_NAMES.get(row["baseline_name"], row["baseline_name"])
+        method_key = normalize_method_name(str(row["baseline_name"]))
+        method = METHOD_DISPLAY_NAMES.get(method_key, method_key)
         lines.append(
             f"{method} & {row['mean_llm_call_count']:.1f} & {row['mean_total_tokens']:.0f} & {row['token_multiplier_vs_direct']:.2f} \\\\"
         )
@@ -335,7 +346,9 @@ def main() -> None:
     pilot_summary = load_json(args.pilot_summary)
     aggregate_rows = list(pilot_summary.get("aggregate_rows", []))
     selected_rows = list(pilot_summary.get("selected_rows", []))
-    ours_rows = [row for row in selected_rows if row.get("baseline_name") == "ours-delayed-consensus"]
+    ours_rows = [
+        row for row in selected_rows if normalize_method_name(str(row.get("baseline_name"))) == "ours-eig"
+    ]
 
     old_summary = load_json(args.hard_case_old_summary)
     new_summary = load_json(args.hard_case_new_summary)

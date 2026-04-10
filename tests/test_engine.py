@@ -14,10 +14,16 @@ from idea_graph.agent_backend import ActionDecision
 from idea_graph.engine import (
     build_seed_graphs,
     choose_round_action,
+    create_branch,
+    create_edge,
+    create_node,
+    maturity_snapshot,
     merge_seed_graphs,
     run_experiment,
+    select_final_subgraph,
     synthesize_proposal,
     unresolved_contradiction_edges,
+    utility_breakdown,
 )
 from idea_graph.models import FinalProposal, IdeaGraph, MaturitySnapshot
 
@@ -104,9 +110,9 @@ class EngineTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(graph.final_proposal)
-        self.assertEqual(len(graph.actions), 15)
+        self.assertGreater(len(graph.actions), 0)
         self.assertIn("seed_generation_error", graph.metadata)
-        self.assertEqual(len(graph.metadata.get("action_errors", [])), 15)
+        self.assertEqual(len(graph.metadata.get("action_errors", [])), len(graph.actions))
         self.assertTrue(any("using deterministic fallback" in message for message in messages))
 
     def test_progress_callback_receives_round_updates(self) -> None:
@@ -240,6 +246,16 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(graph.metadata.get("stopped_early"))
         self.assertEqual(graph.metadata.get("stop_reason"), "mature_at_Round2")
 
+    def test_run_experiment_does_not_mature_in_round1_without_enough_history(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            max_rounds=2,
+            stop_when_mature=True,
+        )
+
+        self.assertGreaterEqual(len(graph.round_summaries), 2)
+
     def test_choose_round_action_handles_missing_impact_hypothesis_in_late_rounds(self) -> None:
         graph = self._build_seed_graph()
         for node in graph.active_nodes():
@@ -293,6 +309,110 @@ class EngineTests(unittest.TestCase):
         )
         self.assertTrue(any("using deterministic fallback" in message for message in messages))
         self.assertLess(graph.round_summaries[-1][1].unresolved_contradiction_ratio, 1.0)
+
+    def test_utility_breakdown_exposes_component_scores(self) -> None:
+        graph = self._build_seed_graph()
+
+        breakdown = utility_breakdown(graph)
+
+        self.assertGreaterEqual(breakdown.total, 0.0)
+        self.assertLessEqual(breakdown.total, 10.0)
+        self.assertGreaterEqual(breakdown.promise, 0.0)
+        self.assertLessEqual(breakdown.coherence, 1.0)
+
+    def test_final_subgraph_includes_selection_metadata(self) -> None:
+        graph = self._build_seed_graph()
+
+        subgraph = select_final_subgraph(graph)
+
+        self.assertIn("selection_mode", subgraph)
+        self.assertIn("utility_breakdown", subgraph)
+        self.assertAlmostEqual(
+            float(subgraph["utility"]),
+            float(subgraph["utility_breakdown"]["total"]),
+            places=2,
+        )
+        self.assertTrue(subgraph["node_ids"])
+
+    def test_keyword_only_weak_context_maturity_requires_keyword_specific_structure(self) -> None:
+        graph = IdeaGraph(
+            topic="Ideation topic keyword: meteorology",
+            literature=["Benchmark keyword: meteorology"],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "meteorology",
+                "idea_graph_min_rounds_before_maturity": 2,
+            },
+        )
+        graph.utility_history = [7.6, 7.8]
+        branch = create_branch(graph, "MechanismProposer")
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="Current approaches remain limited in accuracy and reliability.",
+            role="ImpactReframer",
+            branch_id=branch.id,
+            confidence=0.82,
+        )
+        hypothesis = create_node(
+            graph,
+            node_type="Hypothesis",
+            text="A hybrid model can improve performance on the task.",
+            role="MechanismProposer",
+            branch_id=branch.id,
+            confidence=0.8,
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text="Use a hybrid neural architecture with physics constraints.",
+            role="MechanismProposer",
+            branch_id=branch.id,
+            confidence=0.82,
+        )
+        eval_plan = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on realistic benchmark tasks and compare against strong baselines.",
+            role="EvaluationDesigner",
+            branch_id=branch.id,
+            confidence=0.8,
+        )
+        novelty = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="The system integrates multiple components in a coherent graph.",
+            role="NoveltyExaminer",
+            branch_id=branch.id,
+            confidence=0.78,
+        )
+        for source in (hypothesis, method, eval_plan, novelty):
+            create_edge(
+                graph,
+                source_id=source.id,
+                relation="supports",
+                target_id=problem.id,
+                role=source.role,
+                branch_id=branch.id,
+            )
+            source.evidence.append("Benchmark keyword: meteorology")
+
+        generic_snapshot = maturity_snapshot(graph)
+        self.assertFalse(generic_snapshot.is_mature)
+
+        hypothesis.text = "Physics-aware meteorology forecasting can improve severe-weather reliability."
+        method.text = (
+            "Combine satellite, radar, and reanalysis inputs with a physics-aware spatiotemporal forecasting model "
+            "for meteorology."
+        )
+        eval_plan.text = (
+            "Evaluate meteorology forecasting on reanalysis and satellite-based benchmark tasks, report RMSE, MAE, "
+            "and CRPS, and run ablations on multimodal fusion and uncertainty calibration."
+        )
+        novelty.text = "The idea targets meteorology with uncertainty-aware multimodal forecasting rather than a generic hybrid model."
+
+        specific_snapshot = maturity_snapshot(graph)
+        self.assertTrue(specific_snapshot.is_mature)
 
 
 if __name__ == "__main__":

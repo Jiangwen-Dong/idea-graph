@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict
+from itertools import product
 from typing import Callable
 
 from .agent_backend import (
@@ -24,6 +26,7 @@ from .models import (
     MaturitySnapshot,
     Node,
     Provenance,
+    UtilityBreakdown,
 )
 from .schema import ROLE_NAMES, build_seed_template
 
@@ -536,6 +539,10 @@ def ensure_core_node_coverage(graph: IdeaGraph) -> None:
         )
 
 
+def core_node_coverage_enabled(graph: IdeaGraph) -> bool:
+    return not bool(graph.metadata.get("idea_graph_disable_core_node_coverage", False))
+
+
 def merge_seed_graphs(graph: IdeaGraph) -> None:
     canonical: dict[tuple[str, str], Node] = {}
     for node in list(graph.nodes.values()):
@@ -711,7 +718,7 @@ def choose_consolidation_action(graph: IdeaGraph, round_name: str, role: str, br
     )
 
 
-def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAction:
+def _legacy_choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAction:
     branch = branch_for_role(graph, role)
     phase = resolve_round_phase(round_name)
     _view = focused_view(graph, role)
@@ -1069,13 +1076,13 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
             round_name=round_name,
             role=role,
             kind="propose_repair",
-            target_ids=[novelty_claim.id],
-            payload={
-                "branch_id": branch.id,
-                "repair_text": "Narrow the novelty claim to delayed consensus over typed claim fragments.",
-            },
-            rationale="Refine the novelty claim after overlap analysis.",
-        )
+                target_ids=[novelty_claim.id],
+                payload={
+                    "branch_id": branch.id,
+                    "repair_text": "Narrow the novelty claim to explicit evolving-graph reasoning over typed scientific claim fragments.",
+                },
+                rationale="Refine the novelty claim after overlap analysis.",
+            )
     if role == "EvaluationDesigner":
         repair_target = choose_repair_target(graph, role)
         if repair_target is not None:
@@ -1141,6 +1148,648 @@ def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAc
         payload={"branch_id": problem_branch.id},
         rationale="Preserve the impact branch as a traceable alternative while final synthesis happens elsewhere.",
     )
+
+
+def _build_action_spec(
+    *,
+    kind: str,
+    target_ids: list[str],
+    payload: dict[str, object] | None = None,
+    rationale: str = "",
+    candidate_source: str = "heuristic",
+) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "target_ids": list(target_ids),
+        "payload": dict(payload or {}),
+        "rationale": rationale,
+        "candidate_source": candidate_source,
+    }
+
+
+def _action_spec_from_action(action: GraphAction, *, candidate_source: str) -> dict[str, object]:
+    return _build_action_spec(
+        kind=action.kind,
+        target_ids=list(action.target_ids),
+        payload=dict(action.payload),
+        rationale=action.rationale,
+        candidate_source=candidate_source,
+    )
+
+
+def _normalize_spec_value(value: object) -> object:
+    if isinstance(value, dict):
+        return tuple((str(key), _normalize_spec_value(item)) for key, item in sorted(value.items()))
+    if isinstance(value, list):
+        return tuple(_normalize_spec_value(item) for item in value)
+    return str(value)
+
+
+def _action_spec_signature(spec: dict[str, object]) -> tuple[object, ...]:
+    payload = spec.get("payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    return (
+        str(spec.get("kind", "")).strip(),
+        tuple(str(item).strip() for item in spec.get("target_ids", []) if str(item).strip()),
+        tuple((str(key), _normalize_spec_value(value)) for key, value in sorted(payload.items())),
+    )
+
+
+def _dedupe_action_specs(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
+    deduped: list[dict[str, object]] = []
+    seen: set[tuple[object, ...]] = set()
+    for candidate in candidates:
+        signature = _action_spec_signature(candidate)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        deduped.append(candidate)
+    return deduped
+
+
+def _candidate_nodes(
+    graph: IdeaGraph,
+    *,
+    node_types: tuple[str, ...] | list[str],
+    preferred_roles: tuple[str, ...] | list[str] = (),
+    exclude_role: str | None = None,
+    prefer_without_evidence: bool = False,
+    limit: int = 3,
+) -> list[Node]:
+    results: list[Node] = []
+    seen: set[str] = set()
+    without_evidence_passes = [True, False] if prefer_without_evidence else [False]
+
+    for without_evidence in without_evidence_passes:
+        for node_type in tuple(node_types):
+            for preferred_role in tuple(preferred_roles):
+                for node in find_active_nodes(
+                    graph,
+                    node_type,
+                    role=preferred_role,
+                    exclude_role=exclude_role,
+                    without_evidence=without_evidence,
+                ):
+                    if node.id in seen:
+                        continue
+                    seen.add(node.id)
+                    results.append(node)
+                    if len(results) >= limit:
+                        return results
+            for node in find_active_nodes(
+                graph,
+                node_type,
+                exclude_role=exclude_role,
+                without_evidence=without_evidence,
+            ):
+                if node.id in seen:
+                    continue
+                seen.add(node.id)
+                results.append(node)
+                if len(results) >= limit:
+                    return results
+    return results
+
+
+def _role_support_preferences(role: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if role == "MechanismProposer":
+        return ("Method", "Hypothesis", "NoveltyClaim"), ("Hypothesis", "Problem")
+    if role == "EvaluationDesigner":
+        return ("EvalPlan", "Method"), ("Hypothesis", "Method", "Problem")
+    if role == "ImpactReframer":
+        return ("Hypothesis", "NoveltyClaim"), ("Problem", "Hypothesis")
+    if role == "NoveltyExaminer":
+        return ("NoveltyClaim", "Hypothesis"), ("Problem", "Hypothesis")
+    return ("Method", "Hypothesis", "EvalPlan"), ("Problem", "Hypothesis", "Method")
+
+
+def _role_contradiction_preferences(role: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if role == "NoveltyExaminer":
+        return ("NoveltyClaim", "Hypothesis", "Problem"), ("Method", "Hypothesis", "Problem")
+    return ("Risk", "Assumption"), ("Method", "EvalPlan", "Hypothesis", "Problem")
+
+
+def _repair_text_for_role(role: str, target: Node) -> str:
+    if role == "MechanismProposer":
+        return (
+            f"Refine the {target.type.lower()} so it addresses the unresolved failure mode with a more explicit "
+            "mechanism and clearer scope."
+        )
+    if role == "FeasibilityCritic":
+        return (
+            f"Adjust the {target.type.lower()} so the feasibility concern is answered with tighter assumptions, "
+            "constraints, or evaluation details."
+        )
+    if role == "NoveltyExaminer":
+        return (
+            f"Narrow the {target.type.lower()} so it is more clearly differentiated from nearby prior work and "
+            "less vulnerable to overlap."
+        )
+    if role == "EvaluationDesigner":
+        return (
+            f"Revise the {target.type.lower()} so its evaluation path, baselines, and success criteria are explicit."
+        )
+    return (
+        f"Reframe the {target.type.lower()} so it better supports the overall idea while directly addressing the "
+        "current weakness."
+    )
+
+
+def _generic_candidate_action_specs(
+    graph: IdeaGraph,
+    round_name: str,
+    role: str,
+    branch: Branch,
+) -> list[dict[str, object]]:
+    phase = resolve_round_phase(round_name)
+    allowed_actions = set(phase.allowed_actions)
+    candidates: list[dict[str, object]] = []
+
+    contradiction_related = contradiction_related_node_ids(graph)
+    contradiction_targets = [
+        graph.nodes[node_id]
+        for node_id in sorted(contradiction_related)
+        if node_id in graph.nodes and graph.nodes[node_id].status == "active"
+    ]
+
+    if "request_evidence" in allowed_actions:
+        evidence_targets = contradiction_targets or _candidate_nodes(
+            graph,
+            node_types=("NoveltyClaim", "Hypothesis", "Method", "EvalPlan"),
+            preferred_roles=(role, "MechanismProposer", "EvaluationDesigner", "ImpactReframer"),
+            prefer_without_evidence=True,
+            limit=2,
+        )
+        for target in evidence_targets[:2]:
+            if target.evidence:
+                continue
+            candidates.append(
+                _build_action_spec(
+                    kind="request_evidence",
+                    target_ids=[target.id],
+                    payload={
+                        "branch_id": branch.id,
+                        "query": f"Find grounding, precedent, or evaluation evidence relevant to this {target.type.lower()}.",
+                    },
+                    rationale=f"Request explicit grounding for the weak {target.type.lower()} node before it shapes later synthesis.",
+                    candidate_source="utility_request_evidence",
+                )
+            )
+
+    if "attach_evidence" in allowed_actions:
+        evidence_targets = contradiction_targets or _candidate_nodes(
+            graph,
+            node_types=("EvalPlan", "Method", "Hypothesis", "NoveltyClaim"),
+            preferred_roles=("EvaluationDesigner", "MechanismProposer", "ImpactReframer", role),
+            prefer_without_evidence=True,
+            exclude_role=role if phase.key == "stress_test" else None,
+            limit=2,
+        )
+        for index, target in enumerate(evidence_targets[:2]):
+            if target.evidence:
+                continue
+            candidates.append(
+                _build_action_spec(
+                    kind="attach_evidence",
+                    target_ids=[target.id],
+                    payload={
+                        "branch_id": branch.id,
+                        "evidence": literature_item(graph, index),
+                    },
+                    rationale=f"Attach concrete evidence to the {target.type.lower()} node to improve grounding and support coverage.",
+                    candidate_source="utility_attach_evidence",
+                )
+            )
+
+    if "mark_overlap" in allowed_actions and role == "NoveltyExaminer":
+        overlap_targets = _candidate_nodes(
+            graph,
+            node_types=("NoveltyClaim", "Hypothesis", "Problem"),
+            preferred_roles=("NoveltyExaminer", "ImpactReframer", role),
+            prefer_without_evidence=True,
+            limit=2,
+        )
+        for index, target in enumerate(overlap_targets[:2]):
+            candidates.append(
+                _build_action_spec(
+                    kind="mark_overlap",
+                    target_ids=[target.id],
+                    payload={
+                        "branch_id": branch.id,
+                        "paper_id": f"paper-{index + 1:03d}",
+                        "evidence": literature_item(graph, index + 1),
+                    },
+                    rationale=f"Mark potential prior-work overlap on the {target.type.lower()} node before overcommitting to novelty.",
+                    candidate_source="utility_mark_overlap",
+                )
+            )
+
+    if "add_support_edge" in allowed_actions:
+        source_types, target_types = _role_support_preferences(role)
+        support_sources = _candidate_nodes(
+            graph,
+            node_types=source_types,
+            preferred_roles=(role, "MechanismProposer", "EvaluationDesigner", "ImpactReframer"),
+            limit=2,
+        )
+        support_targets = _candidate_nodes(
+            graph,
+            node_types=target_types,
+            preferred_roles=("ImpactReframer", "MechanismProposer", "EvaluationDesigner"),
+            limit=2,
+        )
+        for source in support_sources:
+            for target in support_targets:
+                if source.id == target.id:
+                    continue
+                if edge_exists(
+                    graph,
+                    source_id=source.id,
+                    relation="supports",
+                    target_id=target.id,
+                ):
+                    continue
+                candidates.append(
+                    _build_action_spec(
+                        kind="add_support_edge",
+                        target_ids=[source.id, target.id],
+                        payload={"branch_id": branch.id},
+                        rationale=f"Add one support edge to strengthen a more coherent problem-to-method path via the {target.type.lower()} node.",
+                        candidate_source="utility_add_support",
+                    )
+                )
+
+    if "add_dependency_edge" in allowed_actions:
+        dependency_sources = _candidate_nodes(
+            graph,
+            node_types=("EvalPlan", "Method"),
+            preferred_roles=("EvaluationDesigner", role, "MechanismProposer"),
+            limit=2,
+        )
+        dependency_targets = _candidate_nodes(
+            graph,
+            node_types=("Hypothesis", "Problem", "Method"),
+            preferred_roles=("MechanismProposer", "ImpactReframer"),
+            limit=2,
+        )
+        for source in dependency_sources:
+            for target in dependency_targets:
+                if source.id == target.id:
+                    continue
+                if edge_exists(
+                    graph,
+                    source_id=source.id,
+                    relation="depends_on",
+                    target_id=target.id,
+                ):
+                    continue
+                candidates.append(
+                    _build_action_spec(
+                        kind="add_dependency_edge",
+                        target_ids=[source.id, target.id],
+                        payload={"branch_id": branch.id},
+                        rationale=f"Make the dependency structure explicit so the {source.type.lower()} node is easier to evaluate or repair later.",
+                        candidate_source="utility_add_dependency",
+                    )
+                )
+
+    if "add_contradiction_edge" in allowed_actions:
+        source_types, target_types = _role_contradiction_preferences(role)
+        contradiction_sources = _candidate_nodes(
+            graph,
+            node_types=source_types,
+            preferred_roles=(role, "FeasibilityCritic", "NoveltyExaminer"),
+            limit=2,
+        )
+        contradiction_targets = _candidate_nodes(
+            graph,
+            node_types=target_types,
+            preferred_roles=("MechanismProposer", "EvaluationDesigner", "ImpactReframer"),
+            exclude_role=role,
+            limit=2,
+        )
+        for source in contradiction_sources:
+            for target in contradiction_targets:
+                if source.id == target.id:
+                    continue
+                if edge_exists(
+                    graph,
+                    source_id=source.id,
+                    relation="contradicts",
+                    target_id=target.id,
+                ):
+                    continue
+                candidates.append(
+                    _build_action_spec(
+                        kind="add_contradiction_edge",
+                        target_ids=[source.id, target.id],
+                        payload={"branch_id": branch.id},
+                        rationale=f"Expose a concrete contradiction so weak claims can be repaired before final synthesis.",
+                        candidate_source="utility_add_contradiction",
+                    )
+                )
+
+    if "propose_repair" in allowed_actions:
+        repair_targets: list[Node] = []
+        primary_target = choose_repair_target(graph, role)
+        if primary_target is not None:
+            repair_targets.append(primary_target)
+        repair_targets.extend(
+            node
+            for node in _candidate_nodes(
+                graph,
+                node_types=("Method", "EvalPlan", "Hypothesis", "NoveltyClaim", "Problem"),
+                preferred_roles=("MechanismProposer", "EvaluationDesigner", "ImpactReframer"),
+                limit=2,
+            )
+            if node.id not in {target.id for target in repair_targets}
+        )
+        for target in repair_targets[:2]:
+            candidates.append(
+                _build_action_spec(
+                    kind="propose_repair",
+                    target_ids=[target.id],
+                    payload={
+                        "branch_id": branch.id,
+                        "repair_text": _repair_text_for_role(role, target),
+                    },
+                    rationale=f"Repair the {target.type.lower()} node to improve coherence and reduce downstream contradiction.",
+                    candidate_source="utility_propose_repair",
+                )
+            )
+
+    if "freeze_branch" in allowed_actions:
+        candidates.append(
+            _build_action_spec(
+                kind="freeze_branch",
+                target_ids=[],
+                payload={"branch_id": branch.id},
+                rationale="Freeze this branch only if preserving it is better than spending another edit on it right now.",
+                candidate_source="utility_freeze_branch",
+            )
+        )
+
+    return _dedupe_action_specs(candidates)
+
+
+def _reference_subgraph(graph: IdeaGraph) -> dict[str, object]:
+    candidate = _best_candidate_subgraph(graph)
+    if candidate is not None:
+        return candidate
+    legacy = _legacy_select_final_subgraph(graph)
+    legacy_snapshot = _compute_maturity_snapshot(
+        graph,
+        update_history=False,
+        node_ids=set(legacy["node_ids"]),
+    )
+    legacy.update(
+        {
+            "support_coverage": legacy_snapshot.support_coverage,
+            "unresolved_contradiction_ratio": legacy_snapshot.unresolved_contradiction_ratio,
+            "utility_stable": legacy_snapshot.utility_stable,
+            "completeness": legacy_snapshot.completeness,
+            "is_mature": legacy_snapshot.is_mature,
+            "utility_breakdown": asdict(legacy_snapshot.utility_breakdown),
+            "selection_mode": "legacy_reference",
+        }
+    )
+    return legacy
+
+
+def _score_action_spec(
+    graph: IdeaGraph,
+    *,
+    round_name: str,
+    role: str,
+    spec: dict[str, object],
+    reference_subgraph: dict[str, object],
+    reference_snapshot: MaturitySnapshot,
+) -> dict[str, object]:
+    try:
+        simulated_graph = deepcopy(graph)
+        simulated_action = make_action(
+            simulated_graph,
+            round_name=round_name,
+            role=role,
+            kind=str(spec.get("kind", "")).strip(),
+            target_ids=[str(item).strip() for item in spec.get("target_ids", []) if str(item).strip()],
+            payload=dict(spec.get("payload", {}) or {}),
+            rationale=str(spec.get("rationale", "")).strip(),
+        )
+        apply_action(simulated_graph, simulated_action)
+        after_subgraph = _reference_subgraph(simulated_graph)
+        after_snapshot = _compute_maturity_snapshot(
+            simulated_graph,
+            update_history=False,
+            node_ids=set(after_subgraph["node_ids"]),
+        )
+
+        utility_gain = after_snapshot.utility - reference_snapshot.utility
+        support_gain = after_snapshot.support_coverage - reference_snapshot.support_coverage
+        contradiction_gain = (
+            reference_snapshot.unresolved_contradiction_ratio - after_snapshot.unresolved_contradiction_ratio
+        )
+        coherence_gain = (
+            after_snapshot.utility_breakdown.coherence - reference_snapshot.utility_breakdown.coherence
+        )
+        maturity_gain = 1.0 if after_snapshot.is_mature and not reference_snapshot.is_mature else 0.0
+        completeness_gain = 1.0 if after_snapshot.completeness and not reference_snapshot.completeness else 0.0
+        stability_gain = 1.0 if after_snapshot.utility_stable and not reference_snapshot.utility_stable else 0.0
+
+        predicted_gain = round(
+            utility_gain
+            + (1.75 * maturity_gain)
+            + (1.20 * contradiction_gain)
+            + (0.90 * support_gain)
+            + (0.80 * coherence_gain)
+            + (0.35 * completeness_gain)
+            + (0.25 * stability_gain),
+            3,
+        )
+        return {
+            "valid": True,
+            "predicted_gain": predicted_gain,
+            "utility_gain": round(utility_gain, 3),
+            "support_gain": round(support_gain, 3),
+            "contradiction_gain": round(contradiction_gain, 3),
+            "coherence_gain": round(coherence_gain, 3),
+            "maturity_gain": maturity_gain,
+            "completeness_gain": completeness_gain,
+            "stability_gain": stability_gain,
+            "after_snapshot": after_snapshot,
+            "after_subgraph": {
+                "selection_mode": after_subgraph.get("selection_mode"),
+                "utility": after_subgraph.get("utility"),
+                "support_coverage": after_subgraph.get("support_coverage"),
+                "unresolved_contradiction_ratio": after_subgraph.get("unresolved_contradiction_ratio"),
+                "is_mature": after_subgraph.get("is_mature"),
+            },
+        }
+    except Exception as exc:
+        return {
+            "valid": False,
+            "predicted_gain": float("-inf"),
+            "error": str(exc),
+        }
+
+
+def _record_action_selection_trace(
+    graph: IdeaGraph,
+    *,
+    round_name: str,
+    role: str,
+    selected_candidate: dict[str, object],
+    ranked_candidates: list[dict[str, object]],
+) -> None:
+    entry = {
+        "round": round_name,
+        "role": role,
+        "selected_kind": selected_candidate.get("kind"),
+        "selected_targets": list(selected_candidate.get("target_ids", [])),
+        "selected_candidate_source": selected_candidate.get("candidate_source"),
+        "selected_predicted_gain": selected_candidate.get("predicted_gain"),
+        "ranked_candidates": [
+            {
+                "kind": candidate.get("kind"),
+                "target_ids": list(candidate.get("target_ids", [])),
+                "candidate_source": candidate.get("candidate_source"),
+                "predicted_gain": candidate.get("predicted_gain"),
+                "valid": candidate.get("valid", False),
+                "error": candidate.get("error", ""),
+            }
+            for candidate in ranked_candidates[:6]
+        ],
+    }
+    selection_log = graph.metadata.setdefault("action_selection_log", [])
+    if isinstance(selection_log, list):
+        selection_log.append(entry)
+
+
+def _select_ranked_action(
+    graph: IdeaGraph,
+    round_name: str,
+    role: str,
+    *,
+    record_trace: bool,
+) -> tuple[GraphAction, dict[str, object]]:
+    branch = branch_for_role(graph, role)
+    baseline_candidate = _action_spec_from_action(
+        _legacy_choose_round_action(deepcopy(graph), round_name, role),
+        candidate_source="legacy_policy",
+    )
+    candidates = [baseline_candidate, *_generic_candidate_action_specs(graph, round_name, role, branch)]
+    candidates = _dedupe_action_specs(candidates)
+
+    reference_subgraph = _reference_subgraph(graph)
+    reference_snapshot = _compute_maturity_snapshot(
+        graph,
+        update_history=False,
+        node_ids=set(reference_subgraph["node_ids"]),
+    )
+
+    ranked_candidates: list[dict[str, object]] = []
+    for candidate in candidates:
+        ranked_candidates.append(
+            {
+                **candidate,
+                **_score_action_spec(
+                    graph,
+                    round_name=round_name,
+                    role=role,
+                    spec=candidate,
+                    reference_subgraph=reference_subgraph,
+                    reference_snapshot=reference_snapshot,
+                ),
+            }
+        )
+
+    valid_candidates = [candidate for candidate in ranked_candidates if candidate.get("valid")]
+    if valid_candidates:
+        phase = resolve_round_phase(round_name)
+        contradiction_target_ids = {
+            edge.target_id
+            for edge in unresolved_contradiction_edges(graph)
+            if edge.target_id in graph.nodes
+        }
+        contradiction_related_ids = contradiction_related_node_ids(graph)
+
+        if phase.key == "repair" and contradiction_target_ids:
+            contradiction_repairs = [
+                candidate
+                for candidate in valid_candidates
+                if candidate.get("kind") == "propose_repair"
+                and list(candidate.get("target_ids", []))
+                and str(list(candidate.get("target_ids", []))[0]) in contradiction_target_ids
+            ]
+            if contradiction_repairs:
+                valid_candidates = contradiction_repairs
+            else:
+                contradiction_touching = [
+                    candidate
+                    for candidate in valid_candidates
+                    if any(str(target_id) in contradiction_related_ids for target_id in candidate.get("target_ids", []))
+                ]
+                if contradiction_touching:
+                    valid_candidates = contradiction_touching
+
+        if phase.key == "stress_test" and role == "FeasibilityCritic":
+            evidence_candidates = [
+                candidate for candidate in valid_candidates if candidate.get("kind") == "attach_evidence"
+            ]
+            if evidence_candidates:
+                valid_candidates = evidence_candidates
+
+        if phase.key == "structure" and role in {"MechanismProposer", "ImpactReframer"}:
+            structural_support = [
+                candidate for candidate in valid_candidates if candidate.get("kind") == "add_support_edge"
+            ]
+            if structural_support:
+                valid_candidates = structural_support
+
+        selected_candidate = sorted(
+            valid_candidates,
+            key=lambda candidate: (
+                float(candidate.get("predicted_gain", float("-inf"))),
+                float(candidate.get("utility_gain", float("-inf"))),
+                float(candidate.get("support_gain", float("-inf"))),
+                float(candidate.get("coherence_gain", float("-inf"))),
+            ),
+            reverse=True,
+        )[0]
+    else:
+        selected_candidate = ranked_candidates[0]
+
+    selected_action = make_action(
+        graph,
+        round_name=round_name,
+        role=role,
+        kind=str(selected_candidate.get("kind", "")).strip(),
+        target_ids=[str(item).strip() for item in selected_candidate.get("target_ids", []) if str(item).strip()],
+        payload=dict(selected_candidate.get("payload", {}) or {}),
+        rationale=str(selected_candidate.get("rationale", "")).strip(),
+    )
+    if record_trace:
+        _record_action_selection_trace(
+            graph,
+            round_name=round_name,
+            role=role,
+            selected_candidate=selected_candidate,
+            ranked_candidates=sorted(
+                ranked_candidates,
+                key=lambda candidate: (
+                    1 if candidate.get("valid") else 0,
+                    float(candidate.get("predicted_gain", float("-inf"))),
+                ),
+                reverse=True,
+            ),
+        )
+    return selected_action, selected_candidate
+
+
+def choose_round_action(graph: IdeaGraph, round_name: str, role: str) -> GraphAction:
+    action, _ = _select_ranked_action(graph, round_name, role, record_trace=True)
+    return action
 
 
 def action_from_decision(
@@ -1317,61 +1966,236 @@ def apply_action(graph: IdeaGraph, action: GraphAction) -> None:
     raise ValueError(f"Unsupported action kind: {action.kind}")
 
 
-def utility_score(graph: IdeaGraph) -> float:
-    active_nodes = graph.active_nodes()
-    repair_count = sum(1 for node in active_nodes if node.type == "Repair")
-    novelty_count = sum(1 for node in active_nodes if node.type == "NoveltyClaim")
-    support_count = sum(1 for edge in graph.edges if edge.relation == "supports")
-    contradiction_count = sum(
-        1 for edge in graph.edges if edge.relation == "contradicts" and not edge.resolved
+def _clamp(value: float, *, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def _subgraph_nodes(graph: IdeaGraph, node_ids: set[str] | None = None) -> list[Node]:
+    return [
+        node
+        for node in graph.active_nodes()
+        if node_ids is None or node.id in node_ids
+    ]
+
+
+def _subgraph_edges(graph: IdeaGraph, node_ids: set[str]) -> list[Edge]:
+    return [
+        edge
+        for edge in graph.edges
+        if edge.source_id in node_ids and edge.target_id in node_ids
+    ]
+
+
+def _node_selection_score(graph: IdeaGraph, node: Node) -> float:
+    incoming = graph.incoming_edges(node.id)
+    outgoing = graph.outgoing_edges(node.id)
+    support_count = sum(1 for edge in incoming if edge.relation == "supports")
+    repair_count = sum(1 for edge in incoming if edge.relation == "repairs")
+    dependency_count = sum(
+        1 for edge in incoming + outgoing if edge.relation == "depends_on"
     )
-    return round((1.5 * repair_count) + (1.2 * novelty_count) + (0.5 * support_count) - (0.8 * contradiction_count), 2)
+    unresolved_contradictions = sum(
+        1 for edge in incoming + outgoing if edge.relation == "contradicts" and not edge.resolved
+    )
+    overlap_count = sum(
+        1 for edge in incoming + outgoing if edge.relation == "overlaps_prior"
+    )
+    evidence_bonus = min(2, len(node.evidence))
+    return (
+        node.confidence
+        + (0.20 * support_count)
+        + (0.28 * repair_count)
+        + (0.10 * dependency_count)
+        + (0.12 * evidence_bonus)
+        - (0.25 * unresolved_contradictions)
+        - (0.12 * overlap_count)
+    )
+
+
+def _claim_chain_score(nodes: list[Node], edges: list[Edge]) -> float:
+    if not nodes:
+        return 0.0
+
+    nodes_by_id = {node.id: node for node in nodes}
+    positive_relations = {"supports", "refines", "depends_on", "repairs"}
+
+    def link(left_types: set[str], right_types: set[str]) -> float:
+        for edge in edges:
+            if edge.relation not in positive_relations:
+                continue
+            source = nodes_by_id.get(edge.source_id)
+            target = nodes_by_id.get(edge.target_id)
+            if source is None or target is None:
+                continue
+            if source.type in left_types and target.type in right_types:
+                return 1.0
+            if target.type in left_types and source.type in right_types:
+                return 1.0
+        return 0.0
+
+    segments = [
+        link({"Hypothesis", "NoveltyClaim"}, {"Problem"}),
+        link({"Method", "Repair"}, {"Hypothesis", "Problem"}),
+        link({"EvalPlan"}, {"Method", "Hypothesis"}),
+    ]
+    return round(sum(segments) / len(segments), 2)
+
+
+def _open_risk_penalty(nodes: list[Node], edges: list[Edge]) -> float:
+    risk_nodes = [node for node in nodes if node.type == "Risk"]
+    if not risk_nodes:
+        return 0.0
+    repaired_target_ids = {edge.target_id for edge in edges if edge.relation == "repairs"}
+    open_risk_count = sum(
+        1
+        for node in risk_nodes
+        if node.id not in repaired_target_ids and not node.evidence
+    )
+    return round(open_risk_count / len(risk_nodes), 2)
+
+
+def utility_breakdown(graph: IdeaGraph, node_ids: set[str] | None = None) -> UtilityBreakdown:
+    active_nodes = _subgraph_nodes(graph, node_ids)
+    if not active_nodes:
+        return UtilityBreakdown()
+
+    active_node_ids = {node.id for node in active_nodes}
+    relevant_edges = _subgraph_edges(graph, active_node_ids)
+    active_types = {node.type for node in active_nodes}
+    tracked_nodes = [
+        node
+        for node in active_nodes
+        if node.type in {"Problem", "Hypothesis", "Method", "EvalPlan", "NoveltyClaim"}
+    ]
+    supported_nodes = [
+        node
+        for node in active_nodes
+        if node.type in {"Hypothesis", "Method", "NoveltyClaim", "EvalPlan"}
+    ]
+    contradictions = [edge for edge in relevant_edges if edge.relation == "contradicts"]
+    unresolved = [edge for edge in contradictions if not edge.resolved]
+    overlap_edges = [edge for edge in relevant_edges if edge.relation == "overlaps_prior"]
+
+    average_confidence = (
+        sum(node.confidence for node in tracked_nodes) / len(tracked_nodes)
+        if tracked_nodes
+        else sum(node.confidence for node in active_nodes) / len(active_nodes)
+    )
+    novelty_presence = 1.0 if "NoveltyClaim" in active_types else (0.55 if {"Hypothesis", "Method"}.issubset(active_types) else 0.2)
+    overlap_penalty = len(overlap_edges) / max(1, len(relevant_edges)) if relevant_edges else 0.0
+    novelty = _clamp((0.65 * novelty_presence) + (0.35 * (1.0 - overlap_penalty)))
+    promise = _clamp((0.70 * average_confidence) + (0.30 * novelty))
+
+    supported_count = 0
+    for node in supported_nodes:
+        incoming = [edge for edge in relevant_edges if edge.target_id == node.id]
+        has_support = any(edge.relation == "supports" for edge in incoming)
+        has_repair = any(edge.relation == "repairs" for edge in incoming)
+        if has_support or has_repair or node.evidence:
+            supported_count += 1
+    support = supported_count / len(supported_nodes) if supported_nodes else 0.0
+
+    evidence = (
+        sum(1 for node in tracked_nodes if node.evidence) / len(tracked_nodes)
+        if tracked_nodes
+        else 0.0
+    )
+    completeness = 1.0 if {"Problem", "Hypothesis", "Method", "EvalPlan"}.issubset(active_types) else 0.0
+    contradiction_penalty = len(unresolved) / len(contradictions) if contradictions else 0.0
+    coherence = _clamp(
+        (0.45 * completeness)
+        + (0.35 * _claim_chain_score(active_nodes, relevant_edges))
+        + (0.20 * (1.0 - contradiction_penalty))
+    )
+    open_risk_penalty = _open_risk_penalty(active_nodes, relevant_edges)
+    size_penalty = _clamp(max(0, len(active_nodes) - 7) / 5.0)
+
+    total = round(
+        10.0
+        * _clamp(
+            (0.25 * promise)
+            + (0.25 * support)
+            + (0.20 * coherence)
+            + (0.15 * evidence)
+            + (0.15 * novelty)
+            - (0.15 * contradiction_penalty)
+            - (0.10 * open_risk_penalty)
+            - (0.05 * size_penalty)
+        ),
+        2,
+    )
+    return UtilityBreakdown(
+        promise=round(promise, 2),
+        support=round(support, 2),
+        coherence=round(coherence, 2),
+        evidence=round(evidence, 2),
+        novelty=round(novelty, 2),
+        contradiction_penalty=round(contradiction_penalty, 2),
+        open_risk_penalty=round(open_risk_penalty, 2),
+        size_penalty=round(size_penalty, 2),
+        total=total,
+    )
+
+
+def utility_score(graph: IdeaGraph, node_ids: set[str] | None = None) -> float:
+    return utility_breakdown(graph, node_ids).total
 
 
 def _utility_stability(history: list[float]) -> bool:
     if len(history) < 3:
         return False
     a, b, c = history[-3:]
-    return abs(c - b) < 0.35 and abs(b - a) < 0.35
+    return abs(c - b) < 0.45 and abs(b - a) < 0.45
 
 
 def _compute_maturity_snapshot(
     graph: IdeaGraph,
     *,
     update_history: bool,
+    node_ids: set[str] | None = None,
 ) -> MaturitySnapshot:
     tracked_types = {"Hypothesis", "Method", "NoveltyClaim", "EvalPlan"}
-    tracked_nodes = [node for node in graph.active_nodes() if node.type in tracked_types]
+    active_nodes = _subgraph_nodes(graph, node_ids)
+    active_node_ids = {node.id for node in active_nodes}
+    relevant_edges = _subgraph_edges(graph, active_node_ids)
+    tracked_nodes = [node for node in active_nodes if node.type in tracked_types]
 
     supported_count = 0
     for node in tracked_nodes:
-        incoming = graph.incoming_edges(node.id)
+        incoming = [edge for edge in relevant_edges if edge.target_id == node.id]
         has_support = any(edge.relation == "supports" for edge in incoming)
         has_repair = any(edge.relation == "repairs" for edge in incoming)
         if has_support or has_repair or node.evidence:
             supported_count += 1
 
     support_coverage = 0.0 if not tracked_nodes else round(supported_count / len(tracked_nodes), 2)
-    contradictions = [edge for edge in graph.edges if edge.relation == "contradicts"]
+    contradictions = [edge for edge in relevant_edges if edge.relation == "contradicts"]
     unresolved = [edge for edge in contradictions if not edge.resolved]
     unresolved_ratio = 0.0 if not contradictions else round(len(unresolved) / len(contradictions), 2)
 
-    active_types = {node.type for node in graph.active_nodes()}
+    active_types = {node.type for node in active_nodes}
     completeness = {"Problem", "Hypothesis", "Method", "EvalPlan"}.issubset(active_types)
 
-    utility = utility_score(graph)
+    breakdown = utility_breakdown(graph, active_node_ids or None)
+    utility = breakdown.total
     if update_history:
         graph.utility_history.append(utility)
         history = list(graph.utility_history)
     else:
         history = [*graph.utility_history, utility]
     utility_stable = _utility_stability(history)
+    min_rounds_before_maturity = max(
+        2,
+        int(graph.metadata.get("idea_graph_min_rounds_before_maturity", 2) or 2),
+    )
     high_confidence_mature = (
-        len(history) >= 3
-        and support_coverage >= 0.85
-        and unresolved_ratio <= 0.2
+        len(history) >= max(3, min_rounds_before_maturity)
+        and support_coverage >= 0.84
+        and unresolved_ratio <= 0.18
         and completeness
-        and utility >= 3.5
+        and breakdown.coherence >= 0.7
+        and breakdown.evidence >= 0.18
+        and utility >= 6.6
     )
 
     return MaturitySnapshot(
@@ -1381,47 +2205,197 @@ def _compute_maturity_snapshot(
         utility_stable=utility_stable,
         completeness=completeness,
         is_mature=(
-            (support_coverage >= 0.6 and unresolved_ratio <= 0.5 and completeness and utility_stable)
+            (
+                len(history) >= min_rounds_before_maturity
+                and support_coverage >= 0.74
+                and unresolved_ratio <= 0.33
+                and completeness
+                and breakdown.coherence >= 0.6
+                and breakdown.evidence >= 0.12
+                and (
+                    utility_stable
+                    or (
+                        len(history) >= min_rounds_before_maturity
+                        and support_coverage >= 0.82
+                        and breakdown.evidence >= 0.2
+                        and utility >= 7.5
+                    )
+                )
+            )
             or high_confidence_mature
         ),
+        utility_breakdown=breakdown,
     )
 
 
+def _is_connected_subgraph(node_ids: set[str], edges: list[Edge]) -> bool:
+    if not node_ids:
+        return False
+    if len(node_ids) == 1:
+        return True
+
+    adjacency = {node_id: set() for node_id in node_ids}
+    for edge in edges:
+        if edge.source_id in adjacency and edge.target_id in adjacency:
+            adjacency[edge.source_id].add(edge.target_id)
+            adjacency[edge.target_id].add(edge.source_id)
+
+    start = next(iter(node_ids))
+    seen = {start}
+    stack = [start]
+    while stack:
+        current = stack.pop()
+        for neighbor in adjacency[current]:
+            if neighbor in seen:
+                continue
+            seen.add(neighbor)
+            stack.append(neighbor)
+    return seen == node_ids
+
+
+def _top_candidate_nodes_by_type(graph: IdeaGraph, node_type: str, *, limit: int = 3) -> list[Node]:
+    candidates = [node for node in graph.active_nodes() if node.type == node_type]
+    return sorted(candidates, key=lambda node: _node_selection_score(graph, node), reverse=True)[:limit]
+
+
+def _expand_candidate_subgraph(graph: IdeaGraph, core_nodes: tuple[Node, Node, Node, Node]) -> dict[str, object]:
+    selected_nodes = list(core_nodes)
+    selected_node_ids = {node.id for node in selected_nodes}
+
+    neighbor_candidates: list[tuple[float, Node]] = []
+    neighbor_type_bonus = {
+        "NoveltyClaim": 0.26,
+        "Repair": 0.24,
+        "Risk": 0.18,
+        "Assumption": 0.16,
+        "Method": 0.10,
+        "EvalPlan": 0.10,
+    }
+    for node in graph.active_nodes():
+        if node.id in selected_node_ids:
+            continue
+        incident_edges = [
+            edge
+            for edge in graph.incoming_edges(node.id) + graph.outgoing_edges(node.id)
+            if edge.source_id in selected_node_ids or edge.target_id in selected_node_ids
+        ]
+        if not incident_edges:
+            continue
+        if any(edge.relation == "contradicts" and not edge.resolved for edge in incident_edges):
+            continue
+        type_bonus = neighbor_type_bonus.get(node.type, 0.0)
+        relation_bonus = 0.04 * sum(
+            1 for edge in incident_edges if edge.relation in {"supports", "repairs", "refines", "depends_on"}
+        )
+        evidence_bonus = 0.08 if node.evidence else 0.0
+        neighbor_candidates.append(
+            (_node_selection_score(graph, node) + type_bonus + relation_bonus + evidence_bonus, node)
+        )
+
+    selected_neighbor_types: set[str] = set()
+    for _, node in sorted(neighbor_candidates, key=lambda item: item[0], reverse=True):
+        if len(selected_nodes) >= 7:
+            break
+        if node.type in selected_neighbor_types and node.type not in {"Repair"}:
+            continue
+        selected_nodes.append(node)
+        selected_node_ids.add(node.id)
+        selected_neighbor_types.add(node.type)
+
+    selected_edges = [
+        edge
+        for edge in graph.edges
+        if edge.source_id in selected_node_ids and edge.target_id in selected_node_ids
+    ]
+    snapshot = _compute_maturity_snapshot(
+        graph,
+        update_history=False,
+        node_ids=selected_node_ids,
+    )
+    return {
+        "node_ids": [node.id for node in selected_nodes],
+        "edge_ids": [edge.id for edge in selected_edges],
+        "core_node_ids": [node.id for node in core_nodes],
+        "utility": snapshot.utility,
+        "utility_breakdown": asdict(snapshot.utility_breakdown),
+        "support_coverage": snapshot.support_coverage,
+        "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
+        "utility_stable": snapshot.utility_stable,
+        "completeness": snapshot.completeness,
+        "is_mature": snapshot.is_mature,
+        "connected": _is_connected_subgraph(selected_node_ids, selected_edges),
+    }
+
+
+def _candidate_subgraphs(graph: IdeaGraph) -> list[dict[str, object]]:
+    core_types = ("Problem", "Hypothesis", "Method", "EvalPlan")
+    candidate_lists = [_top_candidate_nodes_by_type(graph, node_type) for node_type in core_types]
+    if any(not candidates for candidates in candidate_lists):
+        return []
+
+    candidates: list[dict[str, object]] = []
+    seen_signatures: set[tuple[str, ...]] = set()
+    for combo in product(*candidate_lists):
+        core_signature = tuple(sorted(node.id for node in combo))
+        if core_signature in seen_signatures:
+            continue
+        candidate = _expand_candidate_subgraph(graph, combo)
+        if not candidate["connected"]:
+            continue
+        signature = tuple(sorted(candidate["node_ids"]))
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(core_signature)
+        seen_signatures.add(signature)
+        candidates.append(candidate)
+
+    return sorted(
+        candidates,
+        key=lambda item: (
+            1 if item["is_mature"] else 0,
+            float(item["utility"]),
+            float(item["support_coverage"]),
+            1.0 - float(item["unresolved_contradiction_ratio"]),
+            1 if item["utility_stable"] else 0,
+        ),
+        reverse=True,
+    )
+
+
+def _best_candidate_subgraph(graph: IdeaGraph, *, prefer_mature: bool = False) -> dict[str, object] | None:
+    candidates = _candidate_subgraphs(graph)
+    if not candidates:
+        return None
+    if prefer_mature:
+        mature_candidates = [candidate for candidate in candidates if candidate["is_mature"]]
+        if mature_candidates:
+            return {**mature_candidates[0], "selection_mode": "mature_candidate"}
+    return {**candidates[0], "selection_mode": "best_candidate"}
+
+
 def maturity_snapshot(graph: IdeaGraph) -> MaturitySnapshot:
-    return _compute_maturity_snapshot(graph, update_history=True)
-
-
-def select_final_subgraph(graph: IdeaGraph) -> dict[str, object]:
-    def node_selection_score(node: Node) -> float:
-        incoming = graph.incoming_edges(node.id)
-        outgoing = graph.outgoing_edges(node.id)
-        support_count = sum(1 for edge in incoming if edge.relation == "supports")
-        repair_count = sum(1 for edge in incoming if edge.relation == "repairs")
-        dependency_count = sum(
-            1 for edge in incoming + outgoing if edge.relation == "depends_on"
-        )
-        unresolved_contradictions = sum(
-            1 for edge in incoming + outgoing if edge.relation == "contradicts" and not edge.resolved
-        )
-        overlap_count = sum(
-            1 for edge in incoming + outgoing if edge.relation == "overlaps_prior"
-        )
-        evidence_bonus = min(2, len(node.evidence))
-        return (
-            node.confidence
-            + (0.20 * support_count)
-            + (0.28 * repair_count)
-            + (0.10 * dependency_count)
-            + (0.12 * evidence_bonus)
-            - (0.25 * unresolved_contradictions)
-            - (0.12 * overlap_count)
+    candidate = _best_candidate_subgraph(graph)
+    if candidate is not None:
+        return _compute_maturity_snapshot(
+            graph,
+            update_history=True,
+            node_ids=set(candidate["node_ids"]),
         )
 
+    legacy = _legacy_select_final_subgraph(graph)
+    return _compute_maturity_snapshot(
+        graph,
+        update_history=True,
+        node_ids=set(legacy["node_ids"]),
+    )
+
+
+def _legacy_select_final_subgraph(graph: IdeaGraph) -> dict[str, object]:
     selected_nodes = []
     for node_type in ("Problem", "Hypothesis", "Method", "EvalPlan"):
         candidates = [node for node in graph.active_nodes() if node.type == node_type]
         if candidates:
-            selected_nodes.append(max(candidates, key=node_selection_score))
+            selected_nodes.append(max(candidates, key=lambda node: _node_selection_score(graph, node)))
 
     selected_node_ids = {node.id for node in selected_nodes}
 
@@ -1452,7 +2426,7 @@ def select_final_subgraph(graph: IdeaGraph) -> dict[str, object]:
         )
         evidence_bonus = 0.08 if node.evidence else 0.0
         neighbor_candidates.append(
-            (node_selection_score(node) + type_bonus + relation_bonus + evidence_bonus, node)
+            (_node_selection_score(graph, node) + type_bonus + relation_bonus + evidence_bonus, node)
         )
 
     selected_neighbor_types: set[str] = set()
@@ -1474,8 +2448,38 @@ def select_final_subgraph(graph: IdeaGraph) -> dict[str, object]:
         "node_ids": [node.id for node in selected_nodes],
         "edge_ids": [edge.id for edge in selected_edges],
         "core_node_ids": [node.id for node in selected_nodes[:4]],
-        "utility": utility_score(graph),
+        "utility": utility_score(graph, selected_node_ids),
     }
+
+
+def select_final_subgraph(graph: IdeaGraph) -> dict[str, object]:
+    candidate = _best_candidate_subgraph(graph, prefer_mature=True)
+    if candidate is not None:
+        return candidate
+
+    legacy = _legacy_select_final_subgraph(graph)
+    legacy_edge_ids = set(legacy["edge_ids"])
+    legacy_snapshot = _compute_maturity_snapshot(
+        graph,
+        update_history=False,
+        node_ids=set(legacy["node_ids"]),
+    )
+    legacy.update(
+        {
+            "utility_breakdown": asdict(legacy_snapshot.utility_breakdown),
+            "support_coverage": legacy_snapshot.support_coverage,
+            "unresolved_contradiction_ratio": legacy_snapshot.unresolved_contradiction_ratio,
+            "utility_stable": legacy_snapshot.utility_stable,
+            "completeness": legacy_snapshot.completeness,
+            "is_mature": legacy_snapshot.is_mature,
+            "connected": _is_connected_subgraph(
+                set(legacy["node_ids"]),
+                [edge for edge in graph.edges if edge.id in legacy_edge_ids],
+            ),
+            "selection_mode": "legacy_heuristic",
+        }
+    )
+    return legacy
 
 
 def _proposal_title(graph: IdeaGraph, selected: dict[str, str]) -> str:
@@ -1695,7 +2699,23 @@ def run_experiment(
         details={"branches": len(graph.branches), "nodes": len(graph.nodes), "edges": len(graph.edges)},
     )
     merge_seed_graphs(graph)
-    ensure_core_node_coverage(graph)
+    if core_node_coverage_enabled(graph):
+        ensure_core_node_coverage(graph)
+        emit_progress(
+            graph,
+            progress_callback,
+            stage="coverage_safeguard",
+            message="Core-node coverage safeguard checked and applied where needed.",
+            details={"enabled": True},
+        )
+    else:
+        emit_progress(
+            graph,
+            progress_callback,
+            stage="coverage_safeguard",
+            message="Core-node coverage safeguard disabled for this protocol variant.",
+            details={"enabled": False},
+        )
     emit_progress(
         graph,
         progress_callback,
@@ -1716,22 +2736,95 @@ def run_experiment(
         )
         for role in ROLE_NAMES:
             action_source = "deterministic"
+            deterministic_ranked_action: GraphAction | None = None
+            deterministic_ranked_meta: dict[str, object] | None = None
             if collaboration_backend is None:
-                action = choose_round_action(graph, round_name, role)
+                action, deterministic_ranked_meta = _select_ranked_action(
+                    graph,
+                    round_name,
+                    role,
+                    record_trace=True,
+                )
             else:
+                deterministic_ranked_action, deterministic_ranked_meta = _select_ranked_action(
+                    graph,
+                    round_name,
+                    role,
+                    record_trace=False,
+                )
                 try:
                     decision = collaboration_backend.choose_action(graph, round_name, role)
                     append_agent_trace(graph, stage=f"{round_name}_action", role=role, trace=decision.trace)
-                    action = action_from_decision(
+                    llm_action = action_from_decision(
                         graph,
                         round_name=round_name,
                         role=role,
                         decision=decision,
                     )
-                    alignment_error = llm_action_alignment_error(graph, round_name, action)
+                    alignment_error = llm_action_alignment_error(graph, round_name, llm_action)
                     if alignment_error is not None:
                         raise ValueError(alignment_error)
-                    action_source = "llm"
+                    reference_subgraph = _reference_subgraph(graph)
+                    reference_snapshot = _compute_maturity_snapshot(
+                        graph,
+                        update_history=False,
+                        node_ids=set(reference_subgraph["node_ids"]),
+                    )
+                    llm_candidate = {
+                        **_action_spec_from_action(llm_action, candidate_source="llm"),
+                        **_score_action_spec(
+                            graph,
+                            round_name=round_name,
+                            role=role,
+                            spec=_action_spec_from_action(llm_action, candidate_source="llm"),
+                            reference_subgraph=reference_subgraph,
+                            reference_snapshot=reference_snapshot,
+                        ),
+                    }
+                    llm_gain = float(llm_candidate.get("predicted_gain", float("-inf")))
+                    deterministic_gain = float(
+                        (deterministic_ranked_meta or {}).get("predicted_gain", float("-inf"))
+                    )
+                    override_margin = float(graph.metadata.get("idea_graph_llm_override_margin", 0.4))
+                    if (
+                        deterministic_ranked_action is not None
+                        and deterministic_ranked_meta is not None
+                        and deterministic_gain > llm_gain + override_margin
+                    ):
+                        action = deterministic_ranked_action
+                        action_source = "utility_controller_override"
+                        graph.metadata.setdefault("utility_controller_overrides", []).append(
+                            {
+                                "round": round_name,
+                                "role": role,
+                                "llm_kind": llm_action.kind,
+                                "llm_targets": list(llm_action.target_ids),
+                                "llm_predicted_gain": llm_gain,
+                                "deterministic_kind": deterministic_ranked_action.kind,
+                                "deterministic_targets": list(deterministic_ranked_action.target_ids),
+                                "deterministic_predicted_gain": deterministic_gain,
+                            }
+                        )
+                        emit_progress(
+                            graph,
+                            progress_callback,
+                            stage="action_rerank",
+                            message=(
+                                f"{round_name} {role}: utility controller overrode the LLM proposal "
+                                f"({llm_action.kind}) with {deterministic_ranked_action.kind}."
+                            ),
+                            details={
+                                "round": round_name,
+                                "role": role,
+                                "llm_kind": llm_action.kind,
+                                "llm_predicted_gain": llm_gain,
+                                "deterministic_kind": deterministic_ranked_action.kind,
+                                "deterministic_predicted_gain": deterministic_gain,
+                            },
+                        )
+                    else:
+                        action = llm_action
+                        action_source = "llm"
                 except Exception as exc:
                     graph.metadata.setdefault("action_errors", []).append(
                         {"round": round_name, "role": role, "error": str(exc)}
@@ -1743,9 +2836,13 @@ def run_experiment(
                         message=f"{round_name} {role}: invalid LLM action, using deterministic fallback. Error: {exc}",
                         details={"round": round_name, "role": role, "error": str(exc)},
                     )
-                    action = choose_round_action(graph, round_name, role)
+                    if deterministic_ranked_action is not None:
+                        action = deterministic_ranked_action
+                    else:
+                        action = choose_round_action(graph, round_name, role)
                     action_source = "deterministic_fallback"
             try:
+                action.source = action_source
                 apply_action(graph, action)
             except Exception as exc:
                 if action_source == "llm":
@@ -1763,9 +2860,13 @@ def run_experiment(
                         message=f"{round_name} {role}: LLM action could not be applied, using deterministic fallback. Error: {exc}",
                         details={"round": round_name, "role": role, "error": str(exc)},
                     )
-                    action = choose_round_action(graph, round_name, role)
-                    apply_action(graph, action)
+                    if deterministic_ranked_action is not None:
+                        action = deterministic_ranked_action
+                    else:
+                        action = choose_round_action(graph, round_name, role)
                     action_source = "deterministic_fallback"
+                    action.source = action_source
+                    apply_action(graph, action)
                 else:
                     raise RuntimeError(
                         f"Failed to apply {action_source} action for {round_name}/{role}: {exc}"
@@ -1776,7 +2877,8 @@ def run_experiment(
                 stage="action_applied",
                 message=(
                     f"{round_name} {role}: applied {action.kind} "
-                    f"via {'LLM' if action_source == 'llm' else 'deterministic policy'}."
+                    f"via "
+                    f"{'LLM proposal' if action_source == 'llm' else 'utility controller override' if action_source == 'utility_controller_override' else 'deterministic fallback' if action_source == 'deterministic_fallback' else 'utility-ranked deterministic policy'}."
                 ),
                 details={
                     "round": round_name,
@@ -1798,13 +2900,15 @@ def run_experiment(
             message=(
                 f"{round_name} complete: support={snapshot.support_coverage}, "
                 f"contradictions={snapshot.unresolved_contradiction_ratio}, "
-                f"utility={snapshot.utility}, mature={snapshot.is_mature}."
+                f"utility={snapshot.utility}, coherence={snapshot.utility_breakdown.coherence}, "
+                f"mature={snapshot.is_mature}."
             ),
             details={
                 "round": round_name,
                 "support_coverage": snapshot.support_coverage,
                 "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
                 "utility": snapshot.utility,
+                "utility_breakdown": asdict(snapshot.utility_breakdown),
                 "is_mature": snapshot.is_mature,
             },
         )

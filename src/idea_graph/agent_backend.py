@@ -1186,8 +1186,11 @@ def _baseline_prompt_instruction(metadata: dict[str, Any]) -> str:
             f"This is a local proxy wrapper intended to approximate {proxy_target}; do not assume it is an exact reproduction."
         )
     baseline_specific_guidance = {
+        "ours-eig": (
+            "Optimize for typed-graph rigor: add complementary claims, expose contradictions early, attach evidence when possible, and converge toward one mature high-utility subgraph rather than a loose discussion transcript."
+        ),
         "ours-delayed-consensus": (
-            "Optimize for typed-graph rigor: add complementary claims, expose contradictions early, attach evidence when possible, and converge toward one high-utility subgraph rather than a loose discussion transcript."
+            "Optimize for typed-graph rigor: add complementary claims, expose contradictions early, attach evidence when possible, and converge toward one mature high-utility subgraph rather than a loose discussion transcript."
         ),
         "virsci-proxy": (
             "Approximate a discussion-oriented virtual-scientist panel: keep multiple viewpoints alive for longer, surface tradeoffs explicitly, and let the graph capture debate before convergence."
@@ -1282,6 +1285,12 @@ def _action_system_prompt(
         f"{ROLE_GUIDANCE.get(role, '')} "
         "Choose exactly one action that best improves the graph at this moment. "
         "Do not default to a specific action kind just because it appears first in a schema. "
+        "Prefer benchmark-grounded edits over generic ones: when the context packet exposes concrete reference titles, "
+        "design-anchor terms, datasets, or metrics, use them to make the graph more specific rather than asking for "
+        "another vague evidence request. "
+        "During structure turns, a concrete support or dependency edge grounded in the benchmark context is usually "
+        "higher value than a generic request_evidence action. "
+        "Use request_evidence mainly when the current prompt does not already provide one concrete supporting clue. "
         f"{decision_focus} "
         f"{phase_specific_instruction}"
         "Return strict JSON only. Do not use markdown. "
@@ -1292,6 +1301,8 @@ def _action_system_prompt(
         "from one provided evidence candidate. Never return field references such as "
         "reference_paper_snippets[0].abstract. "
         "Prefer the focused-view candidate lists for request_evidence and attach_evidence, and avoid blocked_request_node_ids. "
+        "If the benchmark_focus block contains anchor terms such as module names or representations, favor edits that "
+        "make those terms explicit in the graph. "
         "Avoid duplicating an edge, evidence request, or evidence attachment that already appears in recent action history. "
         "Your rationale should explain why this action is higher leverage than the other allowed actions right now. "
         "Action schemas:\n"
@@ -1305,6 +1316,7 @@ def _action_system_prompt(
 def _action_user_prompt(graph: IdeaGraph, round_name: str, role: str) -> str:
     phase = resolve_round_phase(round_name)
     allowed_actions = _dynamic_allowed_actions(graph, round_name)
+    context_packet = _compact_generation_context(graph)
     action_requirements = {
         action_kind: {
             "target_count": ACTION_TARGET_COUNTS[action_kind],
@@ -1330,14 +1342,31 @@ def _action_user_prompt(graph: IdeaGraph, round_name: str, role: str) -> str:
             "If support edges already exist for the same pair, avoid duplicating them. "
             "When attaching evidence, use actual text from the provided evidence candidates instead of symbolic references."
         )
+    evidence_candidates = (
+        _paper_evidence_candidates(graph.metadata, limit=4)
+        + _benchmark_packet_evidence_candidates(graph.metadata, limit=4)
+        + _grounding_evidence_candidates(graph, limit=4)
+    )[:8]
     payload = {
         "round": round_name,
         "phase": phase.key,
         "phase_title": phase.title,
         "allowed_actions": list(allowed_actions),
-        "context_packet": _compact_generation_context(graph),
+        "context_packet": context_packet,
         "baseline_context": _baseline_prompt_instruction(graph.metadata),
         "action_requirements": action_requirements,
+        "benchmark_focus": {
+            "topic": context_packet.get("benchmark_packet", {}).get("topic"),
+            "reference_titles": [
+                item.get("title", "")
+                for item in context_packet.get("benchmark_packet", {}).get("reference_packet", [])
+                if isinstance(item, dict)
+            ],
+            "design_anchor_terms": list(context_packet.get("design_anchor_terms", [])),
+            "dataset_items": list(context_packet.get("dataset_items", [])),
+            "metric_items": list(context_packet.get("metric_items", [])),
+        },
+        "evidence_candidates": evidence_candidates,
         "focused_view": focused_view_for_prompt(graph, role),
         "repair_priority_targets": _repair_priority_targets(graph),
         "decision_instruction": decision_instruction,
@@ -1356,9 +1385,15 @@ def _synthesis_system_prompt() -> str:
         "Each field should contribute distinct information instead of repeating the same sentences across sections. "
         "Do not output an abstract field; use the concrete sections below instead. "
         "Avoid generic titles such as 'Language-Driven X' or 'Improving Y' when a more specific mechanism is available. "
+        "Avoid generic method phrases such as 'hybrid model', 'improve performance', or 'strong baselines' when the "
+        "input already provides concrete modules, representations, or reference systems. "
         "When design highlights or design_anchor_terms are provided, explicitly reuse at least one concrete module, bottleneck, or mechanism name rather than writing only a high-level combination. "
         "When selected nodes contain Repair, Risk, Assumption, or NoveltyClaim content, use them to sharpen method details, caveats, or novelty positioning instead of dropping them. "
         "When dataset_items or metric_items are provided, mention at least one dataset and one metric explicitly in the evaluation field rather than using vague placeholders like 'benchmark datasets' or generic metrics. "
+        "Existing Methods should name 2-3 concrete reference directions when the input provides them, and should state one concrete limitation instead of only listing titles. "
+        "The Method section should describe 2-4 concrete design choices and how they interact. "
+        "The Evaluation section should name datasets, metrics, baselines, and at least one ablation or stress test when the input supports them. "
+        "If the context is keyword-only and does not support named datasets, stay cautious and do not invent benchmark names. "
         "Make the method concrete by naming 2-4 distinct design choices or stages when the graph supports them. "
         "Make the evaluation concrete by naming candidate datasets, baselines, metrics, and at least one ablation or stress test when the context supports them. "
         "Use the fields to produce a proposal that is richer than isolated graph nodes but shorter than a full manuscript. "
@@ -1387,11 +1422,17 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             local_node_ids.add(edge.target_id)
     safe_metadata = _prompt_safe_metadata(graph.metadata)
     grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata)
+    latest_round = graph.round_summaries[-1][1] if graph.round_summaries else None
     payload = {
         "topic": graph.topic,
         "context_packet": _compact_generation_context(graph),
         "baseline_context": _baseline_prompt_instruction(graph.metadata),
         "literature_titles": _literature_display_items(graph, limit=6),
+        "evidence_candidates": (
+            _paper_evidence_candidates(graph.metadata, limit=4)
+            + _benchmark_packet_evidence_candidates(graph.metadata, limit=4)
+            + _grounding_evidence_candidates(graph, limit=4)
+        )[:8],
         "literature_grounding": {
             "source": grounding.source,
             "reference_titles": grounding.reference_titles[:5],
@@ -1406,6 +1447,8 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             "reuse_design_anchor_terms": _design_anchor_terms(grounding.design_highlights[:4]),
             "mention_dataset_items": grounding.dataset_items[:2],
             "mention_metric_items": grounding.metric_items[:3],
+            "name_reference_titles": grounding.reference_titles[:3],
+            "include_ablation": True,
         },
         "writing_target": {
             "style": "compact structured research idea",
@@ -1415,8 +1458,32 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
                 "do not fabricate detailed prior-work claims without support",
                 "do not write a full paper introduction or related-work section",
                 "do not repeat the same sentence across problem, motivation, method, and evaluation",
+                "do not use placeholders like strong baselines or task-specific metrics when concrete names are available",
             ],
         },
+        "quality_checklist": {
+            "title_should_name_a_concrete_mechanism_when_available": True,
+            "existing_methods_should_include_concrete_reference_directions": True,
+            "method_should_include_2_to_4_concrete_design_choices": True,
+            "evaluation_should_include_dataset_metric_baseline_and_ablation_when_supported": True,
+            "problem_and_motivation_should_not_repeat_each_other": True,
+        },
+        "latest_round_snapshot": (
+            {
+                "support_coverage": latest_round.support_coverage,
+                "unresolved_contradiction_ratio": latest_round.unresolved_contradiction_ratio,
+                "utility": latest_round.utility,
+                "utility_breakdown": {
+                    "promise": latest_round.utility_breakdown.promise,
+                    "support": latest_round.utility_breakdown.support,
+                    "coherence": latest_round.utility_breakdown.coherence,
+                    "evidence": latest_round.utility_breakdown.evidence,
+                    "novelty": latest_round.utility_breakdown.novelty,
+                },
+            }
+            if latest_round is not None
+            else {}
+        ),
         "selected_nodes": [
             {
                 "id": node_id,
@@ -1500,6 +1567,11 @@ def _append_unique_sentence(base_text: str, sentence: str) -> str:
     return f"{base}{separator} {addition}".strip()
 
 
+def _contains_any_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    normalized = _normalize_match_text(text)
+    return any(_normalize_match_text(phrase) in normalized for phrase in phrases if phrase)
+
+
 def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> FinalProposal:
     safe_metadata = _prompt_safe_metadata(graph.metadata)
     grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata)
@@ -1515,11 +1587,30 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
         _coerce_string(graph.metadata.get("benchmark")) == "liveideabench"
         or (grounding.source == "titles_only" and not reference_packet)
     )
+    generic_evaluation_markers = (
+        "strong baselines",
+        "task-specific quantitative metrics",
+        "task-relevant datasets",
+        "realistic benchmark tasks",
+        "representative benchmark datasets",
+    )
+    generic_method_markers = (
+        "hybrid model",
+        "improve performance",
+        "guide rendering",
+        "stronger representation",
+    )
 
     if design_anchor_terms and not _contains_any_term(proposal.method, design_anchor_terms):
         proposal.method = _append_unique_sentence(
             proposal.method,
             _first_sentence(grounding.design_highlights[0], max_chars=220),
+        )
+
+    if design_anchor_terms and not _contains_any_phrase(proposal.evaluation, ("ablation", "stress test")):
+        proposal.evaluation = _append_unique_sentence(
+            proposal.evaluation,
+            f"Include ablations on {', '.join(design_anchor_terms[:2])}.",
         )
 
     if grounding.dataset_items and not _contains_any_term(proposal.evaluation, grounding.dataset_items):
@@ -1537,6 +1628,33 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
     if grounding.reference_titles and not _contains_any_term(proposal.existing_methods, grounding.reference_titles[:3]):
         summary_sentence = _first_sentence(grounding.existing_methods_summary, max_chars=260)
         proposal.existing_methods = _append_unique_sentence(proposal.existing_methods, summary_sentence)
+
+    if grounding.reference_titles and not _contains_any_phrase(proposal.evaluation, ("compare against", "baseline")):
+        compare_titles = ", ".join(grounding.reference_titles[:2])
+        proposal.evaluation = _append_unique_sentence(
+            proposal.evaluation,
+            f"Compare against {compare_titles}-style baselines.",
+        )
+
+    if design_anchor_terms and _contains_any_phrase(proposal.method, generic_method_markers):
+        proposal.method = _append_unique_sentence(
+            proposal.method,
+            f"Make {design_anchor_terms[0]} the main differentiating component rather than a generic combination baseline.",
+        )
+
+    if grounding.reference_titles and _contains_any_phrase(proposal.existing_methods, ("plausible existing directions", "common directions include")):
+        proposal.existing_methods = _append_unique_sentence(
+            proposal.existing_methods,
+            f"Concrete nearby references include {', '.join(grounding.reference_titles[:3])}.",
+        )
+
+    if grounding.dataset_items and grounding.metric_items and _contains_any_phrase(proposal.evaluation, generic_evaluation_markers):
+        proposal.evaluation = (
+            f"Evaluate on {', '.join(grounding.dataset_items[:2])}. "
+            f"Report {', '.join(grounding.metric_items[:3])}. "
+            f"Compare against {', '.join(grounding.reference_titles[:2]) if grounding.reference_titles else 'strong reference-inspired baselines'}, "
+            f"and include ablations on {', '.join(design_anchor_terms[:2]) if design_anchor_terms else 'the main proposed components'}."
+        )
 
     if keyword_only_mode:
         existing_lower = _normalize_match_text(proposal.existing_methods)

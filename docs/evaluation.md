@@ -1,94 +1,131 @@
 # Evaluation
 
-This repository now includes a local deterministic evaluator for generated
-research ideas, plus an optional benchmark-native scorer for benchmark runs.
+This repository supports two different evaluation layers:
 
-## Design Principle
+- a `paper-facing` evaluation protocol for scientific ideation
+- a `development-time` local deterministic evaluator for rapid iteration
 
-The rubric combines two common perspectives from recent idea-generation work:
+These two layers should not be conflated.
 
-- `expert_style_quality`
-  Inspired by human-review style rubrics used in recent ICLR-era work on LLM
-  ideation, especially novelty, significance/excitement, feasibility, and
-  effectiveness.
-- `benchmark_alignment`
-  Inspired by AI Idea Bench 2025, which evaluates agreement with held-out
-  ground-truth papers together with judgment against general reference
-  material.
-- `graph_process`
-  A process-oriented view that measures whether the multi-agent collaboration
-  graph actually matured before synthesis.
+## Paper-Facing Evaluation Protocol
 
-## Metrics
+For the paper, evaluation should follow a `three-layer design`.
 
-All available metrics are reported on a `0-10` scale.
+### 1. Benchmark-Native Automatic Metrics
+
+These are the primary automatic metrics.
+
+`AI_Idea_Bench_2025`
+
+- `I2T`
+- `I2I`
+- `IMCQ`
+- `IC`
+- `NA`
+- `FA`
+- `FPS`
+
+`LiveIdeaBench`
+
+- `Originality`
+- `Feasibility`
+- `Fluency`
+- `Flexibility`
+- `Clarity`
+- `Average`
+
+Guidelines:
+
+- prefer the released benchmark protocols over ad hoc replacement metrics
+- if a metric requires unavailable external assets or a batch-level comparison
+  pool, mark it unavailable instead of approximating it silently
+- treat `IC` as a matched-batch metric rather than a single-run score
+
+### 2. Shared Human Blind Review
+
+Use the same rubric on both benchmarks:
 
 - `Novelty`
-  Penalizes high lexical similarity to nearby reference papers and explicit
-  `overlaps_prior` edges.
 - `Significance`
-  Rewards a clear important problem and a non-empty expected-contribution
-  section.
 - `Feasibility`
-  Uses contradiction resolution, support coverage, repair balance, and the
-  specificity of the experiment plan.
-- `Effectiveness And Testability`
-  Checks whether the idea forms a coherent problem-hypothesis-method-evaluation
-  chain with concrete experimental hooks.
-- `Clarity And Coherence`
-  Rewards complete, sufficiently detailed, and non-redundant proposal sections.
-- `Literature Grounding`
-  Measures graph evidence use, literature-aware existing-method discussion, and
-  grounded experiment design.
-- `Topic Alignment`
-  Measures whether the proposal stays aligned with the benchmark topic and its
-  keywords.
-- `Ground-Truth Concordance`
-  When target-paper metadata is available, compares the generated idea against
-  held-out motivation and method summaries.
-- `Experiment Alignment`
-  Checks whether the proposal uses benchmark datasets and metrics when they are
-  available.
-- `Graph Maturity`
-  Uses support coverage, contradiction repair, completeness, utility, and
-  action diversity from the collaboration process.
+- `Clarity`
+- `Context Adherence`
+- `Overall`
 
-## Outputs
+Recommended setup:
 
-Each pipeline run now writes:
+- balanced subset from both benchmarks
+- blind evaluation
+- `3` reviewers per idea when feasible
+
+### 3. Supplementary Process And Cost Analysis
+
+These metrics validate the mechanism of the method, but they are not the main
+scientific outcome metrics.
+
+- `Evidence coverage`
+- `Contradiction resolution`
+- `Claim-chain completeness`
+- `Rounds to maturity`
+- `Action diversity`
+- `API and token cost`
+- `Wall-clock runtime`
+
+## Development-Time Local Deterministic Evaluator
+
+The repository also includes a local deterministic evaluator that writes:
 
 - `evaluation.json`
 - `evaluation.md`
-- `benchmark_native_evaluation.json` when `--native-eval` is enabled
-- `benchmark_native_evaluation.md` when `--native-eval` is enabled
 
-The run `summary.json` also includes an `idea_evaluation` field.
-When native scoring is enabled it also includes a
-`benchmark_native_evaluation` field.
+This evaluator is useful for:
 
-## Re-evaluate An Existing Run
+- debugging prompt or controller changes
+- ranking local ablations quickly
+- checking whether graph maturity and grounding signals move in the expected
+  direction
 
-```bash
-python scripts/evaluate_run.py --run-dir outputs/<timestamp>-<instance>
-```
+It is `not` the main paper-facing evaluator.
 
-This regenerates `evaluation.json` and `evaluation.md` from the saved
-`graph.json`.
+In particular:
 
-To also recompute benchmark-native scoring:
+- do not use the merged local heuristic `overall_score` as the headline result
+- do not mix graph-process scores into the main comparison against non-graph
+  baselines
+- do not replace benchmark-native scores or human review with local heuristic
+  surrogates in the final paper
 
-```bash
-python scripts/evaluate_run.py --run-dir outputs/<timestamp>-<instance> --native-eval --llm-config configs/openai_compatible.example.json
-```
+## Benchmark-Native Scoring Artifacts
 
-## Benchmark-Native Scoring
+When `--native-eval` is enabled, the pipeline additionally writes:
 
-The benchmark-native scorer is separate from the local deterministic rubric.
+- `benchmark_native_evaluation.json`
+- `benchmark_native_evaluation.md`
 
-- `AI_Idea_Bench_2025`
-  Reproduces the released prompt-based metric structure where public assets are
-  sufficient, and marks metrics unavailable when the official protocol needs
-  extra assets or batch-level comparisons.
-- `liveideabench`
-  Uses the benchmark's native minimal-context scoring dimensions with an
-  OpenAI-compatible judge model.
+These are the preferred automatic artifacts for paper reporting when the needed
+judge model and benchmark assets are available.
+
+## Recommended Reporting Structure
+
+### Main Paper
+
+- benchmark-native automatic metrics
+- human blind-review subset
+
+### Main Or Secondary Analysis
+
+- cross-benchmark breakdowns
+- quality-cost tradeoff discussion
+
+### Appendix
+
+- graph-process diagnostics
+- fallback and controller analysis
+- maturity trajectories across rounds
+- extra ablations on prompt, retrieval, or stopping policies
+
+## Practical Repo Policy
+
+Use the local deterministic evaluator for fast iteration and internal decision
+making. Use benchmark-native metrics and human evaluation for the final paper
+claims.

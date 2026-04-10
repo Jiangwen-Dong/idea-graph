@@ -1,7 +1,7 @@
 # idea-graph
 
-Python scaffold for a delayed-consensus scientific ideation system built around
-a shared typed idea graph.
+Python scaffold for an evolving-idea-graph scientific ideation system built
+around a shared typed idea graph.
 
 The implementation direction comes from the extracted `exp.docx` protocol:
 
@@ -34,7 +34,7 @@ The pipeline can now run in two modes:
 
 ## Layout
 
-- `docs/implementation-plan.md`
+- `docs/experiment_execution_log.md`
 - `docs/benchmarks.md`
 - `docs/evaluation.md`
 - `docs/paper_protocol.md`
@@ -81,12 +81,13 @@ python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline scipip-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline virsci-proxy
-python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-delayed-consensus
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-eig
 ```
 
-For DashScope or Qwen models, prefer `ai-researcher-proxy` first. It is the
-repo-native lightweight reproduction of the AI-Researcher idea pipeline and
-works through the same OpenAI-compatible client as the rest of this project.
+For DashScope or Qwen models, `ai-researcher` now supports a documented
+OpenAI-compatible bridge that preserves the same seed-generation,
+proposal-expansion, and ranking structure inside this repo. The older
+`ai-researcher-proxy` remains useful as a lightweight local fallback.
 
 Budget guidance:
 
@@ -95,11 +96,11 @@ Budget guidance:
 - `scipip-proxy` is the recommended low-cost structured baseline.
 - `ai-researcher-proxy` is the recommended literature baseline for most local
   Qwen runs.
-- `virsci-proxy` and `ours-delayed-consensus` are higher-cost multi-agent
+- `virsci-proxy` and `ours-eig` are higher-cost multi-agent
   baselines and are better reserved for smaller validation subsets before large
   sweeps.
 
-Run an exact external baseline through its upstream repository adapter:
+Run an external baseline through its configured adapter:
 
 ```bash
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher --external-baseline-config configs/external_baselines.example.json
@@ -108,7 +109,10 @@ python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 
 
 Notes:
 
-- `ai-researcher`, `scipip`, and `virsci` are exact external wrappers and need `--external-baseline-config`.
+- `ai-researcher`, `scipip`, and `virsci` need `--external-baseline-config`.
+- `ai-researcher` can run in two modes:
+  - exact upstream mode for providers the upstream repo natively supports
+  - `openai-compatible-bridge` mode for DashScope/Qwen-style providers
 - `ai-researcher-proxy`, `scipip-proxy`, and `virsci-proxy` remain local approximations implemented entirely inside this repo.
 - `virsci` currently raises a clear error in benchmark mode because the upstream repository does not expose a fixed-topic benchmark entrypoint yet.
 

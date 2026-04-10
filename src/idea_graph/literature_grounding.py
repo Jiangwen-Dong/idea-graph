@@ -165,12 +165,40 @@ def _method_summary(metadata: dict[str, Any]) -> str:
     return _clean_text(_method_payload(metadata).get("targeted_designs_summary", ""))
 
 
+def _reference_snippet_signal_text(
+    metadata: dict[str, Any],
+    *,
+    preferred_fields: tuple[str, ...],
+    limit: int = 4,
+) -> str:
+    snippets = _reference_paper_snippets(metadata)[:limit]
+    fragments: list[str] = []
+    for snippet in snippets:
+        for field_name in preferred_fields:
+            value = _clean_text(snippet.get(field_name, ""))
+            if value:
+                fragments.append(value)
+    return " ".join(fragments)
+
+
 def _datasets_text(metadata: dict[str, Any]) -> str:
-    return _clean_text(_method_payload(metadata).get("datasets", ""))
+    value = _clean_text(_method_payload(metadata).get("datasets", ""))
+    if value:
+        return value
+    return _reference_snippet_signal_text(
+        metadata,
+        preferred_fields=("evaluation", "method", "abstract", "introduction", "text_excerpt"),
+    )
 
 
 def _metrics_text(metadata: dict[str, Any]) -> str:
-    return _clean_text(_method_payload(metadata).get("metrics", ""))
+    value = _clean_text(_method_payload(metadata).get("metrics", ""))
+    if value:
+        return value
+    return _reference_snippet_signal_text(
+        metadata,
+        preferred_fields=("evaluation", "method", "abstract", "introduction", "text_excerpt"),
+    )
 
 
 def _design_highlights(metadata: dict[str, Any], *, limit: int = 3) -> list[str]:
@@ -222,19 +250,31 @@ def _dataset_items(metadata: dict[str, Any]) -> list[str]:
     datasets_text = _datasets_text(metadata)
     if not datasets_text:
         return []
+
+    def _clean_dataset_item(text: str) -> str:
+        cleaned = _clean_text(text)
+        cleaned = re.sub(r"^evaluate on the\s+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"^evaluate on\s+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"^the\s+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+and report .*$", "", cleaned, flags=re.IGNORECASE)
+        if not cleaned or "[" in cleaned or cleaned.casefold().startswith("such methods include"):
+            return ""
+        if _looks_noisy_sentence(cleaned):
+            return ""
+        return cleaned.strip(" .")
+
     explicit_matches = re.findall(
         r"\b([A-Z0-9][A-Za-z0-9\-\+ ]{1,80}?(?:dataset|Dataset|Metropolis|PanoSUNCG|Polycam|ScanNet|KITTI|COCO|ImageNet|Cityscapes|360VO))\b",
         datasets_text,
     )
-    explicit_cleaned = _unique_strings(explicit_matches)
-    if explicit_cleaned:
-        return explicit_cleaned[:6]
-
+    explicit_cleaned = _unique_strings(_clean_dataset_item(item) for item in explicit_matches if _clean_dataset_item(item))
     sentence = _first_sentence(datasets_text)
     prefix_candidates = (
         "Experiments were conducted on several datasets, including ",
         "The datasets include ",
         "Datasets include ",
+        "Evaluate on the ",
+        "Evaluate on ",
     )
     clause = sentence
     for prefix in prefix_candidates:
@@ -247,14 +287,14 @@ def _dataset_items(metadata: dict[str, Any]) -> list[str]:
 
     items: list[str] = []
     for item in _split_outside_parentheses(clause):
-        cleaned = _clean_text(item)
+        cleaned = _clean_dataset_item(item)
         cleaned = re.sub(r"^and\s+", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"^custom datasets?\s+", "", cleaned, flags=re.IGNORECASE)
         if re.match(r"^(captured using|which includes|including |are used for evaluation)", cleaned, flags=re.IGNORECASE):
             continue
         if cleaned:
             items.append(cleaned)
-    return _unique_strings(items)
+    return _unique_strings(explicit_cleaned + items)[:6]
 
 
 def _metric_items(metadata: dict[str, Any]) -> list[str]:
@@ -266,13 +306,20 @@ def _metric_items(metadata: dict[str, Any]) -> list[str]:
         cleaned_items = []
         for name, abbr in matches:
             cleaned_name = re.sub(r"^Evaluation metrics include\s+", "", name.strip(), flags=re.IGNORECASE)
-            cleaned_items.append(f"{cleaned_name} ({abbr})")
+            candidate = f"{cleaned_name} ({abbr})"
+            if not _looks_noisy_sentence(candidate):
+                cleaned_items.append(candidate)
         extras = re.findall(
             r"\b(?:mIoU|IoU|PSNR|SSIM|LPIPS|RRE|RTAE|RSE|ARE|ATE|accuracy|precision|recall|F1)\b",
             metrics_text,
             flags=re.IGNORECASE,
         )
-        return _unique_strings(cleaned_items + extras)
+        filtered_extras = [
+            item
+            for item in extras
+            if len(_clean_text(item)) > 2 and not _looks_noisy_sentence(item)
+        ]
+        return _unique_strings(cleaned_items + filtered_extras)
 
     sentence = _first_sentence(metrics_text)
     if not sentence:
@@ -290,14 +337,19 @@ def _metric_items(metadata: dict[str, Any]) -> list[str]:
     items = []
     for item in _split_outside_parentheses(clause):
         cleaned = re.sub(r"\s+for .*$", "", _clean_text(item), flags=re.IGNORECASE)
-        if cleaned:
+        if cleaned and len(cleaned) > 2 and not _looks_noisy_sentence(cleaned) and cleaned.casefold() not in {"are", "used"}:
             items.append(cleaned)
     extras = re.findall(
         r"\b(?:mIoU|IoU|PSNR|SSIM|LPIPS|RRE|RTAE|RSE|ARE|ATE|accuracy|precision|recall|F1)\b",
         metrics_text,
         flags=re.IGNORECASE,
     )
-    return _unique_strings(items + extras)
+    filtered_extras = [
+        item
+        for item in extras
+        if len(_clean_text(item)) > 2 and not _looks_noisy_sentence(item)
+    ]
+    return _unique_strings(items + filtered_extras)
 
 
 def build_literature_grounding(

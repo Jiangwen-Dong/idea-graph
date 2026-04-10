@@ -4,7 +4,9 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -17,8 +19,10 @@ from idea_graph.agent_backend import (
 )
 from idea_graph.baselines import (
     BASELINE_SPECS,
+    _ai_researcher_focus_constraints,
     _ai_researcher_proxy_postprocess_proposal,
     _ai_researcher_topic_fidelity_score,
+    _baseline_postprocess_proposal,
     attach_baseline_metadata,
     run_baseline_experiment,
 )
@@ -106,7 +110,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
     def test_attach_baseline_metadata_builds_safe_ai_idea_bench_packet(self) -> None:
         instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
-            baseline_name="ours-delayed-consensus",
+            baseline_name="ours-eig",
             io_mode="auto",
         )
 
@@ -238,6 +242,160 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertNotIn("ignored", payload)
         self.assertEqual(payload["ai-researcher"]["repo_path"], "C:/tmp/AI-Researcher")
 
+    def test_ai_researcher_external_bridge_runs_with_openai_compatible_mode(self) -> None:
+        class FakeSettings:
+            max_retries = 0
+            model = "qwen3-8b"
+
+            def model_for_role(self, role: str) -> str:
+                return self.model
+
+        class SequencedClient:
+            def __init__(self, payloads: list[dict[str, object]]) -> None:
+                self._payloads = list(payloads)
+
+            def create_chat_completion(self, **kwargs):
+                payload = self._payloads.pop(0)
+                content = json.dumps(payload, ensure_ascii=False)
+                return SimpleNamespace(
+                    content=content,
+                    raw_response={"choices": [{"message": {"content": content}}]},
+                )
+
+        fake_backend = SimpleNamespace(
+            settings=FakeSettings(),
+            client=SequencedClient(
+                [
+                    {
+                        "seed_ideas": [
+                            {
+                                "idea_name": "Language Field Distillation",
+                                "problem_focus": "Open-vocabulary 3D language field modeling remains expensive.",
+                                "existing_gap": "Current methods are slow and weakly localized.",
+                                "core_mechanism": "Distill hierarchical language features into compact 3D fields.",
+                                "evaluation_hint": "Measure localization and query accuracy.",
+                            },
+                            {
+                                "idea_name": "Sparse Gaussian Language Anchors",
+                                "problem_focus": "Mask-free language grounding in radiance fields is unstable.",
+                                "existing_gap": "Language anchors drift under sparse supervision.",
+                                "core_mechanism": "Use sparse Gaussian anchors for stable language grounding.",
+                                "evaluation_hint": "Evaluate open-vocabulary grounding stability.",
+                            },
+                        ]
+                    },
+                    {
+                        "title": "Benchmark-Faithful Language Field Modeling",
+                        "problem": "3D language field modeling still struggles with efficient open-vocabulary localization.",
+                        "existing_methods": "LERF and Gaussian Splatting are strong nearby baselines.",
+                        "motivation": "We need a more efficient and better-grounded language field representation.",
+                        "hypothesis": "Compact hierarchical language fields can preserve localization quality.",
+                        "method": "Distill language-aware field features into a compact 3D representation with explicit localization heads.",
+                        "evaluation": "Evaluate open-vocabulary localization accuracy and retrieval quality against strong baselines.",
+                        "significance": "This improves benchmark-faithful 3D language field ideation.",
+                        "caveats": "Performance may depend on grounding quality.",
+                    },
+                    {
+                        "title": "Sparse Gaussian Language Anchors for Querying",
+                        "problem": "Open-vocabulary 3D querying is unstable under sparse language supervision.",
+                        "existing_methods": "Radiance-field and Gaussian baselines lack stable anchor design.",
+                        "motivation": "Stable anchor structure could improve 3D querying.",
+                        "hypothesis": "Sparse anchor constraints reduce drift.",
+                        "method": "Introduce sparse Gaussian anchor nodes for language-to-geometry grounding.",
+                        "evaluation": "Evaluate query localization and robustness under sparse supervision.",
+                        "significance": "This stabilizes open-vocabulary 3D querying.",
+                        "caveats": "Anchor sparsity may trade off recall.",
+                    },
+                    {
+                        "selected_index": 0,
+                        "reason": "Candidate 0 is more benchmark-faithful and better aligned with 3D language field modeling.",
+                        "scores": [
+                            {
+                                "index": 0,
+                                "topic_fidelity": 5,
+                                "novelty": 4,
+                                "significance": 4,
+                                "feasibility": 4,
+                                "clarity": 4,
+                                "literature_grounding": 4,
+                                "experiment_quality": 4,
+                                "overall": 4.3,
+                            },
+                            {
+                                "index": 1,
+                                "topic_fidelity": 3,
+                                "novelty": 4,
+                                "significance": 3,
+                                "feasibility": 4,
+                                "clarity": 4,
+                                "literature_grounding": 3,
+                                "experiment_quality": 3,
+                                "overall": 3.4,
+                            },
+                        ],
+                    },
+                ]
+            ),
+        )
+
+        instance = attach_baseline_metadata(
+            self._language_field_instance(),
+            baseline_name="ai-researcher",
+            io_mode="auto",
+        )
+
+        config = {
+            "ai-researcher": {
+                "enabled": True,
+                "execution_mode": "openai-compatible-bridge",
+                "ideas_n": 2,
+                "openai_compatible": {
+                    "base_url": "https://example.com/v1",
+                    "api_key": "test-key",
+                    "model": "qwen3-8b",
+                    "provider": "dashscope",
+                    "reasoning_mode": "auto",
+                },
+            }
+        }
+
+        with patch("idea_graph.external_baselines._build_ai_researcher_bridge_backend", return_value=fake_backend):
+            graph = run_baseline_experiment(
+                instance,
+                baseline_name="ai-researcher",
+                external_baseline_config=config,
+            )
+
+        self.assertIsNotNone(graph.final_proposal)
+        self.assertEqual(graph.final_proposal.title, "Benchmark-Faithful 3D Language Field Modeling")
+        self.assertEqual(graph.metadata["baseline_name"], "ai-researcher")
+        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "openai-compatible-bridge")
+        self.assertEqual(graph.metadata["stop_reason"], "baseline_ai-researcher_complete")
+        self.assertEqual(graph.metadata["ai_researcher_proxy_candidate_count"], 2)
+
+    def test_ai_researcher_external_bridge_requires_openai_compatible_settings(self) -> None:
+        instance = attach_baseline_metadata(
+            self._language_field_instance(),
+            baseline_name="ai-researcher",
+            io_mode="auto",
+        )
+
+        config = {
+            "ai-researcher": {
+                "enabled": True,
+                "execution_mode": "openai-compatible-bridge",
+            }
+        }
+
+        with self.assertRaises(RuntimeError) as context:
+            run_baseline_experiment(
+                instance,
+                baseline_name="ai-researcher",
+                external_baseline_config=config,
+            )
+
+        self.assertIn("openai-compatible", str(context.exception).lower())
+
     def test_ai_researcher_proxy_falls_back_when_llm_generation_fails(self) -> None:
         class FailingClient:
             def create_chat_completion(self, **kwargs):
@@ -334,10 +492,99 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIn("3d language field", polished.problem.lower())
         self.assertIn("3d language field", polished.significance.lower())
 
+    def test_ai_researcher_focus_constraints_are_generic_for_non_language_field_topics(self) -> None:
+        instance = attach_baseline_metadata(
+            self._liveideabench_instance(),
+            baseline_name="ai-researcher-proxy",
+            io_mode="auto",
+        )
+        graph = run_baseline_experiment(instance, baseline_name="direct")
+
+        constraints = _ai_researcher_focus_constraints(graph)
+        joined = " ".join(constraints).lower()
+
+        self.assertIn("meteorology", joined)
+        self.assertNotIn("3d language/radiance field", joined)
+        self.assertNotIn("radiance field representation", joined)
+
+    def test_ai_researcher_topic_fidelity_prefers_meteorology_over_language_field_drift(self) -> None:
+        instance = attach_baseline_metadata(
+            self._liveideabench_instance(),
+            baseline_name="ai-researcher-proxy",
+            io_mode="auto",
+        )
+        graph = run_baseline_experiment(instance, baseline_name="direct")
+
+        meteorology_proposal = FinalProposal(
+            title="Physics-Aware Meteorology Forecasting with Multi-Source Data Fusion",
+            problem="Meteorology forecasting still struggles with severe-weather uncertainty and cross-source alignment.",
+            existing_methods="Existing numerical weather and neural forecasting systems can be poorly calibrated during extreme events.",
+            motivation="Reliable meteorology forecasts matter for disaster response and climate-sensitive planning.",
+            hypothesis="Physics-aware calibration plus multi-source fusion can improve meteorology forecasting accuracy and reliability.",
+            method="Fuse radar, satellite, and reanalysis signals with a physics-aware calibration module for meteorology prediction.",
+            evaluation="Evaluate meteorology forecasting accuracy, calibration, and robustness on benchmark weather datasets.",
+            significance="Improves practical meteorology decision support.",
+            caveats="May require careful handling of regional shifts.",
+        )
+        language_field_proposal = FinalProposal(
+            title="Efficient 3D Language Field Modeling with Gaussian Splatting",
+            problem="Current 3D language field models are costly and poorly localized.",
+            existing_methods="Radiance field baselines and gaussian splatting approaches remain limited for open-vocabulary queries.",
+            motivation="Open-vocabulary 3D language field modeling needs better efficiency and localization.",
+            hypothesis="Language field supervision over radiance fields can improve 3D localization.",
+            method="Combine gaussian splatting with open-vocabulary language field supervision.",
+            evaluation="Evaluate localization accuracy on 3D language field benchmarks.",
+            significance="Improves 3D language field modeling.",
+            caveats="Needs stable supervision.",
+        )
+
+        meteorology_score = _ai_researcher_topic_fidelity_score(graph, meteorology_proposal)
+        language_field_score = _ai_researcher_topic_fidelity_score(graph, language_field_proposal)
+
+        self.assertGreater(meteorology_score, language_field_score)
+
+    def test_ai_researcher_postprocess_does_not_inject_language_field_wording_for_liveideabench(self) -> None:
+        instance = attach_baseline_metadata(
+            self._liveideabench_instance(),
+            baseline_name="ai-researcher-proxy",
+            io_mode="auto",
+        )
+        graph = run_baseline_experiment(instance, baseline_name="direct")
+        draft = FinalProposal(
+            title="Physics-Aware Meteorology Forecasting with Multi-Source Data Fusion",
+            problem="Meteorology forecasting still struggles with severe-weather uncertainty.",
+            existing_methods="Existing weather models and neural forecasting pipelines have calibration gaps.",
+            motivation="More reliable meteorology forecasting matters for early warning systems.",
+            hypothesis="Physics-aware fusion can improve meteorology forecasts.",
+            method="Fuse radar, satellite, and reanalysis signals with a calibrated forecasting head.",
+            evaluation="Measure forecast accuracy and calibration on weather benchmarks.",
+            significance="Improves meteorology forecasting.",
+            caveats="May need regional adaptation.",
+        )
+
+        polished = _baseline_postprocess_proposal(graph, BASELINE_SPECS["ai-researcher-proxy"], draft)
+        combined = " ".join(
+            [
+                polished.title,
+                polished.problem,
+                polished.existing_methods,
+                polished.motivation,
+                polished.hypothesis,
+                polished.method,
+                polished.evaluation,
+                polished.significance,
+            ]
+        ).lower()
+
+        self.assertIn("meteorology", combined)
+        self.assertNotIn("language field", combined)
+        self.assertNotIn("lerf", combined)
+        self.assertNotIn("gaussian splatting", combined)
+
     def test_baseline_prompt_instruction_distinguishes_ours_and_virsci(self) -> None:
         ours_instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
-            baseline_name="ours-delayed-consensus",
+            baseline_name="ours-eig",
             io_mode="auto",
         )
         virsci_instance = attach_baseline_metadata(

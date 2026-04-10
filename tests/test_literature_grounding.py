@@ -59,6 +59,58 @@ class LiteratureGroundingTests(unittest.TestCase):
         self.assertIn("Evaluate on", grounding.experiment_plan_summary)
         self.assertIn("Fusion Block", grounding.existing_methods_summary)
 
+    def test_reference_snippets_can_supply_safe_dataset_and_metric_grounding(self) -> None:
+        grounding = build_literature_grounding(
+            literature=["LERF", "3D Gaussian Splatting"],
+            metadata={
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "LERF",
+                            "evaluation": "Evaluate on the LERF dataset and report localization accuracy and IoU.",
+                            "method": "LERF uses CLIP-aligned open-vocabulary querying in 3D scenes.",
+                        },
+                        {
+                            "resolved_title": "3D Gaussian Splatting",
+                            "evaluation": "Report accuracy on held-out 3D scene understanding tasks.",
+                            "method": "3D Gaussian Splatting enables efficient radiance-field rendering.",
+                        },
+                    ]
+                }
+            },
+        )
+
+        self.assertIn("LERF dataset", grounding.dataset_items)
+        self.assertTrue("accuracy" in grounding.metric_items or "IoU" in grounding.metric_items)
+        self.assertIn("Evaluate on", grounding.experiment_plan_summary)
+
+    def test_keyword_only_liveideabench_gets_safe_weak_context_scaffold(self) -> None:
+        grounding = build_literature_grounding(
+            literature=[
+                "Benchmark keyword: meteorology",
+                "This benchmark row provides a keyword prompt rather than retrieved literature.",
+                "Use the keyword as the ideation seed and treat benchmark idea text only as held-out metadata.",
+            ],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "meteorology",
+                "benchmark_input_packet": {
+                    "benchmark": "liveideabench",
+                    "keyword": "meteorology",
+                    "reference_packet": [],
+                },
+            },
+        )
+
+        self.assertEqual(grounding.source, "keyword_scaffold")
+        self.assertTrue(grounding.design_highlights)
+        self.assertIn("meteorology", grounding.existing_methods_summary.lower())
+        self.assertTrue(any("forecast" in item.lower() for item in grounding.design_highlights))
+        self.assertTrue(any(metric in grounding.metric_items for metric in ("RMSE", "MAE", "CRPS")))
+        self.assertNotIn("Benchmark keyword:", grounding.existing_methods_summary)
+        self.assertTrue(grounding.weak_context_scaffold)
+        self.assertIn("divergence_axes", grounding.weak_context_scaffold)
+
 
 if __name__ == "__main__":
     unittest.main()

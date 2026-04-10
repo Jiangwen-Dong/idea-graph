@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import asdict
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,8 @@ from typing import Any, Callable
 
 from .literature_grounding import build_literature_grounding
 from .models import FinalProposal, IdeaGraph
+from .agent_backend import OpenAICompatibleCollaborationBackend
+from .settings import OpenAICompatibleSettings
 
 
 def load_external_baseline_config(path: str | Path | None) -> dict[str, dict[str, Any]]:
@@ -409,11 +412,88 @@ def _proposal_from_virsci_payload(graph: IdeaGraph, payload: dict[str, Any]) -> 
     )
 
 
+def _build_ai_researcher_bridge_backend(config: dict[str, Any]) -> OpenAICompatibleCollaborationBackend:
+    llm_config_path = _clean_text(config.get("llm_config_path"))
+    if llm_config_path:
+        settings = OpenAICompatibleSettings.from_json_file(llm_config_path)
+        return OpenAICompatibleCollaborationBackend(settings)
+
+    nested = config.get("openai_compatible")
+    if isinstance(nested, dict):
+        settings = OpenAICompatibleSettings.from_mapping(nested)
+        return OpenAICompatibleCollaborationBackend(settings)
+
+    raise RuntimeError(
+        "AI-Researcher openai-compatible bridge requires either 'llm_config_path' or an "
+        "'openai_compatible' settings mapping in the external baseline config."
+    )
+
+
+def _run_ai_researcher_openai_compatible_bridge(
+    graph: IdeaGraph,
+    config: dict[str, Any],
+    progress_callback: Callable[[str], None] | None,
+) -> FinalProposal:
+    from .baselines import BaselineSpec, _llm_ai_researcher_proxy_proposal
+
+    backend = _build_ai_researcher_bridge_backend(config)
+    workspace = _make_workspace(
+        config,
+        baseline_name="ai-researcher",
+        instance_name=_clean_text(graph.metadata.get("instance_name")) or _clean_text(graph.topic) or "run",
+    )
+    graph.metadata["external_baseline_workspace"] = str(workspace)
+    graph.metadata["external_baseline_execution_mode"] = "openai-compatible-bridge"
+    sanitized_backend = (
+        backend.settings.sanitized_dict()
+        if hasattr(backend.settings, "sanitized_dict")
+        else {"model": getattr(backend.settings, "model", "")}
+    )
+    graph.metadata["external_baseline_backend"] = sanitized_backend
+
+    baseline = BaselineSpec(
+        name="ai-researcher",
+        display_name="AI-Researcher",
+        strategy="external",
+        description=(
+            "Repository-local AI-Researcher compatibility bridge that preserves the "
+            "seed-generation, proposal-expansion, and ranking structure under an "
+            "OpenAI-compatible backend."
+        ),
+        prompt_style="ai_researcher_proxy",
+        candidate_count=max(2, int(config.get("ideas_n", 4) or 4)),
+    )
+
+    _emit(
+        progress_callback,
+        "AI-Researcher: running the OpenAI-compatible compatibility bridge with seed generation, proposal expansion, and ranking.",
+    )
+    proposal = _llm_ai_researcher_proxy_proposal(
+        graph,
+        baseline,
+        backend,
+        progress_callback=progress_callback,
+    )
+    selected_path = workspace / "selected_proposal.json"
+    selected_path.write_text(json.dumps(asdict(proposal), indent=2, ensure_ascii=False), encoding="utf-8")
+    graph.metadata["external_baseline_selected_file"] = str(selected_path)
+    return proposal
+
+
 def _run_ai_researcher(
     graph: IdeaGraph,
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
 ) -> FinalProposal:
+    execution_mode = _clean_text(config.get("execution_mode")).lower()
+    if execution_mode in {
+        "openai-compatible-bridge",
+        "openai_compatible_bridge",
+        "openai-compatible",
+        "bridge",
+    } or _clean_text(config.get("llm_config_path")) or isinstance(config.get("openai_compatible"), dict):
+        return _run_ai_researcher_openai_compatible_bridge(graph, config, progress_callback)
+
     repo_root = _require_path(config.get("repo_path"), label="AI-Researcher repo_path")
     runner_root = repo_root / "ai_researcher"
     if not runner_root.exists():

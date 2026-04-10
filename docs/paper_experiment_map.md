@@ -1,94 +1,90 @@
 # Paper Experiment Map
 
-This note records the current experiment layout for the paper after the
-cross-benchmark small-batch update on April 1, 2026.
+This note is the compact paper-facing map for the current experiment story.
+The detailed execution roadmap lives in `docs/paper_experiment_plan.md`, and
+the concrete run queue lives in `docs/paper_experiment_tracker.md`.
 
-## Current Main Paper
+## Central Paper Claim
 
-1. Main quality table.
+The paper should argue that scientific ideation improves when the evolving idea
+state is externalized as a typed editable graph and refined through
+utility-guided multi-agent edits, rather than being compressed into one draft
+too early.
 
-- Benchmarks: `AI_Idea_Bench_2025`, `LiveIdeaBench`
-- Methods: `direct`, `self-refine`, `scipip-proxy`, `ai-researcher-proxy`,
-  `ours-delayed-consensus`
-- Metrics: `Overall`, `Benchmark Alignment`, `Expert Quality`
-- Principle: same benchmark-mode input packet, same structured output contract,
-  same `qwen3-8b` backbone, separate cost reporting
+## Canonical Method Surface
 
-2. One subsection each for:
+- Main method:
+  - `ours-eig`
+- Backward-compatible alias only:
+  - `ours-delayed-consensus`
+- Current prototype components:
+  - role-specialized graph edits
+  - utility-guided candidate ranking
+  - maturity-aware stopping
+  - mature-subgraph-conditioned final synthesis
 
-- `Benchmarks`
-- `Baselines`
-- `Metrics`
-- `Experimental Setup`
-- `Main Results`
-- `Process Analysis and Failure Analysis`
-- `Cost and Current Scope`
+## Paper-Facing Benchmarks
 
-3. Main experimental message.
+- Primary benchmark:
+  - `AI_Idea_Bench_2025`
+- Secondary benchmark:
+  - `LiveIdeaBench`
 
-- `ours-delayed-consensus` is best on both benchmarks and all primary quality
-  columns in the current eight-target small batch.
-- The paper should frame this as a coordination gain, not an efficiency gain.
-- Graph-process and cost tables stay out of the main comparison table.
+## Paper-Facing Baselines
 
-## Appendix
+- Main comparison set:
+  - `direct`
+  - `self-refine`
+  - `ai-researcher`
+  - `ours-eig`
+- Conditional addition:
+  - `virsci`, only if exact benchmark-faithful integration becomes runnable
+- Supporting exact baseline:
+  - `scipip`, if the official path remains stable
+- Development-only baselines:
+  - any `*-proxy` baseline
 
-1. Graph-process table for `ours` only.
+## Main Evidence Blocks
 
-- Current file: `generated/cross_benchmark_graph_process_table.tex`
-- Content: per-instance `Graph`, `Support`, `UCR`, `Utility`, `Rounds`,
-  `Errors`, `Stop`
+1. Benchmark-native automatic comparison on `AI_Idea_Bench_2025`.
+2. Benchmark-native automatic comparison on `LiveIdeaBench`.
+3. Shared human blind review on a balanced subset.
+4. EIG ablations isolating utility ranking, maturity stop, and synthesis.
+5. Appendix-level process, reliability, and cost analysis.
 
-2. Cost table across all methods.
+## Decision Gates
 
-- Current file: `generated/cross_benchmark_cost_table.tex`
-- Content: `Calls`, `Tokens`, and `x Direct`
+- Gate 1:
+  - confirm exact `ai-researcher` benchmark-mode execution before any larger
+    batch
+- Gate 2:
+  - decide whether `virsci` is truly benchmark-faithful; if not, remove it
+    from the headline table rather than substituting a proxy
+- Gate 3:
+  - expand beyond the smoke slice only if benchmark-native scoring runs cleanly
+    on both benchmarks
+- Gate 4:
+  - run human review only after the final proposal format is stable and
+    non-generic
 
-3. Hard-case safeguard table.
+## Supplementary Metrics To Preserve
 
-- Current file: `generated/cross_benchmark_hard_case_table.tex`
-- Case: `AI-18`
-- Content: `Stop`, `Rounds`, `Actions`, `Errors`, `Overall`, `Graph`
+- `Evidence coverage`
+- `Contradiction resolution`
+- `Claim-chain completeness`
+- `Rounds to maturity`
+- `Action diversity`
+- fallback rate
+- controller override rate
+- API calls, tokens, and wall-clock runtime
 
-4. Round-wise trajectory figure.
+## Current Planning Priority
 
-- Current file: `figures/hard_case_round_trajectory.pdf`
-- Panels: `Support`, `UCR`, `Utility`
+The next paper-critical step is not another proxy batch. It is `M0`:
 
-## Current Evidence Summary
+- verify end-to-end benchmark-native scoring on one case from each benchmark
+- verify exact `ai-researcher` execution on a benchmark packet
+- make a hard decision on `virsci`
 
-1. Cross-benchmark main results are now based on:
-
-- `outputs/quality_batches/20260401-merged-cross-benchmark-small-batch/batch_summary.json`
-
-2. The current small-batch paper numbers are:
-
-- Overall mean: `ours=6.508`, strongest non-graph baseline `=3.737`
-- AI Idea Bench 2025: `ours=6.485`
-- LiveIdeaBench: `ours=6.530`
-
-3. Process takeaways for `ours`.
-
-- Mean graph-process score: `8.915`
-- Mean final support coverage: `0.953`
-- Mean unresolved contradiction ratio: `0.000`
-- Mean executed rounds: `3.25`
-- All eight selected runs reached maturity
-
-## Next Experimental Steps
-
-1. Run a broader cross-benchmark slice with the current prompt policy,
-   completeness safeguard, and duplicate-action salvage logic frozen.
-2. Add benchmark-native scoring where the benchmark interface is stable enough
-   to avoid noisy judge costs.
-3. Add a small blind human-evaluation subset with the same output schema across
-   all baselines.
-4. Run ablations on:
-
-- delayed consensus vs early synthesis
-- maturity stop on/off
-- completeness safeguard on/off
-- literature grounding strength on/off
-- fallback salvage on/off
-
-5. Add a dedicated cost-quality tradeoff plot after the broader batch is stable.
+Only after that should we launch the first protocol-consistent multi-system
+batch.

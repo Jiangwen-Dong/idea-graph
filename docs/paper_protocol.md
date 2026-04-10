@@ -1,75 +1,222 @@
 # Paper Protocol
 
-This document fixes the experimental protocol for the current repository so the
-same benchmark-facing task, output schema, and comparison setup can be reused
-across methods.
+This document fixes the paper-facing protocol for the current repository under
+the theme of `scientific ideation`. The goal is to keep the benchmark task,
+method comparison, and evaluation design consistent with recent scientific
+idea-generation literature while staying honest about what our repository can
+and cannot currently measure.
 
 ## Scope
 
-The project studies scientific idea generation under a shared, benchmark-aware
-interface.
+The paper studies `scientific ideation`, not the entire autonomous-research
+stack.
 
-- Input: a benchmark-defined topic plus the benchmark-provided context packet
-- Output: one structured research idea in a fixed schema
-- Primary setting: benchmark-faithful ideation
-- Secondary setting: human blind review on a balanced subset
+- Input:
+  a benchmark-defined ideation prompt plus the benchmark-permitted context
+- Output:
+  one structured research idea
+- Main claim:
+  explicit collaborative state tracking improves scientific ideation quality
+- Non-claim:
+  this paper does not claim end-to-end autonomous research automation
 
 ## Benchmarks
 
-### Core Public Benchmarks
+### Main Benchmark
 
 1. `AI_Idea_Bench_2025`
 
-- Role in paper: primary benchmark
-- Why it is included:
-  - strong task match for literature-grounded ideation
-  - explicit inspiration-to-target construction
-  - hidden target-paper fields for automatic evaluation
+- Role in paper:
+  primary benchmark
+- Why it is the best fit:
+  - directly targets literature-grounded AI research ideation
+  - uses inspiration-to-target construction rather than unconstrained prompting
+  - provides hidden target-paper fields for benchmark-native automatic scoring
   - large scale with `3,495` target papers
 - Caveat:
   - AI-domain only
-  - partly reconstructive rather than purely open-ended
+  - partly reconstructive because evaluation is anchored to held-out target
+    papers
 
-2. `LiveIdeaBench v2`
+### Secondary Benchmark
 
-- Role in paper: secondary robustness benchmark
+2. `LiveIdeaBench`
+
+- Role in paper:
+  secondary robustness benchmark
 - Why it is included:
-  - broad scientific-domain coverage
-  - minimal-context creativity stress test
-  - useful complement to literature-grounded ideation
+  - broader scientific-domain coverage
+  - tests keyword-conditioned ideation under much lighter context
+  - complements the literature-grounded setting of `AI_Idea_Bench_2025`
 - Caveat:
-  - not literature-grounded in the same way as `AI_Idea_Bench_2025`
+  - not literature-grounded in the same sense as `AI_Idea_Bench_2025`
   - should be interpreted as a robustness benchmark rather than the main task
 
-### Human Evaluation Layer
+### Non-Core Benchmarks
 
-Use expert blind review on a balanced subset from both public benchmarks.
+These are useful references, but they should not be the main paper benchmarks.
 
-- Suggested size:
-  - `60` instances total
-  - balanced across the two benchmarks
-  - `3` reviewers per idea
+- `IdeaBench`
+  useful as prior benchmark work, but less aligned with our target setting than
+  `AI_Idea_Bench_2025`
+- `ResearchBench`
+  promising as a diagnostic benchmark for inspiration retrieval and composition,
+  but not necessary for the main paper
+- `ScienceAgentBench` and `MLR-Bench`
+  broader research-agent or execution benchmarks rather than pure scientific
+  ideation benchmarks
+
+## Baselines
+
+### Main Table Baselines
+
+The recommended main comparison set is:
+
+1. `direct`
+
+- one-pass single-agent idea generation
+- serves as the lower-bound baseline
+
+2. `self-refine`
+
+- single-agent draft, critique, and revision
+- isolates iterative refinement without explicit multi-agent collaboration
+
+3. `ai-researcher`
+
+- preferred ideation-specific literature baseline
+- should refer to the ICLR 2025 human-study ideation line rather than a broad
+  end-to-end autonomous-research stack
+- this is the strongest direct baseline for literature-grounded scientific
+  ideation
+
+4. `virsci`
+
+- preferred multi-agent literature baseline
+- closest prior work to our collaboration-centered positioning
+- if the official system cannot be controlled in a benchmark-faithful way, do
+  not silently replace it with a proxy in the main table; either fix the
+  integration or move it out of the headline comparison
+
+5. `ours-eig`
+
+- the main proposed method
+- should be described as `Evolving Idea Graphs`, not as delayed consensus
+
+### Appendix Or Optional Baselines
+
+- `scipip`
+  useful as a structured retrieval-and-decomposition baseline if the official
+  code path is stable
+- `Nova`
+  useful as a search/planning ideation baseline if reproducible
+
+### Development-Only Proxy Baselines
+
+The local proxy wrappers remain useful for internal iteration, but they should
+not be the headline evidence when exact or paper-faithful baselines are
+available.
+
+- `ai-researcher-proxy`
+- `scipip-proxy`
+- `virsci-proxy`
+
+These must be labeled explicitly as `proxy` or `local approximation` whenever
+reported.
+
+## Shared Input Contract
+
+All compared methods must consume the same benchmark-facing information budget.
+
+### `AI_Idea_Bench_2025`
+
+Allowed during generation:
+
+- benchmark topic
+- benchmark-provided inspiration or reference titles
+- benchmark-safe reference snippets
+
+Blocked during generation:
+
+- target paper title
+- gold motivation
+- gold method summary
+- held-out target-paper snippets
+
+Reason:
+
+- these fields are evaluation targets in the benchmark protocol
+- exposing them during generation creates label leakage
+
+### `LiveIdeaBench`
+
+Allowed during generation:
+
+- benchmark keyword prompt
+
+Blocked during generation:
+
+- scored benchmark idea text
+- critique text
+- held-out benchmark annotations
+
+Reason:
+
+- the benchmark should remain a keyword-conditioned ideation task
+
+## Shared Output Contract
+
+Every method should produce exactly one structured idea with the following
+paper-facing sections:
+
+- `Title`
+- `Problem`
+- `Existing Methods and Limitation`
+- `Motivation`
+- `Core Idea / Hypothesis`
+- `Method Sketch`
+- `Experiment Plan`
+- `Expected Contribution`
+- `Risk / Caveat`
+
+The repository serialization maps these into:
+
+- `title`
+- `problem`
+- `existing_methods`
+- `motivation`
+- `hypothesis`
+- `method`
+- `evaluation`
+- `significance`
+- `caveats`
 
 ## Evaluation
 
-### Automatic Metrics
+The paper should use a `three-layer evaluation design`.
 
-Use benchmark-native automatic metrics instead of forcing one artificial metric
-across all datasets.
+### Layer 1: Benchmark-Native Automatic Metrics
+
+These are the primary automatic metrics.
 
 `AI_Idea_Bench_2025`
 
-- `IMCQ`
-- `I2I`
 - `I2T`
+- `I2I`
+- `IMCQ`
+- `IC`
 - `NA`
 - `FA`
 - `FPS`
-- `IC`
-  Note: `IC` is a cross-system batch metric and should be computed over matched
-  run sets, not single runs.
 
-`LiveIdeaBench v2`
+Notes:
+
+- `IC` is a cross-system batch metric and should be computed on matched run
+  pools rather than on single runs
+- if some released metrics require unavailable assets or infrastructure, they
+  must be marked unavailable rather than silently approximated
+
+`LiveIdeaBench`
 
 - `Originality`
 - `Feasibility`
@@ -78,7 +225,7 @@ across all datasets.
 - `Clarity`
 - `Average`
 
-### Shared Human Metrics
+### Layer 2: Shared Human Blind Review
 
 Use the same human rubric on both benchmarks:
 
@@ -86,206 +233,75 @@ Use the same human rubric on both benchmarks:
 - `Significance`
 - `Feasibility`
 - `Clarity`
+- `Context Adherence`
 - `Overall`
 
-### Supplementary Process Metrics
+Recommended evaluation subset:
 
-Treat process metrics as supplementary validation and ablation evidence.
+- balanced instances from both benchmarks
+- `3` reviewers per idea when feasible
+
+### Layer 3: Supplementary Mechanism And Cost Analysis
+
+These are not headline outcome metrics, but they are necessary to validate the
+collaboration mechanism.
 
 - `Evidence coverage`
 - `Contradiction resolution`
+- `Claim-chain completeness`
+- `Rounds to maturity`
 - `Action diversity`
 - `API and token cost`
+- `Wall-clock runtime`
 
-These metrics validate the collaboration mechanism, but they are not the main
-scientific outcome metrics.
+## Role Of The Local Deterministic Evaluator
 
-## Baselines
+The repository's local deterministic evaluator is useful for development,
+ablation debugging, and rapid iteration, but it should not be the main paper
+evidence.
 
-### Runnable Local Baselines
-
-These baselines are implemented directly in this repository and share the same
-benchmark-mode input and output schema.
-
-1. `ours-delayed-consensus`
-
-- Multi-agent typed-graph collaboration with delayed consensus
-- This is the main method
-
-2. `direct`
-
-- One-pass single-agent idea generation
-- Lower bound baseline
-
-3. `self-refine`
-
-- Single-agent draft, critique, and revision
-- Control baseline for iterative improvement without multi-agent structure
-
-### Exact External Baseline Wrappers
-
-These wrappers call the official upstream repositories and require an external
-configuration file.
-
-4. `ai-researcher`
-
-- Exact external wrapper for the ICLR `AI-Researcher` baseline
-- This is the preferred literature baseline when reporting faithful external
-  comparisons
-
-5. `scipip`
-
-- Guarded external wrapper for `SciPIP`
-- Use only when its external environment and data dependencies are configured
-  correctly
-
-6. `virsci`
-
-- Guarded external wrapper for `Virtual-Scientists`
-- Not currently benchmark-faithful for fixed-topic public benchmarks, so it
-  should not be used in the main benchmark table until upstream control is
-  improved
-
-### Proxy Wrappers For Prior Literature
-
-The repository also exposes prompt-style proxy wrappers for prior systems. These
-are not exact reproductions of the original codebases and should be labeled as
-local approximations unless replaced by direct external integrations.
-
-7. `ai-researcher-proxy`
-
-- Literature-grounded lightweight reproduction with seed ideation, proposal
-  expansion, and candidate ranking
-- Intended to approximate the style of the ICLR `AI-Researcher` ideation
-  pipeline
-
-`ResearchAgent`
-
-- excluded from the current baseline table
-- reason:
-  - it is a different system than `AI-Researcher`
-  - it is temporarily banned from the current paper protocol
-
-8. `scipip-proxy`
-
-- Structured single-agent wrapper that emphasizes motivation and experiment-plan
-  decomposition
-- Intended to approximate the style of `SciPIP`
-- Recommended as the low-cost structured proxy baseline when broad local sweeps
-  are needed
-
-9. `virsci-proxy`
-
-- Multi-agent wrapper using the delayed-consensus engine with a more discussion-
-  oriented collaboration style
-- Intended to approximate the style of `VirSci`
-- Higher-cost than the single-agent baselines, so it is better suited to
-  smaller validation subsets than to large exploratory sweeps
-
-## Shared Input Contract
-
-All methods must consume the same benchmark-facing information budget.
-
-### `AI_Idea_Bench_2025`
-
-Allowed input:
-
-- benchmark topic
-- inspiration-paper titles
-- benchmark-provided reference snippets
-
-Blocked during generation:
-
-- target paper title
-- gold motivation
-- gold method summary
-- target-paper snippets
-
-Reason:
-
-- these fields are evaluation targets in the benchmark protocol
-- exposing them during generation would create label leakage
-
-### `LiveIdeaBench v2`
-
-Allowed input:
-
-- benchmark keyword prompt
-
-Blocked during generation:
-
-- scored benchmark idea text
-- benchmark critique text
-
-Reason:
-
-- the benchmark should remain a keyword-conditioned ideation task
-
-## Shared Output Contract
-
-Every method must produce exactly one final structured idea with the following
-sections:
-
-- `Title`
-- `Problem`
-- `Existing Methods and Limitation`
-- `Core Idea / Hypothesis`
-- `Method Sketch`
-- `Experiment Plan`
-- `Expected Contribution`
-- `Risk / Caveat`
-
-The repository serialization maps this into the internal fields:
-
-- `title`
-- `problem`
-- `existing_methods`
-- `hypothesis`
-- `method`
-- `evaluation`
-- `significance`
-- `caveats`
-
-The `motivation` field may still be used internally, but the paper-facing output
-should avoid abstract-style repetition.
+- keep it for controlled internal comparison
+- do not use its merged heuristic score as the headline paper metric
+- do not combine graph-process scores with benchmark-outcome scores in the main
+  result table
 
 ## Fairness Controls
 
-Use the same settings across methods in the main comparison whenever possible.
+The main comparison should keep the following fixed whenever possible:
 
 - same backbone model family
 - same benchmark-mode input packet
 - same output schema
-- no hidden oracle fields or benchmark leakage during generation
-- cost reported explicitly as a separate analysis axis rather than silently mixed into quality
+- no hidden benchmark leakage during generation
 - anonymized outputs for human review
 
-We do not require the main table to be matched-budget. The main paper claim
-should be quality under a shared benchmark-facing task definition; token and
-API cost should be reported alongside the quality table and, when useful, in a
-dedicated cost-quality tradeoff analysis.
+The main table does `not` need to be matched-budget. Quality is the primary
+claim. Cost should be reported explicitly as a separate axis rather than folded
+into the main quality score.
 
-## Recommended Main Table
+## Recommended Main Experimental Table
 
 Report:
 
-- `AI_Idea_Bench_2025` automatic metrics
-- `LiveIdeaBench v2` automatic metrics
-- human blind-review subset scores
+- benchmark-native automatic metrics on `AI_Idea_Bench_2025`
+- benchmark-native automatic metrics on `LiveIdeaBench`
+- shared human blind-review scores on a balanced subset
 
-Move graph-process diagnostics to ablations or supplementary analysis.
+Move graph diagnostics, fallback analysis, and cost analysis to dedicated
+analysis tables or the appendix.
 
 ## Repo Status
 
-The current repository implementation now supports:
+The repository currently supports:
 
-- `AI-Researcher` as the named proxy baseline instead of `ResearchAgent`
+- benchmark-mode input packets for `AI_Idea_Bench_2025` and `LiveIdeaBench`
 - exact external baseline entrypoints for `ai-researcher`, `scipip`, and
   `virsci`
-- benchmark-native scoring artifacts via `benchmark_native_evaluation.json`
-  and `benchmark_native_evaluation.md`
+- local proxy wrappers for rapid iteration
+- local deterministic evaluation artifacts
+- optional benchmark-native evaluation artifacts
 
-The current benchmark-native scorer is strongest on the public prompt-based
-metrics that can be reproduced directly from released assets. Metrics that need
-extra benchmark preprocessing or cross-system pools are exposed with explicit
-availability flags instead of being silently approximated.
+The paper-facing recommendation is to prioritize exact or benchmark-faithful
+baselines and benchmark-native scoring, while treating local proxies and local
+heuristic scores as development tools unless they are explicitly labeled
+otherwise.

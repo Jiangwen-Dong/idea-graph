@@ -1,0 +1,28 @@
+{
+  "ai-researcher": {
+    "enabled": true,
+    "execution_mode": "openai-compatible-bridge",
+    "workspace_root": ".tmp-external-baseline-runs",
+    "ideas_n": 4,
+    "openai_compatible": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "model": "qwen3-8b",
+      "provider": "dashscope",
+      "reasoning_mode": "auto",
+      "temperature": 0.2,
+      "max_tokens": 1400,
+      "timeout_seconds": 90,
+      "max_retries": 2
+    },
+    "repo_path": ".tmp-baselines/AI-Researcher"
+  },
+  "scipip": {
+    "enabled": false,
+    "repo_path": ".tmp-baselines/SciPIP"
+  },
+  "virsci": {
+    "enabled": false,
+    "repo_path": ".tmp-baselines/Virtual-Scientists"
+  }
+}

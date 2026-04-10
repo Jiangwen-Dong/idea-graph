@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import re
 from typing import Any, Callable
 
 from .agent_backend import OpenAICompatibleCollaborationBackend
 from .benchmark_mode import apply_io_mode
 from .engine import emit_progress, run_experiment
-from .external_baselines import run_external_baseline
 from .literature_grounding import build_literature_grounding
 from .models import FinalProposal, IdeaGraph
 
@@ -24,12 +24,26 @@ class BaselineSpec:
     candidate_count: int = 1
 
 
+BASELINE_ALIASES: dict[str, str] = {
+    "ours-delayed-consensus": "ours-eig",
+}
+
+
+def canonical_baseline_name(name: str) -> str:
+    cleaned = str(name).strip()
+    return BASELINE_ALIASES.get(cleaned, cleaned)
+
+
+def is_eig_baseline_name(name: str) -> bool:
+    return canonical_baseline_name(name) == "ours-eig"
+
+
 BASELINE_SPECS: dict[str, BaselineSpec] = {
-    "ours-delayed-consensus": BaselineSpec(
-        name="ours-delayed-consensus",
-        display_name="Ours Delayed Consensus",
-        strategy="delayed_consensus",
-        description="Typed-graph multi-agent collaboration with delayed consensus.",
+    "ours-eig": BaselineSpec(
+        name="ours-eig",
+        display_name="Ours (EIG)",
+        strategy="evolving_graph",
+        description="Evolving Idea Graph multi-agent collaboration with maturity-based commitment.",
         prompt_style="ours",
     ),
     "direct": BaselineSpec(
@@ -86,7 +100,7 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
     "virsci-proxy": BaselineSpec(
         name="virsci-proxy",
         display_name="VirSci Proxy",
-        strategy="delayed_consensus",
+        strategy="evolving_graph",
         description="Local proxy wrapper for a discussion-oriented multi-agent baseline.",
         is_proxy=True,
         proxy_target="VirSci",
@@ -97,7 +111,7 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
 
 PROMPT_STYLE_GUIDANCE = {
     "ours": (
-        "Preserve delayed consensus, typed intermediate claims, disagreement tracking, and section-level rigor."
+        "Preserve typed intermediate claims, disagreement tracking, maturity-based commitment, and section-level rigor."
     ),
     "direct": (
         "Produce one concise, strong idea directly from the provided packet without extra self-critique."
@@ -118,6 +132,7 @@ PROMPT_STYLE_GUIDANCE = {
 
 
 def get_baseline_spec(name: str) -> BaselineSpec:
+    name = canonical_baseline_name(name)
     try:
         return BASELINE_SPECS[name]
     except KeyError as exc:
@@ -125,8 +140,11 @@ def get_baseline_spec(name: str) -> BaselineSpec:
         raise KeyError(f"Unknown baseline '{name}'. Available baselines: {options}") from exc
 
 
-def baseline_choices() -> list[str]:
-    return sorted(BASELINE_SPECS)
+def baseline_choices(*, include_aliases: bool = True) -> list[str]:
+    names = list(BASELINE_SPECS)
+    if include_aliases:
+        names.extend(BASELINE_ALIASES)
+    return sorted(set(names))
 
 
 def attach_baseline_metadata(
@@ -135,9 +153,12 @@ def attach_baseline_metadata(
     baseline_name: str,
     io_mode: str = "auto",
 ):
-    baseline = get_baseline_spec(baseline_name)
+    requested_baseline_name = str(baseline_name).strip()
+    baseline = get_baseline_spec(requested_baseline_name)
     instance = apply_io_mode(instance, io_mode=io_mode)
     metadata = dict(instance.metadata)
+    if requested_baseline_name != baseline.name:
+        metadata["baseline_requested_name"] = requested_baseline_name
     metadata["baseline_name"] = baseline.name
     metadata["baseline_display_name"] = baseline.display_name
     metadata["baseline_strategy"] = baseline.strategy
@@ -228,9 +249,13 @@ def _proposal_as_prompt_payload(proposal: FinalProposal) -> dict[str, str]:
 
 def _topic_text(graph: IdeaGraph) -> str:
     cleaned = _clean_text(graph.topic).rstrip(".")
-    prefix = "The topic of this paper is "
-    if cleaned.startswith(prefix):
-        cleaned = cleaned[len(prefix) :].strip()
+    prefixes = (
+        "The topic of this paper is ",
+        "Ideation topic keyword: ",
+    )
+    for prefix in prefixes:
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].strip()
     return cleaned or _clean_text(graph.topic)
 
 
@@ -364,43 +389,68 @@ def _unique_strings(values: list[str]) -> list[str]:
 
 
 def _ai_researcher_anchor_terms(graph: IdeaGraph) -> list[str]:
-    topic = _topic_text(graph)
-    corpus = " ".join(
+    return _baseline_anchor_terms(graph)[:6]
+
+
+def _ai_researcher_context_corpus(graph: IdeaGraph) -> str:
+    parts: list[str] = [_topic_text(graph)]
+    keyword = _coerce_string(
+        _generation_metadata(graph).get("keyword")
+        or graph.metadata.get("keyword")
+    )
+    if keyword:
+        parts.append(keyword)
+    parts.extend(
         [
-            topic,
-            *[
-                f"{item.get('title', '')} {item.get('snippet', '')}"
-                for item in _reference_packet(graph)
-            ],
+            f"{item.get('title', '')} {item.get('snippet', '')}"
+            for item in _reference_packet(graph)
         ]
-    ).lower()
-    anchors = [topic]
-    candidate_phrases = [
-        "language field",
-        "radiance field",
-        "gaussian splatting",
-        "open-vocabulary",
-        "language embedding",
-        "clip embedding",
-        "hierarchical semantics",
-        "segmentation",
-        "query",
-        "localization",
-    ]
-    for phrase in candidate_phrases:
-        if phrase in corpus and phrase not in anchors:
-            anchors.append(phrase)
-    return anchors[:6]
+    )
+    parts.extend(_reference_support_texts(graph))
+    return " ".join(parts).lower()
+
+
+def _is_ai_researcher_language_field_context(graph: IdeaGraph) -> bool:
+    corpus = _ai_researcher_context_corpus(graph)
+    return any(
+        term in corpus
+        for term in (
+            "language field",
+            "radiance field",
+            "language embedded radiance",
+            "lerf",
+            "open-vocabulary scene understanding",
+        )
+    )
 
 
 def _ai_researcher_focus_constraints(graph: IdeaGraph) -> list[str]:
     topic = _topic_text(graph)
     anchors = _ai_researcher_anchor_terms(graph)
     anchor_hint = ", ".join(anchors[1:]) if len(anchors) > 1 else topic
+    if _is_ai_researcher_language_field_context(graph):
+        contribution_hint = (
+            "Prefer contributions about language or radiance field representation, "
+            "querying, grounding, efficiency, or semantic structure."
+        )
+        drift_hint = (
+            "Penalize drift into generic text-to-3D generation, generic 3D reconstruction, "
+            "generic scene synthesis, or temporal/video extensions unless the packet directly "
+            "supports that shift."
+        )
+    else:
+        contribution_hint = (
+            "Prefer one concrete technical idea whose mechanism and evaluation stay close to the "
+            "benchmark topic and visible references."
+        )
+        drift_hint = (
+            "Penalize drift into adjacent task families, unsupported modality shifts, or broad "
+            "generic proposals that are not justified by the packet."
+        )
     return [
         f"Keep the main task tightly centered on '{topic}', not an adjacent task family.",
-        "Prefer contributions about 3D language/radiance field representation, querying, grounding, efficiency, or semantic structure.",
-        "Penalize drift into generic text-to-3D generation, generic 3D reconstruction, generic scene synthesis, or temporal/video extensions unless the packet directly supports that shift.",
+        contribution_hint,
+        drift_hint,
         f"Use the packet anchors when helpful: {anchor_hint}.",
         "Do not treat cited method papers as datasets. Use method papers as baselines or inspiration; mention datasets only when the packet clearly indicates a benchmark dataset.",
         "Favor ideas whose evaluation can be justified directly from the benchmark topic and visible references.",
@@ -429,37 +479,80 @@ def _ai_researcher_topic_fidelity_score(graph: IdeaGraph, proposal: FinalProposa
         return 0.0
 
     anchor_hits = sum(1 for term in anchors if term and term.lower() in text)
-    score = anchor_hits / len(anchors)
+    score = 0.45 * (anchor_hits / len(anchors))
 
     topic = _topic_text(graph).lower()
+    context_corpus = _ai_researcher_context_corpus(graph)
+    title_problem_method = " ".join([proposal.title, proposal.problem, proposal.method]).lower()
+    evaluation_text = proposal.evaluation.lower()
     if topic and topic in text:
         score += 0.25
-    if "3d language field" in title_text:
+    keyword = _coerce_string(
+        _generation_metadata(graph).get("keyword")
+        or graph.metadata.get("keyword")
+    ).lower()
+    if keyword and keyword in text:
         score += 0.25
-    elif "language field" in title_text:
-        score += 0.18
-    else:
-        score -= 0.18
-    if "3d language field" in problem_text or "language field modeling" in problem_text:
-        score += 0.18
-    if "language field" in hypothesis_text or "language field" in method_text:
-        score += 0.12
-    if "modeling" in title_text or "modeling" in problem_text or "modeling" in method_text:
-        score += 0.08
 
-    if "language field" in topic:
+    topical_terms = [topic, *anchors[1:]]
+    topical_hits = sum(1 for term in topical_terms if term and term.lower() in title_problem_method)
+    score += min(0.18, 0.06 * topical_hits)
+
+    if any(
+        signal in evaluation_text
+        for signal in ("benchmark", "dataset", "metric", "accuracy", "calibration", "ablation", "precision", "recall")
+    ):
+        score += 0.06
+
+    unsupported_drift_terms = {
+        "language field": ("language field", "3d language field"),
+        "radiance field": ("radiance field", "nerf"),
+        "gaussian splatting": ("gaussian splatting",),
+        "text-to-3d": ("text-to-3d",),
+        "scene generation": ("scene generation", "scene synthesis"),
+        "3d reconstruction": ("3d reconstruction",),
+        "temporal": ("temporal", "video-based"),
+    }
+    for context_term, proposal_terms in unsupported_drift_terms.items():
+        if context_term not in context_corpus and any(term in text for term in proposal_terms):
+            score -= 0.12
+
+    if _is_ai_researcher_language_field_context(graph):
+        if "3d language field" in title_text:
+            score += 0.25
+        elif "language field" in title_text:
+            score += 0.18
+        else:
+            score -= 0.18
+        if "3d language field" in problem_text or "language field modeling" in problem_text:
+            score += 0.18
+        if "language field" in hypothesis_text or "language field" in method_text:
+            score += 0.12
+        if "modeling" in title_text or "modeling" in problem_text or "modeling" in method_text:
+            score += 0.08
+
         if any(term in text for term in ("language field", "radiance field", "language-embedded radiance")):
             score += 0.25
         else:
             score -= 0.35
 
-    for positive_term in ("open-vocabulary", "gaussian splatting", "localization"):
-        if positive_term in text:
-            score += 0.08
+        for positive_term in ("open-vocabulary", "gaussian splatting", "localization"):
+            if positive_term in text:
+                score += 0.08
 
-    for drift_term in ("text-to-3d", "scene generation", "3d reconstruction", "temporal", "video-based"):
-        if drift_term in text:
-            score -= 0.12
+        for drift_term in ("text-to-3d", "scene generation", "3d reconstruction", "temporal", "video-based"):
+            if drift_term in text:
+                score -= 0.12
+    else:
+        topic_tokens = [
+            token
+            for token in re.findall(r"[a-z0-9][a-z0-9-]+", topic)
+            if len(token) >= 5
+        ]
+        distinct_hits = sum(1 for token in topic_tokens if token in title_problem_method)
+        score += min(0.16, 0.08 * distinct_hits)
+        if keyword and keyword not in title_problem_method and keyword not in evaluation_text:
+            score -= 0.10
 
     return max(0.0, min(1.0, score))
 
@@ -556,7 +649,7 @@ def _baseline_postprocess_proposal(
     baseline: BaselineSpec,
     proposal: FinalProposal,
 ) -> FinalProposal:
-    if baseline.prompt_style == "ai_researcher_proxy":
+    if baseline.prompt_style == "ai_researcher_proxy" and _is_ai_researcher_language_field_context(graph):
         return _ai_researcher_proxy_postprocess_proposal(graph, proposal)
 
     topic = _topic_text(graph)
@@ -1397,12 +1490,12 @@ def run_baseline_experiment(
 ):
     baseline = get_baseline_spec(baseline_name)
     if (
-        _coerce_string(instance.metadata.get("baseline_name")) != baseline_name
+        _coerce_string(instance.metadata.get("baseline_name")) != baseline.name
         or "benchmark_input_packet" not in instance.metadata
     ):
         instance = attach_baseline_metadata(instance, baseline_name=baseline_name, io_mode="auto")
 
-    if baseline.strategy == "delayed_consensus":
+    if baseline.strategy == "evolving_graph":
         return run_experiment(
             topic=instance.topic,
             literature=list(instance.literature),
@@ -1425,6 +1518,8 @@ def run_baseline_experiment(
     )
 
     if baseline.strategy == "external":
+        from .external_baselines import run_external_baseline
+
         emit_progress(
             graph,
             progress_callback,

@@ -11,16 +11,19 @@ if str(SRC) not in sys.path:
 
 from idea_graph.agent_backend import (
     _action_system_prompt,
+    _action_user_prompt,
     _dynamic_allowed_actions,
+    _postprocess_final_proposal,
     _prompt_safe_metadata,
     _resolve_symbolic_reference_text,
     _salvage_action_decision,
     _seed_system_prompt,
+    _seed_user_prompt,
     _synthesis_system_prompt,
 )
 from idea_graph.collaboration_protocol import resolve_round_phase
 from idea_graph.engine import build_seed_graphs, create_edge, merge_seed_graphs
-from idea_graph.models import IdeaGraph
+from idea_graph.models import FinalProposal, IdeaGraph
 
 
 class AgentBackendPromptTests(unittest.TestCase):
@@ -63,6 +66,40 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertIn('"existing_methods"', prompt)
         self.assertIn('"motivation"', prompt)
         self.assertIn("Do not output an abstract field", prompt)
+        self.assertIn("Avoid generic method phrases", prompt)
+
+    def test_action_user_prompt_includes_evidence_candidates_and_benchmark_focus(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is 3D language field modeling.",
+            literature=["3D Gaussian Splatting", "LERF"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_input_packet": {
+                    "topic": "The topic of this paper is 3D language field modeling.",
+                    "reference_packet": [
+                        {"title": "LERF", "snippet": "CLIP embeddings support long-tail open-vocabulary queries."}
+                    ],
+                },
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "LERF",
+                            "method": "LERF supports long-tail open-vocabulary queries.",
+                            "evaluation": "Evaluate on the LERF dataset and report localization accuracy.",
+                        }
+                    ]
+                },
+            },
+        )
+        build_seed_graphs(graph)
+        merge_seed_graphs(graph)
+
+        prompt = _action_user_prompt(graph, "Round2", "MechanismProposer")
+
+        self.assertIn('"evidence_candidates"', prompt)
+        self.assertIn('"benchmark_focus"', prompt)
+        self.assertIn('LERF', prompt)
+        self.assertIn('localization accuracy', prompt)
 
     def test_prompt_safe_metadata_hides_target_paper_oracle_fields(self) -> None:
         safe = _prompt_safe_metadata(
@@ -175,6 +212,110 @@ class AgentBackendPromptTests(unittest.TestCase):
         if kind == "attach_evidence":
             self.assertEqual(target_ids, [target.id])
             self.assertTrue(payload.get("evidence"))
+
+    def test_postprocess_final_proposal_adds_safe_grounding_specificity(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is 3D language field modeling.",
+            literature=["3D Gaussian Splatting", "LERF"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "LERF",
+                            "method": "LERF uses CLIP features for open-vocabulary 3D querying.",
+                            "evaluation": "Evaluate on the LERF dataset and report localization accuracy and IoU.",
+                        },
+                        {
+                            "resolved_title": "3D Gaussian Splatting",
+                            "method": "3D Gaussian Splatting enables efficient radiance-field rendering.",
+                            "evaluation": "Report accuracy and IoU on held-out 3D scene understanding tasks.",
+                        },
+                    ]
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Language-Grounded 3D Fields",
+            problem="Existing methods remain limited.",
+            existing_methods="Current methods remain limited.",
+            motivation="A more grounded 3D language model is needed.",
+            hypothesis="A better graph could help.",
+            method="Use a hybrid model to improve performance.",
+            evaluation="Compare against strong baselines using task-relevant datasets and metrics.",
+            significance="This could help.",
+            caveats="It may fail.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertIn("LERF", processed.existing_methods)
+        self.assertIn("LERF dataset", processed.evaluation)
+        self.assertTrue("accuracy" in processed.evaluation or "IoU" in processed.evaluation)
+        self.assertIn("ablation", processed.evaluation.casefold())
+
+    def test_seed_prompt_exposes_weak_context_scaffold_for_keyword_only_benchmarks(self) -> None:
+        graph = IdeaGraph(
+            topic="Ideation topic keyword: meteorology",
+            literature=[
+                "Benchmark keyword: meteorology",
+                "This benchmark row provides a keyword prompt rather than retrieved literature.",
+            ],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "meteorology",
+                "benchmark_input_packet": {
+                    "benchmark": "liveideabench",
+                    "topic": "Ideation topic keyword: meteorology",
+                    "keyword": "meteorology",
+                    "reference_packet": [],
+                },
+            },
+        )
+
+        prompt = _seed_user_prompt(graph, "MechanismProposer")
+
+        self.assertIn('"weak_context_mode": true', prompt.lower())
+        self.assertIn('"weak_context_scaffold"', prompt)
+        self.assertIn('meteorology', prompt)
+        self.assertIn('divergence_axes', prompt)
+
+    def test_postprocess_final_proposal_uses_weak_context_scaffold_to_reduce_generic_keyword_only_evaluation(self) -> None:
+        graph = IdeaGraph(
+            topic="Ideation topic keyword: meteorology",
+            literature=[
+                "Benchmark keyword: meteorology",
+                "This benchmark row provides a keyword prompt rather than retrieved literature.",
+            ],
+            metadata={
+                "benchmark": "liveideabench",
+                "keyword": "meteorology",
+                "benchmark_input_packet": {
+                    "benchmark": "liveideabench",
+                    "topic": "Ideation topic keyword: meteorology",
+                    "keyword": "meteorology",
+                    "reference_packet": [],
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Hybrid Models for Weather Prediction",
+            problem="Current approaches remain limited.",
+            existing_methods="For meteorology, plausible existing directions include common directions.",
+            motivation="Better weather prediction matters.",
+            hypothesis="A better model can help.",
+            method="Use a hybrid model to improve performance.",
+            evaluation="Evaluate on realistic benchmark tasks for meteorology, compare against strong data-driven and hybrid baselines, report task-specific quantitative metrics, and include ablations over the main components.",
+            significance="This could help meteorology.",
+            caveats="It may fail.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertIn("meteorology", processed.existing_methods.lower())
+        self.assertNotIn("realistic benchmark tasks", processed.evaluation.lower())
+        self.assertNotIn("task-specific quantitative metrics", processed.evaluation.lower())
+        self.assertTrue(any(metric.lower() in processed.evaluation.lower() for metric in ("rmse", "mae", "crps")))
 
 
 if __name__ == "__main__":
