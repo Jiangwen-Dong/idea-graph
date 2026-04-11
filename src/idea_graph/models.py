@@ -74,6 +74,10 @@ class UtilityBreakdown:
     coherence: float = 0.0
     evidence: float = 0.0
     novelty: float = 0.0
+    benchmark_specificity: float = 0.0
+    experiment_alignment: float = 0.0
+    role_balance: float = 0.0
+    reference_copy_penalty: float = 0.0
     contradiction_penalty: float = 0.0
     open_risk_penalty: float = 0.0
     size_penalty: float = 0.0

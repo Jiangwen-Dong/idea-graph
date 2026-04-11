@@ -98,6 +98,15 @@ def _looks_noisy_sentence(text: str) -> bool:
         "paper introduces",
         "novel dataset captured",
         "captured in diverse real scenarios",
+        "task instruction (see examples above)",
+        "a11y-tree",
+        "keyboardmouse",
+        "action observation input predict",
+        "package_name:",
+        "view_id_resource_name",
+        "bounds_in_screen",
+        "class_name:",
+        "content_description:",
     )
     lowered = cleaned.casefold()
     if any(marker in lowered for marker in noisy_markers):
@@ -212,18 +221,45 @@ def _method_summary(metadata: dict[str, Any]) -> str:
     return _clean_text(_method_payload(metadata).get("targeted_designs_summary", ""))
 
 
+def _is_prompt_safe_metadata(metadata: dict[str, Any]) -> bool:
+    oracle_keys = {
+        "raw_record",
+        "target_paper",
+        "target_paper_path",
+        "motivation",
+        "method_summary",
+    }
+    return not any(key in metadata for key in oracle_keys)
+
+
+def _contains_required_signal(text: str, signals: tuple[str, ...]) -> bool:
+    lowered = text.casefold()
+    for signal in signals:
+        cleaned_signal = _clean_text(signal).casefold()
+        if not cleaned_signal:
+            continue
+        if re.fullmatch(r"[a-z0-9]+", cleaned_signal):
+            if re.search(rf"(?<![a-z0-9]){re.escape(cleaned_signal)}(?![a-z0-9])", lowered):
+                return True
+            continue
+        if cleaned_signal in lowered:
+            return True
+    return False
+
+
 def _reference_snippet_signal_text(
     metadata: dict[str, Any],
     *,
     preferred_fields: tuple[str, ...],
     limit: int = 4,
+    require_signal: tuple[str, ...] = (),
 ) -> str:
     snippets = _reference_paper_snippets(metadata)[:limit]
     fragments: list[str] = []
     for snippet in snippets:
         for field_name in preferred_fields:
             value = _clean_text(snippet.get(field_name, ""))
-            if value:
+            if value and (not require_signal or _contains_required_signal(value, require_signal)):
                 fragments.append(value)
     return " ".join(fragments)
 
@@ -232,6 +268,12 @@ def _datasets_text(metadata: dict[str, Any]) -> str:
     value = _clean_text(_method_payload(metadata).get("datasets", ""))
     if value:
         return value
+    if _is_prompt_safe_metadata(metadata):
+        return _reference_snippet_signal_text(
+            metadata,
+            preferred_fields=("evaluation",),
+            require_signal=("evaluate on", "evaluated on", "dataset", "benchmark", "task"),
+        )
     return _reference_snippet_signal_text(
         metadata,
         preferred_fields=("evaluation", "method", "abstract", "introduction", "text_excerpt"),
@@ -242,6 +284,12 @@ def _metrics_text(metadata: dict[str, Any]) -> str:
     value = _clean_text(_method_payload(metadata).get("metrics", ""))
     if value:
         return value
+    if _is_prompt_safe_metadata(metadata):
+        return _reference_snippet_signal_text(
+            metadata,
+            preferred_fields=("evaluation",),
+            require_signal=("report", "metric", "accuracy", "f1", "iou", "rate", "error", "score"),
+        )
     return _reference_snippet_signal_text(
         metadata,
         preferred_fields=("evaluation", "method", "abstract", "introduction", "text_excerpt"),
@@ -307,7 +355,16 @@ def _dataset_items(metadata: dict[str, Any]) -> list[str]:
         if not cleaned or "[" in cleaned or cleaned.casefold().startswith("such methods include"):
             return ""
         lowered = cleaned.casefold()
-        if lowered.startswith(("paper introduces ", "this paper introduces ", "we introduce ")):
+        if lowered.startswith(
+            (
+                "paper introduces ",
+                "this paper introduces ",
+                "we introduce ",
+                "this innovative approach ",
+                "this approach ",
+                "the approach ",
+            )
+        ):
             return ""
         if "novel dataset captured" in lowered or "captured in diverse real scenarios" in lowered:
             return ""
@@ -355,6 +412,13 @@ def _metric_items(metadata: dict[str, Any]) -> list[str]:
     metrics_text = _metrics_text(metadata)
     if not metrics_text:
         return []
+    generic_metric_fragments = (
+        "this innovative approach",
+        "this approach",
+        "the approach",
+        "bypasses structured text",
+        "adapts to gui platforms",
+    )
     matches = re.findall(r"([A-Z][A-Za-z\- ]+?) \(([A-Z]{2,8})\)", metrics_text)
     if matches:
         cleaned_items = []
@@ -387,11 +451,19 @@ def _metric_items(metadata: dict[str, Any]) -> list[str]:
         if clause.startswith(prefix):
             clause = clause[len(prefix) :]
             break
+    clause = re.sub(r"^.*?\breport\s+", "", clause, flags=re.IGNORECASE)
     clause = clause.rstrip(".").replace(", and ", ", ")
     items = []
     for item in _split_outside_parentheses(clause):
         cleaned = re.sub(r"\s+for .*$", "", _clean_text(item), flags=re.IGNORECASE)
-        if cleaned and len(cleaned) > 2 and not _looks_noisy_sentence(cleaned) and cleaned.casefold() not in {"are", "used"}:
+        lowered = cleaned.casefold()
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not _looks_noisy_sentence(cleaned)
+            and lowered not in {"are", "used"}
+            and not any(fragment in lowered for fragment in generic_metric_fragments)
+        ):
             items.append(cleaned)
     extras = re.findall(
         r"\b(?:mIoU|IoU|PSNR|SSIM|LPIPS|RRE|RTAE|RSE|ARE|ATE|accuracy|precision|recall|F1)\b",

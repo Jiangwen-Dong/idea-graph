@@ -125,6 +125,50 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertNotIn("gold", str(packet).lower())
         self.assertIn("output_schema", packet)
 
+    def test_attach_baseline_metadata_filters_noisy_reference_packet_snippets(self) -> None:
+        noisy_instance = ExperimentInstance(
+            name="ai-idea-bench-2025-3883",
+            topic="The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",
+            literature=["SeeClick", "OSWorld"],
+            source_path="test",
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "method": "Use screenshot-grounded interaction instead of structured text for GUI agents.",
+                        },
+                        {
+                            "resolved_title": "OSWorld",
+                            "method": (
+                                "Task Instruction (See examples above) input Agent (e.g., GPT-4V) a11y-tree "
+                                "screenshot keyboardmouse Action Observation input predict OSWorld Environment."
+                            ),
+                        },
+                        {
+                            "resolved_title": "UI Control Agents",
+                            "abstract": (
+                                "Package_name:\"com.google.android.deskclock\" bounds_in_screen { left: 782 top: 1762 } "
+                                "class_name: \"android.widget.Button\""
+                            ),
+                        },
+                    ],
+                },
+            },
+        )
+
+        instance = attach_baseline_metadata(
+            noisy_instance,
+            baseline_name="ours-eig",
+            io_mode="auto",
+        )
+
+        packet_text = json.dumps(instance.metadata["benchmark_input_packet"], ensure_ascii=False)
+        self.assertIn("SeeClick", packet_text)
+        self.assertNotIn("Task Instruction (See examples above)", packet_text)
+        self.assertNotIn("Package_name", packet_text)
+
     def test_generation_safe_grounding_does_not_leak_target_paper_fields(self) -> None:
         instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),

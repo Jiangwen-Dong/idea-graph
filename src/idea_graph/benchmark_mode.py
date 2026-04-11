@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+import re
 from typing import Any
 
 from .instances import ExperimentInstance
@@ -97,7 +98,39 @@ def _list_of_strings(value: Any) -> list[str]:
     return normalized
 
 
-def _reference_snippet_entries(metadata: dict[str, Any], *, limit: int = 6) -> list[dict[str, str]]:
+def _is_noisy_reference_text(text: Any) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return True
+    lowered = cleaned.casefold()
+    noisy_markers = (
+        "task instruction (see examples above)",
+        "a11y-tree",
+        "keyboardmouse",
+        "action observation input predict",
+        "package_name:",
+        "view_id_resource_name",
+        "bounds_in_screen",
+        "class_name:",
+        "content_description:",
+        "tooltip_text:",
+        "project website",
+    )
+    if any(marker in lowered for marker in noisy_markers):
+        return True
+    if lowered.startswith("figure ") or lowered.startswith("table "):
+        return True
+    if re.search(r"\bfigure\s*\d+\b", lowered) or re.search(r"\btable\s*\d+\b", lowered):
+        return True
+    return False
+
+
+def _safe_reference_sentence(text: Any, *, max_chars: int = 220) -> str:
+    sentence = _first_sentence(text, max_chars=max_chars)
+    return "" if _is_noisy_reference_text(sentence) else sentence
+
+
+def _safe_reference_paper_snippets(metadata: dict[str, Any], *, limit: int = 6) -> list[dict[str, str]]:
     paper_grounding = metadata.get("paper_grounding", {})
     if not isinstance(paper_grounding, dict):
         return []
@@ -105,18 +138,34 @@ def _reference_snippet_entries(metadata: dict[str, Any], *, limit: int = 6) -> l
     if not isinstance(raw_snippets, list):
         return []
 
-    entries: list[dict[str, str]] = []
+    safe_snippets: list[dict[str, str]] = []
     for item in raw_snippets[:limit]:
         if not isinstance(item, dict):
             continue
-        title = _clean_text(item.get("resolved_title") or item.get("raw_title"))
+        title = _clean_text(item.get("resolved_title") or item.get("raw_title") or item.get("title"))
         if not title:
             continue
-        snippet = _first_sentence(
+        safe_item: dict[str, str] = {"resolved_title": title}
+        for field_name in ("abstract", "introduction", "method", "evaluation", "conclusion", "snippet"):
+            cleaned = _safe_reference_sentence(item.get(field_name))
+            if cleaned:
+                safe_item[field_name] = cleaned
+        safe_snippets.append(safe_item)
+    return safe_snippets
+
+
+def _reference_snippet_entries(metadata: dict[str, Any], *, limit: int = 6) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for item in _safe_reference_paper_snippets(metadata, limit=limit):
+        title = _clean_text(item.get("resolved_title") or item.get("raw_title") or item.get("title"))
+        if not title:
+            continue
+        snippet = _safe_reference_sentence(
             item.get("method")
             or item.get("abstract")
             or item.get("evaluation")
             or item.get("introduction")
+            or item.get("snippet")
         )
         entry = {"title": title}
         if snippet:
@@ -153,6 +202,34 @@ def _canonical_output_schema() -> dict[str, object]:
             "Avoid repeating the same content across multiple sections.",
         ],
     }
+
+
+def _sanitize_reference_packet(entries: Any, *, limit: int = 6) -> list[dict[str, str]]:
+    if not isinstance(entries, list):
+        return []
+    sanitized: list[dict[str, str]] = []
+    for item in entries[:limit]:
+        if not isinstance(item, dict):
+            continue
+        title = _clean_text(item.get("title"))
+        snippet = _safe_reference_sentence(item.get("snippet"))
+        if not title and not snippet:
+            continue
+        entry: dict[str, str] = {}
+        if title:
+            entry["title"] = title
+        if snippet:
+            entry["snippet"] = snippet
+        sanitized.append(entry)
+    return sanitized
+
+
+def _sanitize_benchmark_input_packet(packet: Any) -> dict[str, object]:
+    if not isinstance(packet, dict):
+        return {}
+    sanitized = dict(packet)
+    sanitized["reference_packet"] = _sanitize_reference_packet(packet.get("reference_packet", []))
+    return sanitized
 
 
 def build_benchmark_input_packet(instance: ExperimentInstance) -> dict[str, object]:
@@ -239,10 +316,13 @@ def build_generation_safe_metadata(metadata: dict[str, Any]) -> dict[str, object
     for key, value in metadata.items():
         if key in blocked_keys:
             continue
+        if key == "benchmark_input_packet":
+            safe[key] = _sanitize_benchmark_input_packet(value)
+            continue
         if key == "paper_grounding":
             if isinstance(value, dict):
                 safe[key] = {
-                    "reference_paper_snippets": _reference_snippet_entries({"paper_grounding": value})
+                    "reference_paper_snippets": _safe_reference_paper_snippets({"paper_grounding": value})
                 }
             continue
         safe[key] = value

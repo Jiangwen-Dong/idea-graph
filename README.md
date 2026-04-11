@@ -1,27 +1,33 @@
 # idea-graph
 
-Python scaffold for an evolving-idea-graph scientific ideation system built
-around a shared typed idea graph.
+Python implementation of an `Evolving Idea Graph (EIG)` system for
+benchmark-faithful scientific ideation.
 
-The implementation direction comes from the extracted `exp.docx` protocol:
+The current prototype treats scientific ideation as iterative editing over a
+shared typed graph rather than a single draft. It supports both deterministic
+debugging runs and OpenAI-compatible LLM-backed runs.
+
+Core design elements:
 
 - five fixed epistemic roles
 - private seed-graph generation
 - shared graph merge with provenance
-- three constrained collaboration rounds
+- configurable collaboration rounds with maturity-based stopping
 - no early whole-idea voting
-- maturity checks before final synthesis
+- utility-guided graph editing before final synthesis
 - final proposal generation from a selected high-utility subgraph
 
 ## Current status
 
-This repository now contains the first Python implementation step:
+This repository now contains a runnable research prototype with:
 
 - typed graph schema and data models
 - deterministic and OpenAI-compatible multi-agent backends
 - graph merge and constrained graph actions
-- maturity checks and final subgraph selection
+- maturity checks, claim-chain selection, and final subgraph synthesis
 - benchmark loaders and runnable pipeline scripts
+- benchmark-native evaluation hooks and local development-time evaluation
+- external baseline adapters plus local baseline wrappers
 
 The pipeline can now run in two modes:
 
@@ -32,12 +38,32 @@ The pipeline can now run in two modes:
   ChatGPT-style, Qwen-style, DeepSeek-style, or other compatible providers by
   changing the base URL, API key, and model names.
 
+## Docs
+
+Start with:
+
+- `docs/README.md`
+
+Most useful active docs:
+
+- `docs/paper_protocol.md`
+- `docs/evaluation.md`
+- `docs/paper_experiment_plan.md`
+- `docs/paper_experiment_tracker.md`
+- `docs/paper_experiment_map.md`
+- `docs/experiment_execution_log.md`
+
+Current experiment status:
+
+- `M0` is complete.
+- The current reference small-`M1` packet is:
+  - `outputs/quality_batches/20260411-000159-refreshed-m1-mini-synthesis-cleanup-v2-native`
+- The next planned milestone is `M2`, starting with the larger
+  `AI_Idea_Bench_2025` slice.
+
 ## Layout
 
-- `docs/experiment_execution_log.md`
-- `docs/benchmarks.md`
-- `docs/evaluation.md`
-- `docs/paper_protocol.md`
+- `docs/`
 - `configs/openai_compatible.example.json`
 - `configs/external_baselines.example.json`
 - `pyproject.toml`
@@ -93,9 +119,8 @@ Budget guidance:
 
 - `direct` is the cheapest lower-bound baseline.
 - `self-refine` is a modest-cost single-agent control.
-- `scipip-proxy` is the recommended low-cost structured baseline.
-- `ai-researcher-proxy` is the recommended literature baseline for most local
-  Qwen runs.
+- `scipip-proxy` is a low-cost structured local baseline.
+- `ai-researcher-proxy` is a lightweight local fallback for Qwen-based runs.
 - `virsci-proxy` and `ours-eig` are higher-cost multi-agent
   baselines and are better reserved for smaller validation subsets before large
   sweeps.

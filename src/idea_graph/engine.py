@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict
 from itertools import product
-from typing import Callable
+from typing import Any, Callable
 
 from .agent_backend import (
     ActionDecision,
@@ -39,6 +39,46 @@ def normalize_text(text: str) -> str:
 def _generation_metadata(graph: IdeaGraph) -> dict[str, object]:
     payload = graph.metadata.get("generation_safe_metadata", graph.metadata)
     return payload if isinstance(payload, dict) else graph.metadata
+
+
+def _safe_benchmark_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    blocked_keys = {
+        "agent_traces",
+        "progress_log",
+        "action_errors",
+        "final_synthesis_trace",
+        "final_synthesis_error",
+        "seed_generation_error",
+        "raw_record",
+        "target_paper",
+        "target_paper_path",
+        "motivation",
+        "method_summary",
+        "literature_grounding",
+    }
+    safe: dict[str, object] = {}
+    for key, value in metadata.items():
+        if key in blocked_keys:
+            continue
+        if key == "paper_grounding" and isinstance(value, dict):
+            snippets = value.get("reference_paper_snippets", [])
+            safe[key] = {
+                "reference_paper_snippets": [
+                    item for item in snippets if isinstance(item, dict)
+                ]
+                if isinstance(snippets, list)
+                else []
+            }
+            continue
+        safe[key] = value
+    return safe
+
+
+def _utility_grounding_metadata(graph: IdeaGraph) -> dict[str, object]:
+    metadata = _generation_metadata(graph)
+    if graph.metadata.get("benchmark_mode") and metadata is graph.metadata:
+        return _safe_benchmark_metadata(graph.metadata)
+    return metadata
 
 
 def _progress_role_name(role: str) -> str:
@@ -2122,6 +2162,153 @@ def _open_risk_penalty(nodes: list[Node], edges: list[Edge]) -> float:
     return round(open_risk_count / len(risk_nodes), 2)
 
 
+def _normalized_token_set(text: str) -> set[str]:
+    return {
+        token
+        for token in normalize_text(text).split()
+        if len(token) >= 4
+        and token
+        not in {
+            "with",
+            "that",
+            "this",
+            "from",
+            "using",
+            "use",
+            "into",
+            "task",
+            "tasks",
+            "method",
+            "methods",
+            "approach",
+            "approaches",
+            "model",
+            "models",
+            "report",
+            "metric",
+            "metrics",
+            "benchmark",
+            "datasets",
+            "dataset",
+            "generic",
+        }
+    }
+
+
+def _contains_anchor(text: str, anchor: str) -> bool:
+    normalized_text = normalize_text(text)
+    normalized_anchor = normalize_text(anchor)
+    return bool(normalized_anchor and normalized_anchor in normalized_text)
+
+
+def _reference_snippet_texts(metadata: dict[str, object]) -> list[str]:
+    payload = metadata.get("paper_grounding", {})
+    if not isinstance(payload, dict):
+        return []
+    raw_snippets = payload.get("reference_paper_snippets", [])
+    if not isinstance(raw_snippets, list):
+        return []
+
+    texts: list[str] = []
+    for item in raw_snippets[:6]:
+        if not isinstance(item, dict):
+            continue
+        for field_name in ("method", "abstract", "evaluation", "introduction", "conclusion"):
+            value = str(item.get(field_name, "")).strip()
+            if value:
+                texts.append(value)
+    return texts
+
+
+def _benchmark_specificity_score(graph: IdeaGraph, nodes: list[Node]) -> float:
+    if not nodes:
+        return 0.0
+    grounding = build_literature_grounding(
+        literature=graph.literature,
+        metadata=_utility_grounding_metadata(graph),
+    )
+    text = " ".join(node.text for node in nodes if node.text)
+    anchors = [
+        *grounding.dataset_items[:3],
+        *grounding.metric_items[:4],
+    ]
+    if not anchors:
+        return 0.0
+    hit_count = sum(1 for anchor in anchors if _contains_anchor(text, anchor))
+    return round(_clamp(hit_count / min(3, len(anchors))), 2)
+
+
+def _experiment_method_alignment_score(nodes: list[Node]) -> float:
+    methods = [node for node in nodes if node.type == "Method"]
+    evaluations = [node for node in nodes if node.type == "EvalPlan"]
+    if not methods or not evaluations:
+        return 0.0
+
+    method_tokens = set().union(*(_normalized_token_set(node.text) for node in methods))
+    evaluation_tokens = set().union(*(_normalized_token_set(node.text) for node in evaluations))
+    shared_tokens = method_tokens & evaluation_tokens
+
+    evaluation_text = " ".join(node.text for node in evaluations)
+    explicit_eval_signal = 0.0
+    if any(marker in normalize_text(evaluation_text) for marker in ("ablate", "stress", "held out", "error rate", "success rate")):
+        explicit_eval_signal += 0.4
+    if any(marker in normalize_text(evaluation_text) for marker in ("osworld", "rmse", "mae", "crps", "iou", "f1", "accuracy")):
+        explicit_eval_signal += 0.4
+    if "compare against" in normalize_text(evaluation_text):
+        explicit_eval_signal += 0.2
+
+    shared_score = min(1.0, len(shared_tokens) / 3.0) if shared_tokens else 0.0
+    return round(_clamp((0.55 * shared_score) + (0.45 * explicit_eval_signal)), 2)
+
+
+def _role_slot_balance_score(nodes: list[Node]) -> float:
+    required_roles = {
+        "ImpactReframer",
+        "MechanismProposer",
+        "NoveltyExaminer",
+        "EvaluationDesigner",
+    }
+    present_roles = {node.role for node in nodes if node.role in required_roles}
+    required_types = {"Problem", "Hypothesis", "Method", "EvalPlan", "NoveltyClaim"}
+    present_types = {node.type for node in nodes if node.type in required_types}
+    role_score = len(present_roles) / len(required_roles)
+    type_score = len(present_types) / len(required_types)
+    return round((0.45 * role_score) + (0.55 * type_score), 2)
+
+
+def _reference_copy_penalty(graph: IdeaGraph, nodes: list[Node]) -> float:
+    reference_texts = [normalize_text(text) for text in _reference_snippet_texts(_utility_grounding_metadata(graph))]
+    reference_texts = [text for text in reference_texts if text]
+    if not reference_texts:
+        return 0.0
+
+    penalty = 0.0
+    for node in nodes:
+        if node.type not in {"Method", "Hypothesis", "NoveltyClaim"}:
+            continue
+        normalized_node = normalize_text(node.text)
+        if not normalized_node:
+            continue
+        node_tokens = _normalized_token_set(node.text)
+        for reference_text in reference_texts:
+            if normalized_node == reference_text:
+                penalty = max(penalty, 1.0)
+                continue
+            if len(normalized_node) >= 32 and normalized_node in reference_text:
+                penalty = max(penalty, 0.9)
+                continue
+            reference_tokens = {
+                token
+                for token in reference_text.split()
+                if len(token) >= 4
+            }
+            if node_tokens and reference_tokens:
+                overlap = len(node_tokens & reference_tokens) / max(1, len(node_tokens | reference_tokens))
+                if overlap >= 0.85:
+                    penalty = max(penalty, round(overlap, 2))
+    return round(penalty, 2)
+
+
 def utility_breakdown(graph: IdeaGraph, node_ids: set[str] | None = None) -> UtilityBreakdown:
     active_nodes = _subgraph_nodes(graph, node_ids)
     if not active_nodes:
@@ -2175,6 +2362,10 @@ def utility_breakdown(graph: IdeaGraph, node_ids: set[str] | None = None) -> Uti
         + (0.35 * _claim_chain_score(active_nodes, relevant_edges))
         + (0.20 * (1.0 - contradiction_penalty))
     )
+    benchmark_specificity = _benchmark_specificity_score(graph, active_nodes)
+    experiment_alignment = _experiment_method_alignment_score(active_nodes)
+    role_balance = _role_slot_balance_score(active_nodes)
+    reference_copy_penalty = _reference_copy_penalty(graph, active_nodes)
     open_risk_penalty = _open_risk_penalty(active_nodes, relevant_edges)
     size_penalty = _clamp(max(0, len(active_nodes) - 7) / 5.0)
 
@@ -2182,11 +2373,15 @@ def utility_breakdown(graph: IdeaGraph, node_ids: set[str] | None = None) -> Uti
         10.0
         * _clamp(
             (0.25 * promise)
-            + (0.25 * support)
-            + (0.20 * coherence)
+            + (0.21 * support)
+            + (0.17 * coherence)
             + (0.15 * evidence)
             + (0.15 * novelty)
+            + (0.10 * benchmark_specificity)
+            + (0.07 * experiment_alignment)
+            + (0.03 * role_balance)
             - (0.15 * contradiction_penalty)
+            - (0.10 * reference_copy_penalty)
             - (0.10 * open_risk_penalty)
             - (0.05 * size_penalty)
         ),
@@ -2198,6 +2393,10 @@ def utility_breakdown(graph: IdeaGraph, node_ids: set[str] | None = None) -> Uti
         coherence=round(coherence, 2),
         evidence=round(evidence, 2),
         novelty=round(novelty, 2),
+        benchmark_specificity=round(benchmark_specificity, 2),
+        experiment_alignment=round(experiment_alignment, 2),
+        role_balance=round(role_balance, 2),
+        reference_copy_penalty=round(reference_copy_penalty, 2),
         contradiction_penalty=round(contradiction_penalty, 2),
         open_risk_penalty=round(open_risk_penalty, 2),
         size_penalty=round(size_penalty, 2),
@@ -2257,6 +2456,21 @@ def _compute_maturity_snapshot(
     utility_stable = _utility_stability(history)
     weak_context_specificity = _keyword_only_specificity_score(graph, active_node_ids or None)
     weak_context_mode = bool(_weak_context_scaffold(graph))
+    benchmark_mode = bool(str(graph.metadata.get("benchmark", "")).strip()) and not weak_context_mode
+    benchmark_specific_ready = (
+        (not benchmark_mode)
+        or (
+            breakdown.benchmark_specificity >= 0.3
+            and breakdown.experiment_alignment >= 0.2
+        )
+    )
+    benchmark_high_confidence_ready = (
+        (not benchmark_mode)
+        or (
+            breakdown.benchmark_specificity >= 0.45
+            and breakdown.experiment_alignment >= 0.3
+        )
+    )
     min_rounds_before_maturity = max(
         2,
         int(graph.metadata.get("idea_graph_min_rounds_before_maturity", 2) or 2),
@@ -2269,6 +2483,7 @@ def _compute_maturity_snapshot(
         and breakdown.coherence >= 0.7
         and breakdown.evidence >= 0.18
         and utility >= 6.6
+        and benchmark_high_confidence_ready
         and (not weak_context_mode or weak_context_specificity >= 0.62)
     )
 
@@ -2286,6 +2501,7 @@ def _compute_maturity_snapshot(
                 and completeness
                 and breakdown.coherence >= 0.6
                 and breakdown.evidence >= 0.12
+                and benchmark_specific_ready
                 and (not weak_context_mode or weak_context_specificity >= 0.55)
                 and (
                     utility_stable
@@ -2294,6 +2510,7 @@ def _compute_maturity_snapshot(
                         and support_coverage >= 0.82
                         and breakdown.evidence >= 0.2
                         and utility >= 7.5
+                        and benchmark_high_confidence_ready
                         and (not weak_context_mode or weak_context_specificity >= 0.62)
                     )
                 )
@@ -2450,6 +2667,14 @@ def _best_candidate_subgraph(graph: IdeaGraph, *, prefer_mature: bool = False) -
 
 
 def maturity_snapshot(graph: IdeaGraph) -> MaturitySnapshot:
+    claim_chain = select_claim_chain(graph)
+    if claim_chain is not None and claim_chain.get("coverage", {}).get("is_synthesis_ready"):
+        return _compute_maturity_snapshot(
+            graph,
+            update_history=True,
+            node_ids=set(claim_chain["subgraph"]["node_ids"]),
+        )
+
     candidate = _best_candidate_subgraph(graph)
     if candidate is not None:
         return _compute_maturity_snapshot(
@@ -2753,7 +2978,7 @@ def run_experiment(
     graph = IdeaGraph(topic=topic, literature=literature, metadata=dict(metadata or {}))
     graph.metadata.setdefault(
         "literature_grounding",
-        build_literature_grounding(literature=graph.literature, metadata=graph.metadata).as_dict(),
+        build_literature_grounding(literature=graph.literature, metadata=_generation_metadata(graph)).as_dict(),
     )
     graph.metadata["max_rounds_requested"] = max(1, int(max_rounds))
     graph.metadata["stop_when_mature"] = bool(stop_when_mature)

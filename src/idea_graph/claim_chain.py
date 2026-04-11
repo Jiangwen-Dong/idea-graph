@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
+from .literature_grounding import build_literature_grounding
 from .models import Edge, IdeaGraph, Node
 
 
@@ -41,10 +44,100 @@ def _weak_context_mode(graph: IdeaGraph) -> bool:
     return str(graph.metadata.get("benchmark", "")).strip().casefold() == "liveideabench"
 
 
+def _normalize_text(text: str) -> str:
+    return " ".join("".join(ch.lower() if ch.isalnum() else " " for ch in str(text)).split())
+
+
+def _claim_chain_metadata(graph: IdeaGraph) -> dict[str, Any]:
+    metadata = graph.metadata.get("generation_safe_metadata", graph.metadata)
+    return metadata if isinstance(metadata, dict) else graph.metadata
+
+
+def _important_terms(text: str) -> list[str]:
+    generic_tokens = {
+        "with",
+        "that",
+        "this",
+        "from",
+        "using",
+        "into",
+        "task",
+        "tasks",
+        "method",
+        "methods",
+        "approach",
+        "approaches",
+        "model",
+        "models",
+        "report",
+        "metric",
+        "metrics",
+        "benchmark",
+        "datasets",
+        "dataset",
+        "generic",
+        "better",
+    }
+    return [
+        token
+        for token in _normalize_text(text).split()
+        if len(token) >= 5 and token not in generic_tokens
+    ]
+
+
+def _claim_chain_grounding(graph: IdeaGraph):
+    return build_literature_grounding(
+        literature=graph.literature,
+        metadata=_claim_chain_metadata(graph),
+    )
+
+
+def _slot_specific_bonus(graph: IdeaGraph, slot: str, node: Node) -> float:
+    normalized_text = _normalize_text(node.text)
+    grounding = _claim_chain_grounding(graph)
+    generic_penalty = 0.0
+    if any(
+        marker in normalized_text
+        for marker in (
+            "generic multimodal",
+            "benchmark datasets",
+            "task relevant metrics",
+            "generic architecture",
+        )
+    ):
+        generic_penalty = 0.18
+
+    if slot == "mechanism":
+        method_preference = 0.22 if node.type == "Method" else 0.0
+        design_terms = []
+        for item in grounding.design_highlights[:3]:
+            fragment = item.split(":", 1)[-1]
+            design_terms.extend(_important_terms(fragment))
+        term_hits = sum(1 for term in set(design_terms[:8]) if term and term in normalized_text)
+        specificity_bonus = min(0.18, 0.06 * term_hits)
+        return round(method_preference + specificity_bonus - generic_penalty, 4)
+
+    if slot == "evaluation":
+        anchor_hits = sum(
+            1
+            for anchor in [*grounding.dataset_items[:3], *grounding.metric_items[:4]]
+            if _normalize_text(anchor) and _normalize_text(anchor) in normalized_text
+        )
+        explicit_eval_bonus = 0.0
+        if any(marker in normalized_text for marker in ("ablation", "stress", "held out")):
+            explicit_eval_bonus += 0.1
+        if any(marker in normalized_text for marker in ("success rate", "error rate", "accuracy", "iou", "rmse", "mae", "crps")):
+            explicit_eval_bonus += 0.1
+        return round(min(0.28, 0.09 * anchor_hits) + explicit_eval_bonus - generic_penalty, 4)
+
+    return round(-generic_penalty, 4)
+
+
 def _node_score(
     graph: IdeaGraph,
     node: Node,
     *,
+    slot: str,
     anchor_ids: set[str] | None = None,
     node_ids: set[str] | None = None,
 ) -> float:
@@ -66,6 +159,7 @@ def _node_score(
         + evidence_bonus
         + connectivity_bonus
         + anchor_bonus
+        + _slot_specific_bonus(graph, slot, node)
         - contradiction_penalty,
         4,
     )
@@ -82,9 +176,16 @@ def _best_node_for_slot(
     candidates = [node for node in _active_nodes(graph, node_ids=node_ids) if node.type in slot_types]
     if not candidates:
         return None
+    if slot == "mechanism":
+        method_candidates = [node for node in candidates if node.type == "Method"]
+        if method_candidates:
+            candidates = method_candidates
     return max(
         candidates,
-        key=lambda node: (_node_score(graph, node, anchor_ids=anchor_ids, node_ids=node_ids), node.id),
+        key=lambda node: (
+            _node_score(graph, node, slot=slot, anchor_ids=anchor_ids, node_ids=node_ids),
+            node.id,
+        ),
     )
 
 
@@ -93,6 +194,7 @@ def _supporting_mechanism_context(
     mechanism: Node | None,
     *,
     node_ids: set[str] | None = None,
+    selected_slots: dict[str, str | None] | None = None,
 ) -> list[str]:
     if mechanism is None:
         return []
@@ -106,7 +208,55 @@ def _supporting_mechanism_context(
         for node_id in graph.nodes
         if node_id in neighbor_ids and (node_ids is None or node_id in node_ids)
     ]
-    return ordered
+    if not selected_slots:
+        return ordered
+
+    selected_eval_id = selected_slots.get("evaluation")
+    selected_mechanism_id = selected_slots.get("mechanism")
+    selected_mechanism_type = graph.nodes[selected_mechanism_id].type if selected_mechanism_id in graph.nodes else ""
+    filtered: list[str] = []
+    for node_id in ordered:
+        node = graph.nodes[node_id]
+        if node.type == "EvalPlan" and selected_eval_id and node_id != selected_eval_id:
+            continue
+        if (
+            selected_mechanism_id
+            and node.type == selected_mechanism_type
+            and node_id != selected_mechanism_id
+        ):
+            continue
+        filtered.append(node_id)
+    return filtered
+
+
+def _supporting_hypothesis_node(
+    graph: IdeaGraph,
+    problem: Node | None,
+    mechanism: Node | None,
+    *,
+    node_ids: set[str] | None = None,
+) -> Node | None:
+    if mechanism is None or mechanism.type == "Hypothesis":
+        return None
+    anchor_ids = {
+        node.id
+        for node in (problem, mechanism)
+        if node is not None
+    }
+    candidates = [
+        node
+        for node in _active_nodes(graph, node_ids=node_ids)
+        if node.type == "Hypothesis"
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda node: (
+            _node_score(graph, node, slot="mechanism", anchor_ids=anchor_ids, node_ids=node_ids),
+            node.id,
+        ),
+    )
 
 
 def select_claim_chain(graph: IdeaGraph, node_ids: set[str] | None = None) -> dict[str, object] | None:
@@ -131,6 +281,12 @@ def select_claim_chain(graph: IdeaGraph, node_ids: set[str] | None = None) -> di
     gap = _best_node_for_slot(graph, "gap", anchor_ids=anchor_ids, node_ids=node_ids)
     if gap is not None:
         anchor_ids.add(gap.id)
+    supporting_hypothesis = _supporting_hypothesis_node(
+        graph,
+        problem,
+        mechanism,
+        node_ids=node_ids,
+    )
 
     relaxed_slots = ["gap"] if weak_context_mode and gap is None else []
     slots = {
@@ -155,7 +311,8 @@ def select_claim_chain(graph: IdeaGraph, node_ids: set[str] | None = None) -> di
             slots["mechanism"],
             slots["evaluation"],
             slots["caveat"],
-            *_supporting_mechanism_context(graph, mechanism, node_ids=node_ids),
+            supporting_hypothesis.id if supporting_hypothesis is not None else None,
+            *_supporting_mechanism_context(graph, mechanism, node_ids=node_ids, selected_slots=slots),
         ]
         if node_id
     }

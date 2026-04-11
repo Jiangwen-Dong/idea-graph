@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 from idea_graph.agent_backend import (
     _action_system_prompt,
     _action_user_prompt,
+    _postprocess_grounding,
     _dynamic_allowed_actions,
     _postprocess_final_proposal,
     _prompt_safe_metadata,
@@ -24,7 +25,7 @@ from idea_graph.agent_backend import (
     _synthesis_user_prompt,
 )
 from idea_graph.collaboration_protocol import resolve_round_phase
-from idea_graph.engine import build_seed_graphs, create_edge, merge_seed_graphs
+from idea_graph.engine import build_seed_graphs, create_branch, create_edge, create_node, merge_seed_graphs
 from idea_graph.models import FinalProposal, IdeaGraph
 
 
@@ -111,6 +112,111 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertIn("selected_claim_chain", payload)
         self.assertIn("coverage", payload["selected_claim_chain"])
 
+    def test_synthesis_user_prompt_includes_slot_summary(self) -> None:
+        graph = IdeaGraph(
+            topic="GUI grounding for out-of-distribution GUI agents.",
+            literature=["SeeClick"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_input_packet": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "topic": "GUI grounding for out-of-distribution GUI agents.",
+                },
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "method": "Use screenshot-grounded interaction instead of structured text.",
+                            "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                        }
+                    ]
+                },
+            },
+        )
+        problem_branch = create_branch(graph, "ImpactReframer")
+        gap_branch = create_branch(graph, "NoveltyExaminer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+        risk_branch = create_branch(graph, "FeasibilityCritic")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="GUI agents fail under layout and visual distribution shift.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.85,
+        )
+        gap = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Visible references do not explicitly model cross-platform uncertainty in GUI grounding.",
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+            confidence=0.82,
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text="Use uncertainty-aware screenshot-grounded element localization before action decoding.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.86,
+        )
+        evaluation = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on OSWorld and report success rate and error rate with cross-platform stress tests.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.84,
+        )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="The grounding model may still fail on unseen interface widgets.",
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+            confidence=0.75,
+        )
+        for source, target in (
+            (gap, problem),
+            (method, gap),
+            (evaluation, method),
+        ):
+            create_edge(
+                graph,
+                source_id=source.id,
+                relation="supports",
+                target_id=target.id,
+                role=source.role,
+                branch_id=source.branch_id,
+            )
+        create_edge(
+            graph,
+            source_id=risk.id,
+            relation="contradicts",
+            target_id=method.id,
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+        )
+
+        payload = json.loads(
+            _synthesis_user_prompt(
+                graph,
+                {
+                    "node_ids": [node.id for node in graph.active_nodes()],
+                    "edge_ids": [edge.id for edge in graph.edges],
+                },
+            )
+        )
+
+        self.assertIn("slot_summary", payload)
+        self.assertIn("mechanism", payload["slot_summary"])
+        self.assertIn("evaluation", payload["slot_summary"])
+        self.assertIn("screenshot-grounded", payload["slot_summary"]["mechanism"]["text"])
+        self.assertIn("OSWorld", payload["slot_summary"]["evaluation"]["text"])
+
     def test_action_user_prompt_includes_evidence_candidates_and_benchmark_focus(self) -> None:
         graph = IdeaGraph(
             topic="The topic of this paper is 3D language field modeling.",
@@ -173,6 +279,52 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertNotIn("motivation", safe)
         self.assertNotIn("raw_record", safe)
         self.assertNotIn("target_paper_snippet", safe["paper_grounding"])
+
+    def test_postprocess_grounding_uses_prompt_safe_metadata_in_benchmark_mode(self) -> None:
+        graph = IdeaGraph(
+            topic="GUI grounding",
+            literature=["SeeClick"],
+            metadata={
+                "benchmark_mode": True,
+                "benchmark": "AI_Idea_Bench_2025",
+                "target_paper": "Hidden Target",
+                "method_summary": "Secret gold method.",
+                "literature_grounding": {
+                    "source": "metadata_structured",
+                    "target_paper": "Hidden Target",
+                    "reference_titles": ["SeeClick"],
+                    "design_highlights": ["Hidden design: target-only toolkit."],
+                    "dataset_items": ["HiddenSet"],
+                    "metric_items": ["HiddenMetric"],
+                    "existing_methods_summary": "The benchmark target paper Hidden Target uses the secret method.",
+                    "experiment_plan_summary": "Evaluate on HiddenSet. Report HiddenMetric.",
+                },
+                "raw_record": {
+                    "summary": {
+                        "method": {
+                            "datasets": "HiddenSet",
+                            "metrics": "HiddenMetric",
+                        }
+                    }
+                },
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "method": "Use screenshot-grounded interaction instead of structured text.",
+                            "evaluation": "Evaluate on OSWorld and report success rate.",
+                        }
+                    ]
+                },
+            },
+        )
+
+        grounding = _postprocess_grounding(graph)
+
+        self.assertEqual(grounding.target_paper, "")
+        self.assertNotIn("HiddenSet", grounding.dataset_items)
+        self.assertNotIn("HiddenMetric", grounding.metric_items)
+        self.assertIn("OSWorld", grounding.dataset_items)
 
     def test_symbolic_reference_text_is_resolved_into_concrete_evidence(self) -> None:
         resolved = _resolve_symbolic_reference_text(
@@ -295,6 +447,70 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertIn("LERF", processed.existing_methods)
         self.assertIn("LERF dataset", processed.evaluation)
         self.assertTrue("accuracy" in processed.evaluation or "IoU" in processed.evaluation)
+        self.assertIn("ablation", processed.evaluation.casefold())
+
+    def test_postprocess_final_proposal_rewrites_ocr_like_benchmark_evaluation(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",
+            literature=["SeeClick", "OSWorld"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_mode": True,
+                "benchmark_input_packet": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "topic": "The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",
+                    "reference_packet": [
+                        {
+                            "title": "SeeClick",
+                            "snippet": "Use screenshot-grounded interaction instead of structured text for GUI agents.",
+                        },
+                        {
+                            "title": "OSWorld",
+                            "snippet": (
+                                "Task Instruction (See examples above) input Agent (e.g., GPT-4V) a11y-tree "
+                                "screenshot keyboardmouse Action Observation input predict OSWorld Environment."
+                            ),
+                        },
+                    ],
+                },
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "method": "Use screenshot-grounded interaction instead of structured text for GUI agents.",
+                            "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                        },
+                        {
+                            "resolved_title": "OSWorld",
+                            "evaluation": (
+                                "Task Instruction (See examples above) input Agent (e.g., GPT-4V) a11y-tree "
+                                "screenshot keyboardmouse Action Observation input predict OSWorld Environment."
+                            ),
+                        },
+                    ],
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="GUI Grounding for OOD GUI Agents",
+            problem="GUI agents fail under cross-platform shift.",
+            existing_methods="Current GUI agents remain brittle.",
+            motivation="OOD GUI grounding remains hard.",
+            hypothesis="A stronger grounding model will help.",
+            method="Use screenshot-grounded interaction with uncertainty-aware localization.",
+            evaluation=(
+                "Task Instruction (See examples above) input Agent (e.g., GPT-4V) a11y-tree screenshot "
+                "keyboardmouse Action Observation input predict OSWorld Environment."
+            ),
+            significance="This could improve generalization.",
+            caveats="It may still fail on unseen widgets.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertNotIn("Task Instruction (See examples above)", processed.evaluation)
+        self.assertNotIn("keyboardmouse", processed.evaluation)
+        self.assertIn("OSWorld", processed.evaluation)
         self.assertIn("ablation", processed.evaluation.casefold())
 
     def test_seed_prompt_exposes_weak_context_scaffold_for_keyword_only_benchmarks(self) -> None:
@@ -921,6 +1137,115 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertNotIn("Use Lerf's approach", processed.method)
         self.assertIn("embed language into radiance fields", processed.method.lower())
         self.assertNotIn("Evaluate on LERF dataset, App Polycam.", processed.evaluation)
+        self.assertIn("Compare against", processed.evaluation)
+        self.assertIn("ablation", processed.evaluation.lower())
+
+    def test_postprocess_final_proposal_uses_claim_chain_slots_to_rewrite_generic_benchmark_output(self) -> None:
+        graph = IdeaGraph(
+            topic="GUI grounding for out-of-distribution GUI agents.",
+            literature=["SeeClick"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "method": "Use screenshot-grounded interaction instead of structured text.",
+                            "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                        }
+                    ]
+                },
+            },
+        )
+        problem_branch = create_branch(graph, "ImpactReframer")
+        gap_branch = create_branch(graph, "NoveltyExaminer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+        risk_branch = create_branch(graph, "FeasibilityCritic")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="GUI agents fail under layout and visual distribution shift.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.85,
+        )
+        gap = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Visible references do not explicitly model cross-platform uncertainty in GUI grounding.",
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+            confidence=0.82,
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text=(
+                "Use uncertainty-aware screenshot-grounded element localization before action decoding to handle "
+                "cross-platform GUI shift."
+            ),
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.86,
+        )
+        evaluation = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on OSWorld and report success rate and error rate with cross-platform stress tests.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.84,
+        )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="The grounding model may still fail on unseen interface widgets.",
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+            confidence=0.75,
+        )
+        for source, target in (
+            (gap, problem),
+            (method, gap),
+            (evaluation, method),
+        ):
+            create_edge(
+                graph,
+                source_id=source.id,
+                relation="supports",
+                target_id=target.id,
+                role=source.role,
+                branch_id=source.branch_id,
+            )
+        create_edge(
+            graph,
+            source_id=risk.id,
+            relation="contradicts",
+            target_id=method.id,
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+        )
+
+        proposal = FinalProposal(
+            title="Dynamic GUI Adaptation",
+            problem="GUI agents remain brittle under distribution shift.",
+            existing_methods="Current methods remain limited.",
+            motivation="OOD robustness is important for practical GUI agents.",
+            hypothesis="A stronger method can improve transfer.",
+            method="Implement a baseline model based on SeeClick and integrate contextual adaptation.",
+            evaluation="Evaluate on benchmark datasets and report task-relevant metrics.",
+            significance="This could improve GUI agents.",
+            caveats="The model may still fail on unseen widgets.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertIn("uncertainty-aware", processed.method.lower())
+        self.assertIn("screenshot-grounded", processed.method.lower())
+        self.assertIn("OSWorld", processed.evaluation)
+        self.assertTrue("success rate" in processed.evaluation or "error rate" in processed.evaluation)
         self.assertIn("Compare against", processed.evaluation)
         self.assertIn("ablation", processed.evaluation.lower())
 

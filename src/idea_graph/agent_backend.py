@@ -6,6 +6,7 @@ import re
 from typing import Any, Protocol
 
 from .claim_chain import select_claim_chain
+from .benchmark_mode import build_generation_safe_metadata
 from .collaboration_protocol import (
     ACTION_PROMPT_HINTS,
     ACTION_REQUIRED_PAYLOAD_FIELDS,
@@ -371,6 +372,11 @@ def _safe_paper_grounding(metadata: dict[str, Any], *, limit: int = 6) -> dict[s
 
 
 def _prompt_safe_metadata(metadata: dict[str, Any]) -> dict[str, object]:
+    source_metadata = (
+        build_generation_safe_metadata(metadata)
+        if _coerce_string(metadata.get("benchmark"))
+        else dict(metadata)
+    )
     safe: dict[str, object] = {}
     blocked_keys = {
         "agent_traces",
@@ -386,11 +392,11 @@ def _prompt_safe_metadata(metadata: dict[str, Any]) -> dict[str, object]:
         "method_summary",
         "literature_grounding",
     }
-    for key, value in metadata.items():
+    for key, value in source_metadata.items():
         if key in blocked_keys:
             continue
         if key == "paper_grounding":
-            safe[key] = _safe_paper_grounding(metadata)
+            safe[key] = _safe_paper_grounding({"paper_grounding": value})
             continue
         safe[key] = value
     return safe
@@ -1508,6 +1514,8 @@ def _synthesis_system_prompt() -> str:
         "Existing Methods should name 2-3 concrete reference directions when the input provides them, and should state one concrete limitation instead of only listing titles. "
         "The Method section should describe 2-4 concrete design choices and how they interact. "
         "The Evaluation section should name datasets, metrics, baselines, and at least one ablation or stress test when the input supports them. "
+        "Use slot_summary as the canonical scaffold: keep the method centered on the mechanism slot, keep the evaluation centered on the evaluation slot, "
+        "and use the caveat slot to sharpen limitations rather than dropping it. "
         "If the context is keyword-only and does not support named datasets, stay cautious and do not invent benchmark names. "
         "If a weak_context_scaffold is provided, use it to make the proposal keyword-specific and to keep one divergent mechanism family explicit. "
         "Prefer one coherent method story rather than stitching together several loosely related mechanisms. "
@@ -1520,6 +1528,39 @@ def _synthesis_system_prompt() -> str:
         '"method":"3-5 sentences describing the proposed method","evaluation":"3-5 sentences describing the experiment plan",'
         '"significance":"1-2 sentences on expected contribution","caveats":"1-2 sentences on assumptions or risks"}'
     )
+
+
+def _slot_summary_from_claim_chain(
+    graph: IdeaGraph,
+    selected_claim_chain: dict[str, object] | None,
+) -> dict[str, object]:
+    if not isinstance(selected_claim_chain, dict):
+        return {}
+    slots = selected_claim_chain.get("slots", {})
+    if not isinstance(slots, dict):
+        return {}
+
+    summary: dict[str, object] = {}
+    for slot_name, node_id in slots.items():
+        if not isinstance(node_id, str) or node_id not in graph.nodes:
+            continue
+        node = graph.nodes[node_id]
+        summary[slot_name] = {
+            "id": node.id,
+            "type": node.type,
+            "role": node.role,
+            "text": _truncate_text(node.text, max_chars=260),
+            "evidence": [_truncate_text(item, max_chars=180) for item in node.evidence[:2]],
+        }
+    if summary:
+        summary["synthesis_contract"] = {
+            "problem_from_slot": "problem",
+            "method_from_slot": "mechanism",
+            "evaluation_from_slot": "evaluation",
+            "caveats_from_slot": "caveat",
+            "existing_methods_from_grounding": True,
+        }
+    return summary
 
 
 def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str:
@@ -1540,6 +1581,7 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
     safe_metadata = _prompt_safe_metadata(graph.metadata)
     grounding = build_literature_grounding(literature=graph.literature, metadata=safe_metadata)
     selected_claim_chain = select_claim_chain(graph, node_ids=local_node_ids or None)
+    slot_summary = _slot_summary_from_claim_chain(graph, selected_claim_chain)
     latest_round = graph.round_summaries[-1][1] if graph.round_summaries else None
     payload = {
         "topic": graph.topic,
@@ -1590,6 +1632,7 @@ def _synthesis_user_prompt(graph: IdeaGraph, subgraph: dict[str, object]) -> str
             "problem_and_motivation_should_not_repeat_each_other": True,
         },
         "selected_claim_chain": selected_claim_chain or {},
+        "slot_summary": slot_summary,
         "latest_round_snapshot": (
             {
                 "support_coverage": latest_round.support_coverage,
@@ -1688,6 +1731,56 @@ def _matching_terms(text: str, terms: list[str]) -> list[str]:
     return _unique_strings(matches)
 
 
+def _content_terms(text: Any, *, limit: int = 8) -> list[str]:
+    generic_tokens = {
+        "with",
+        "that",
+        "this",
+        "from",
+        "using",
+        "into",
+        "task",
+        "tasks",
+        "method",
+        "methods",
+        "approach",
+        "approaches",
+        "model",
+        "models",
+        "report",
+        "metric",
+        "metrics",
+        "benchmark",
+        "datasets",
+        "dataset",
+        "generic",
+        "better",
+        "baseline",
+        "baselines",
+        "current",
+        "integrate",
+    }
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for token in re.findall(r"[A-Za-z0-9\-]+", _coerce_string(text).lower()):
+        if len(token) < 5 or token in generic_tokens or token in seen:
+            continue
+        seen.add(token)
+        ordered.append(token)
+        if len(ordered) >= limit:
+            break
+    return ordered
+
+
+def _contains_key_terms(text: Any, reference_text: Any, *, min_hits: int = 2) -> bool:
+    haystack = _normalize_match_text(text)
+    terms = _content_terms(reference_text)
+    if not haystack or not terms:
+        return False
+    hit_count = sum(1 for term in terms if term in haystack)
+    return hit_count >= min(min_hits, len(terms))
+
+
 def _join_natural_strings(items: list[str]) -> str:
     cleaned = [item.strip() for item in items if item and item.strip()]
     if not cleaned:
@@ -1734,6 +1827,15 @@ def _is_noisy_proposal_sentence(sentence: str) -> bool:
         "captured in diverse real scenarios",
         "project website",
         "see the project website",
+        "task instruction see examples above",
+        "a11y tree",
+        "keyboardmouse",
+        "action observation input predict",
+        "package name",
+        "view id resource name",
+        "bounds in screen",
+        "class name",
+        "content description",
         "et al",
     )
     if any(marker in normalized for marker in noisy_markers):
@@ -1912,6 +2014,44 @@ def _compose_grounded_benchmark_evaluation(
     )
 
 
+def _compose_claim_chain_grounded_evaluation(
+    evaluation_text: str,
+    dataset_items: list[str],
+    metric_items: list[str],
+    reference_titles: list[str],
+    design_anchor_terms: list[str],
+) -> str:
+    evaluation = _clean_proposal_section_text(evaluation_text)
+    if not evaluation or _has_fragmentary_benchmark_plan(evaluation):
+        return _compose_grounded_benchmark_evaluation(
+            dataset_items,
+            metric_items,
+            reference_titles,
+            design_anchor_terms,
+        )
+    if dataset_items and not _contains_any_term(evaluation, dataset_items):
+        evaluation = _append_unique_sentence(
+            evaluation,
+            f"Evaluate on {', '.join(dataset_items[:2])}.",
+        )
+    if metric_items and not _contains_any_term(evaluation, metric_items):
+        evaluation = _append_unique_sentence(
+            evaluation,
+            f"Report {', '.join(metric_items[:3])}.",
+        )
+    if reference_titles and not _contains_any_phrase(evaluation, ("compare against", "baseline")):
+        evaluation = _append_unique_sentence(
+            evaluation,
+            f"Compare against {', '.join(reference_titles[:2])}.",
+        )
+    if design_anchor_terms and not _contains_any_phrase(evaluation, ("ablation", "stress test")):
+        evaluation = _append_unique_sentence(
+            evaluation,
+            f"Include ablations on {', '.join(design_anchor_terms[:2])}.",
+        )
+    return evaluation
+
+
 def _clean_proposal_section_text(text: Any) -> str:
     sentences = _split_sentences(text)
     if not sentences:
@@ -1951,6 +2091,11 @@ def _remove_exact_scaffold_method_sentences(method_text: str, design_highlights:
 
 
 def _postprocess_grounding(graph: IdeaGraph) -> LiteratureGrounding:
+    if graph.metadata.get("benchmark_mode"):
+        return build_literature_grounding(
+            literature=graph.literature,
+            metadata=_prompt_safe_metadata(graph.metadata),
+        )
     stored = graph.metadata.get("literature_grounding", {})
     if isinstance(stored, dict) and stored:
         return LiteratureGrounding(
@@ -1973,6 +2118,10 @@ def _postprocess_grounding(graph: IdeaGraph) -> LiteratureGrounding:
 
 def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> FinalProposal:
     grounding = _postprocess_grounding(graph)
+    selected_claim_chain = select_claim_chain(graph)
+    slot_summary = _slot_summary_from_claim_chain(graph, selected_claim_chain)
+    mechanism_slot = slot_summary.get("mechanism", {}) if isinstance(slot_summary, dict) else {}
+    evaluation_slot = slot_summary.get("evaluation", {}) if isinstance(slot_summary, dict) else {}
     design_anchor_terms = _design_anchor_terms(grounding.design_highlights[:4])
     design_support_terms = _design_support_terms(grounding.design_highlights[:4])
     weak_context_scaffold = grounding.weak_context_scaffold if isinstance(grounding.weak_context_scaffold, dict) else {}
@@ -2027,6 +2176,12 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
     )
 
     proposal.method = _rewrite_imperative_method_sentences(proposal.method)
+    mechanism_text = _coerce_string(mechanism_slot.get("text")) if isinstance(mechanism_slot, dict) else ""
+    if mechanism_text and (
+        _contains_any_phrase(proposal.method, generic_method_markers)
+        or not _contains_key_terms(proposal.method, mechanism_text)
+    ):
+        proposal.method = _rewrite_imperative_method_sentences(mechanism_text)
 
     if grounding.design_highlights and not _contains_any_term(proposal.method, design_support_terms):
         proposal.method = _append_unique_sentence(
@@ -2075,12 +2230,17 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
             f"Concrete nearby references include {', '.join(grounding.reference_titles[:3])}.",
         )
 
-    if grounding.dataset_items and grounding.metric_items and _contains_any_phrase(proposal.evaluation, generic_evaluation_markers):
-        proposal.evaluation = (
-            f"Evaluate on {', '.join(grounding.dataset_items[:2])}. "
-            f"Report {', '.join(grounding.metric_items[:3])}. "
-            f"Compare against {', '.join(grounding.reference_titles[:2]) if grounding.reference_titles else 'strong reference-inspired baselines'}, "
-            f"and include ablations on {', '.join(design_anchor_terms[:2]) if design_anchor_terms else 'the main proposed components'}."
+    evaluation_text = _coerce_string(evaluation_slot.get("text")) if isinstance(evaluation_slot, dict) else ""
+    if grounding.dataset_items and grounding.metric_items and (
+        _contains_any_phrase(proposal.evaluation, generic_evaluation_markers)
+        or (evaluation_text and not _contains_key_terms(proposal.evaluation, evaluation_text, min_hits=1))
+    ):
+        proposal.evaluation = _compose_claim_chain_grounded_evaluation(
+            evaluation_text or proposal.evaluation,
+            grounding.dataset_items,
+            grounding.metric_items,
+            grounding.reference_titles,
+            design_anchor_terms,
         )
 
     if keyword_only_mode:

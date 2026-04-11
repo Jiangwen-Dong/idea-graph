@@ -23,8 +23,10 @@
 | `R006` | `M1` | cross-benchmark smoke batch | `self-refine` | `4` AIIB + `4` Live | benchmark-native automatic metrics | MUST | DONE | shared batch dir `outputs/quality_batches/20260410-192309-m1-4x4-main-slice`; aggregate overall `5.79`, alignment `4.19`, native `7.47`; strongest native single-agent baseline in the final `M1` packet |
 | `R007` | `M1` | cross-benchmark smoke batch | `ai-researcher` | `4` AIIB + `4` Live | benchmark-native automatic metrics | MUST | DONE | shared batch dir `outputs/quality_batches/20260410-192309-m1-4x4-main-slice`; aggregate overall `4.65`, alignment `2.27`, native `7.26`; bridge path remained stable throughout the full packet |
 | `R008` | `M1` | cross-benchmark smoke batch | `ours-eig` | `4` AIIB + `4` Live | benchmark-native automatic metrics + graph diagnostics | MUST | DONE | shared batch dir `outputs/quality_batches/20260410-192309-m1-4x4-main-slice`; aggregate overall `6.46`, alignment `5.08`, graph `9.07`, native `6.78`; strongest by the local benchmark-facing scorer, but not by the benchmark-native averages |
-| `R009` | `M2` | core automatic batch | shortlisted main baselines | at least `24` AIIB | native AIIB metrics including matched-pool `IC` | MUST | TODO | only launch after `M1` is clean |
-| `R010` | `M2` | core automatic batch | shortlisted main baselines | at least `24` LiveIdeaBench | native LiveIdeaBench metrics | MUST | TODO | keep the same shared output contract |
+| `R009A` | `M2` | preflight + smoke gate | `direct`, `self-refine`, `ai-researcher`, `ours-eig` | AIIB smoke subset `13, 3883, 7909, 9849` | local AIIB metrics + targeted native smoke check | MUST | DONE | output root `outputs/m2_aiib_r009_smoke`; preflight passed; smoke generation finished `16/16`; targeted native check finished `8/8` for `self-refine` and `ours-eig`; local smoke strongly favors `ours-eig` (`6.00/4.37`), while targeted native smoke is still slightly higher for `self-refine` (`8.36` vs `8.07`) |
+| `R009B` | `M2` | post-cleanup narrow AIIB diagnosis rerun | `ours-eig` | AIIB smoke subset `13, 3883, 7909, 9849` | native AIIB metrics + local AIIB metrics | MUST | DONE | output root `outputs/m2_aiib_r009_diagnosis`; after the robustness cleanup, mean native rises to `8.29/10` and hard case `3883` recovers to `7.43/10`, but local overall/alignment fall to `4.61/2.31` because several final experiment plans still contain OCR-like or stitched evaluation fragments |
+| `R009` | `M2` | core automatic batch | shortlisted main baselines | at least `24` AIIB | native AIIB metrics including matched-pool `IC` | MUST | IN PROGRESS | smoke gate is complete via `R009A`; the planned EIG robustness cleanup is now implemented and locally verified; next action is a post-fix hard-case gate check on `3883`, followed by a refreshed 4-case `R009B` rerun if the surface form is clean; design note: `docs/superpowers/specs/2026-04-11-eig-robustness-cleanup-design.md`; implementation plan: `docs/superpowers/plans/2026-04-11-eig-robustness-cleanup.md`; launch note: `docs/r009_aiib_launch_plan.md` |
+| `R010` | `M2` | core automatic batch | shortlisted main baselines | at least `24` LiveIdeaBench | native LiveIdeaBench metrics | MUST | TODO | launch after the weak-context stability decision; keep the same shared output contract |
 | `R011` | `M4` | human blind review packet | `direct`, `self-refine`, `ai-researcher`, `ours-eig` | balanced `8` to `12` cases per benchmark | human rubric | MUST | TODO | anonymize system names and standardize formatting |
 | `R012` | `M5` | mechanism ablation | `ours-eig` without utility-guided ranking | balanced `6 + 6` subset | native metrics + graph metrics | MUST | TODO | tests whether utility-guided selection matters |
 | `R013` | `M5` | mechanism ablation | `ours-eig` without maturity stop | balanced `6 + 6` subset | native metrics + rounds-to-maturity | MUST | TODO | tests whether current stopping is helping or harming |
@@ -113,3 +115,62 @@
 - current recommendation:
   - treat `R005-mini-v3` as the reference small-`M1` packet
   - only run another narrowly targeted weak-context stabilization pass if we decide meteorology variance is still too high before launching larger `M2` slices
+
+## 2026-04-11: EIG Robustness Cleanup + AIIB Diagnosis
+
+- implemented the pre-`R009` robustness cleanup for `ours-eig`:
+  - benchmark-mode grounding now rebuilds from prompt-safe metadata instead of hidden target fields
+  - literature grounding now filters generic snippet fragments that were being misread as datasets or metrics
+  - utility now exposes benchmark-facing factors: `benchmark_specificity`, `experiment_alignment`, `role_balance`, and `reference_copy_penalty`
+  - claim-chain selection is now slot-aware, prefers grounded evaluation nodes, and preserves a supporting hypothesis in the mature subgraph when needed
+  - maturity now evaluates the claim-chain subgraph first and requires benchmark-specific structure on non-weak-context benchmarks
+  - synthesis payloads now expose a `slot_summary`, and final proposal postprocessing can rewrite generic benchmark outputs from the selected mechanism/evaluation slots
+- regression status after this slice:
+  - `python -m pytest tests/test_literature_grounding.py tests/test_agent_backend.py tests/test_engine.py -v`
+  - `59 passed`
+- narrow AIIB diagnosis rerun completed for `ours-eig` on `13, 3883, 7909, 9849`:
+  - output root:
+    `outputs/m2_aiib_r009_diagnosis`
+  - native average:
+    `8.29/10`
+  - local averages:
+    overall `4.61/10`, alignment `2.31/10`, graph `9.18/10`
+  - per-case native:
+    - `13`: `8.57`
+    - `3883`: `7.43`
+    - `7909`: `8.29`
+    - `9849`: `8.86`
+- interpretation:
+  - the hard AIIB case `3883` is materially better than the earlier failure regime, so the robustness cleanup is directionally correct
+  - however, the final proposal surface form is still not stable enough for a full `R009` launch: several runs still show OCR-like evaluation fragments, noisy dataset names, or stitched benchmark plans even when the native score improves
+- next recommended step:
+  - do one more narrow grounding/synthesis cleanup aimed specifically at OCR-like evaluation extraction and noisy benchmark-plan rewriting before spending the full `24`-case `R009` budget
+
+## 2026-04-11: Post-Diagnosis Benchmark-Safety Cleanup
+
+- implemented the follow-up benchmark-safety fix after the narrow AIIB diagnosis:
+  - benchmark reference packets now strip OCR-like GUI dump snippets before they
+    reach prompts
+  - prompt-safe metadata now inherits that sanitized benchmark packet
+  - saved `literature_grounding` in `run_experiment(...)` now comes from
+    `generation_safe_metadata`, so hidden target-paper summaries no longer leak
+    into fresh benchmark-mode EIG artifacts
+  - metric-signal matching is now boundary-aware, which removes the false
+    `IoU` trigger inside words like `various`
+- added targeted regression coverage for:
+  - reference-packet sanitization
+  - prompt-safe grounding persistence
+  - OCR-like benchmark evaluation rewriting
+  - false metric matches from substring collisions
+- verification status after this slice:
+  - `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_agent_backend.py tests/test_engine.py tests/test_literature_grounding.py -v`
+  - `82 passed`
+- current recommendation:
+  - hard-case spot check on `3883` has now been run at
+    `outputs/m2_aiib_r009_postfix_spotcheck/20260411-175908-ai-idea-bench-2025-3883`
+  - that run confirms the bug fix worked: the OCR-like experiment-plan
+    corruption is gone, and saved grounding is prompt-safe
+  - the next decision is whether to accept the still-generic but readable
+    proposal surface form and rerun the 4-case `R009B` packet, or do one more
+    lightweight grounding-specific patch for benchmark-title-derived evaluation
+    anchors first

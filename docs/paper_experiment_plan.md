@@ -240,7 +240,7 @@
 |-----------|------|------|---------------|------|------|
 | `M0` | protocol and infrastructure sanity | `1` AI Idea Bench case and `1` LiveIdeaBench case for `ours-eig`; `1` AI Idea Bench case for `ai-researcher`; `virsci` feasibility audit | benchmark packet, output schema, and benchmark-native scorer all run end to end | low to medium API cost | exact baseline wrappers may fail on benchmark-mode inputs |
 | `M1` | exact baseline smoke test | `direct`, `self-refine`, `ai-researcher`, `ours-eig` on `4 + 4` cross-benchmark slice | all main systems must finish cleanly before scaling | medium API cost | unstable wrappers or scorer failures |
-| `M2` | core automatic batch | main comparison set on at least `24 + 24` cross-benchmark slice | if `ours-eig` is clearly non-competitive, stop and revise controller before larger runs | high API cost | benchmark alignment may remain weak |
+| `M2` | core automatic batch | main comparison set on at least `24 + 24` cross-benchmark slice | run `AI_Idea_Bench_2025` first; only launch the full `LiveIdeaBench` slice after deciding whether the remaining weak-context variance is acceptable | high API cost | benchmark alignment may remain weak and weak-context rows may show higher variance |
 | `M3` | baseline decision gate | either add `virsci` if benchmark-faithful or formally demote it from the main paper table | no silent proxy substitution | low engineering cost, potentially high integration cost | upstream system lacks fixed-topic entrypoint |
 | `M4` | human evaluation packet | prepare anonymized outputs from the strongest systems on a balanced subset | only proceed after automatic outputs are clean and non-generic | medium human effort | rating burden and reviewer consistency |
 | `M5` | ablation and appendix analyses | EIG ablations plus process, reliability, and cost analyses | keep only ablations that change reviewer belief | medium API cost | too many variants can dilute the story |
@@ -298,9 +298,60 @@
 - Mitigation:
   - prepare the packet immediately after `M2` and keep the reviewed subset compact
 
+## Post-M1 Review
+
+- `M0` is complete.
+- The refreshed small-`M1` packet is complete and should be treated as the current
+  reference development batch:
+  - `outputs/quality_batches/20260411-000159-refreshed-m1-mini-synthesis-cleanup-v2-native`
+- The current evidence supports the following interpretation:
+  - `ours-eig` is clearly strongest on `AI_Idea_Bench_2025`
+  - `ours-eig` is competitive on `LiveIdeaBench`, but weak-context meteorology
+    still shows some stochastic variance
+  - `self-refine` remains the strongest single-agent baseline and should stay as
+    the main non-graph comparison point
+  - `ai-researcher` is useful as an exact baseline, but is not currently the
+    strongest comparison system and should not determine controller design
+
 ## Immediate Next Step
 
-Run `M0`: verify one end-to-end benchmark-native generation-and-scoring path on each benchmark, confirm `ai-researcher` exact benchmark-mode execution, and make a hard decision on whether `virsci` stays in the main baseline set.
+Launch `M2` in a staged order instead of as one monolithic cross-benchmark batch.
+
+1. `M2-AIIB`:
+   - run the benchmark-native core automatic slice on `AI_Idea_Bench_2025` first
+   - keep the main comparison set:
+     - `direct`
+     - `self-refine`
+     - `ai-researcher`
+     - `ours-eig`
+   - use this slice as the primary paper-facing automatic result because it is
+     the most benchmark-faithful setting and the current strongest regime for
+     `ours-eig`
+2. Weak-context decision gate:
+   - decide whether to accept the current weak-context stability on
+     `LiveIdeaBench`
+   - only do one more narrow `ours-eig` stabilization pass if meteorology-like
+     rows are still judged too noisy for the larger slice
+3. `M2-Live`:
+   - launch the benchmark-native `LiveIdeaBench` core automatic slice once the
+     weak-context decision is made
+   - keep the same shared output contract and baseline set
+4. `M5-core`:
+   - after the larger automatic results are stable, run the core EIG ablations
+     on utility ranking, maturity stopping, and flat synthesis
+5. `M4`:
+   - prepare the human blind-review packet only after the final proposal format
+     is stable across both benchmarks
+
+## First Concrete Run Queue
+
+1. Freeze the current small-`M1` packet as the reference development batch.
+2. Launch the `AI_Idea_Bench_2025` `M2` slice.
+3. Review the saved `AI_Idea_Bench_2025` native results before spending on the
+   full `LiveIdeaBench` slice.
+4. If needed, run one narrow weak-context `ours-eig` stabilization pass on
+   meteorology-like `LiveIdeaBench` rows.
+5. Launch the `LiveIdeaBench` `M2` slice.
 
 ## Final Checklist
 

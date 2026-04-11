@@ -1,6 +1,6 @@
 # Benchmarks
 
-This project currently supports two benchmark integrations.
+This project currently supports two active benchmark integrations.
 
 ## AI_Idea_Bench_2025
 
@@ -22,7 +22,7 @@ Conversion strategy:
 - target-paper-side metadata is preserved in artifacts for inspection and evaluation
 - generation prompts now use a prompt-safe benchmark view that keeps reference papers but hides oracle fields such as the target paper title, gold motivation, and gold method summary
 
-## liveideabench
+## LiveIdeaBench
 
 Source:
 
@@ -43,4 +43,5 @@ Conversion strategy:
 
 `AI_Idea_Bench_2025` contains explicit paper context, so its generated seed graphs can be grounded in benchmark references.
 
-`liveideabench` is keyword-and-score oriented, so it needs an extra retrieval step in future work to provide comparable literature grounding.
+`LiveIdeaBench` is keyword-and-score oriented, so it needs an extra retrieval
+step in future work to provide comparable literature grounding.

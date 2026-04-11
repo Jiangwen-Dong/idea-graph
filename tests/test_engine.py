@@ -143,6 +143,57 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(any("TaskFramer" in message for message in messages))
         self.assertTrue(any("LiteratureGrounder" in message for message in messages))
 
+    def test_run_experiment_stores_prompt_safe_grounding_in_benchmark_mode(self) -> None:
+        graph = run_experiment(
+            topic="The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",
+            literature=["SeeClick", "OSWorld"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_mode": True,
+                "target_paper": "Hidden Target GUI Model",
+                "method_summary": "Secret gold method.",
+                "raw_record": {
+                    "summary": {
+                        "method": {
+                            "datasets": "HiddenSet",
+                            "metrics": "HiddenMetric",
+                        }
+                    }
+                },
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "method": "Use screenshot-grounded interaction instead of structured text for GUI agents.",
+                            "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                        }
+                    ],
+                },
+                "generation_safe_metadata": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "benchmark_mode": True,
+                    "paper_grounding": {
+                        "reference_paper_snippets": [
+                            {
+                                "resolved_title": "SeeClick",
+                                "method": "Use screenshot-grounded interaction instead of structured text for GUI agents.",
+                                "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                            }
+                        ],
+                    },
+                },
+            },
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        grounding = graph.metadata["literature_grounding"]
+        self.assertEqual(grounding["target_paper"], "")
+        self.assertNotIn("HiddenSet", grounding["dataset_items"])
+        self.assertNotIn("HiddenMetric", grounding["metric_items"])
+        self.assertNotIn("Hidden Target", grounding["existing_methods_summary"])
+        self.assertIn("OSWorld", " ".join(grounding["dataset_items"] + grounding["metric_items"]))
+
     def test_deterministic_synthesis_produces_richer_structured_fields(self) -> None:
         graph = run_experiment(
             topic="graph-based scientific ideation",
@@ -373,6 +424,224 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(final_subgraph.get("selection_mode"), "claim_chain")
         self.assertEqual(set(final_subgraph["node_ids"]), set(chain["subgraph"]["node_ids"]))
 
+    def test_claim_chain_prefers_concrete_method_over_generic_hypothesis_when_available(self) -> None:
+        graph = IdeaGraph(
+            topic="GUI grounding for out-of-distribution GUI agents.",
+            literature=["SeeClick"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "generation_safe_metadata": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "paper_grounding": {
+                        "reference_paper_snippets": [
+                            {
+                                "resolved_title": "SeeClick",
+                                "method": "Use screenshot-grounded interaction instead of structured text.",
+                                "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                            }
+                        ]
+                    },
+                },
+            },
+        )
+        problem_branch = create_branch(graph, "ImpactReframer")
+        gap_branch = create_branch(graph, "NoveltyExaminer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+        risk_branch = create_branch(graph, "FeasibilityCritic")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="GUI agents fail under layout and visual distribution shift.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.85,
+        )
+        gap = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Visible references do not explicitly model cross-platform uncertainty in GUI grounding.",
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+            confidence=0.82,
+        )
+        hypothesis = create_node(
+            graph,
+            node_type="Hypothesis",
+            text="A better GUI grounding method should improve transfer.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.9,
+        )
+        generic_method = create_node(
+            graph,
+            node_type="Method",
+            text="Use a generic multimodal architecture for the task.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.88,
+        )
+        concrete_method = create_node(
+            graph,
+            node_type="Method",
+            text=(
+                "Use uncertainty-aware screenshot-grounded element localization before action decoding to handle "
+                "cross-platform GUI shift."
+            ),
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.86,
+        )
+        evaluation = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on OSWorld and report success rate and error rate with cross-platform stress tests.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.84,
+        )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="The grounding model may still fail on unseen interface widgets.",
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+            confidence=0.75,
+        )
+
+        for source, target in (
+            (gap, problem),
+            (hypothesis, gap),
+            (generic_method, hypothesis),
+            (concrete_method, hypothesis),
+            (evaluation, concrete_method),
+        ):
+            create_edge(
+                graph,
+                source_id=source.id,
+                relation="supports",
+                target_id=target.id,
+                role=source.role,
+                branch_id=source.branch_id,
+            )
+        create_edge(
+            graph,
+            source_id=risk.id,
+            relation="contradicts",
+            target_id=concrete_method.id,
+            role=risk.role,
+            branch_id=risk_branch.id,
+        )
+
+        chain = select_claim_chain(graph)
+
+        assert chain is not None
+        self.assertEqual(chain["slots"]["mechanism"], concrete_method.id)
+
+    def test_claim_chain_prefers_evaluation_node_with_visible_benchmark_anchors(self) -> None:
+        graph = IdeaGraph(
+            topic="GUI grounding for out-of-distribution GUI agents.",
+            literature=["SeeClick"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "generation_safe_metadata": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "paper_grounding": {
+                        "reference_paper_snippets": [
+                            {
+                                "resolved_title": "SeeClick",
+                                "method": "Use screenshot-grounded interaction instead of structured text.",
+                                "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                            }
+                        ]
+                    },
+                },
+            },
+        )
+        problem_branch = create_branch(graph, "ImpactReframer")
+        gap_branch = create_branch(graph, "NoveltyExaminer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+        risk_branch = create_branch(graph, "FeasibilityCritic")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="GUI agents fail under layout and visual distribution shift.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.85,
+        )
+        gap = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Visible references do not explicitly model cross-platform uncertainty in GUI grounding.",
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+            confidence=0.82,
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text="Use uncertainty-aware screenshot-grounded element localization before action decoding.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.86,
+        )
+        generic_eval = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on benchmark datasets and report task-relevant metrics.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.9,
+        )
+        grounded_eval = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on OSWorld and report success rate and error rate with cross-platform stress tests.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.82,
+        )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="The grounding model may still fail on unseen interface widgets.",
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+            confidence=0.75,
+        )
+
+        for source, target in (
+            (gap, problem),
+            (method, gap),
+            (generic_eval, method),
+            (grounded_eval, method),
+        ):
+            create_edge(
+                graph,
+                source_id=source.id,
+                relation="supports",
+                target_id=target.id,
+                role=source.role,
+                branch_id=source.branch_id,
+            )
+        create_edge(
+            graph,
+            source_id=risk.id,
+            relation="contradicts",
+            target_id=method.id,
+            role=risk.role,
+            branch_id=risk_branch.id,
+        )
+
+        chain = select_claim_chain(graph)
+
+        assert chain is not None
+        self.assertEqual(chain["slots"]["evaluation"], grounded_eval.id)
+
     def test_maturity_requires_complete_claim_chain(self) -> None:
         graph = IdeaGraph(
             topic="The topic of this paper is human pose and shape estimation using LiDAR in uncontrolled environments.",
@@ -544,6 +813,195 @@ class EngineTests(unittest.TestCase):
         self.assertGreaterEqual(breakdown.promise, 0.0)
         self.assertLessEqual(breakdown.coherence, 1.0)
 
+    def test_utility_prefers_specific_method_and_evaluation_over_generic_chain(self) -> None:
+        def build_chain(*, method_text: str, evaluation_text: str) -> IdeaGraph:
+            graph = IdeaGraph(
+                topic="GUI grounding for out-of-distribution GUI agents",
+                literature=["SeeClick"],
+                metadata={
+                    "benchmark_mode": True,
+                    "generation_safe_metadata": {
+                        "benchmark": "AI_Idea_Bench_2025",
+                        "paper_grounding": {
+                            "reference_paper_snippets": [
+                                {
+                                    "resolved_title": "SeeClick",
+                                    "method": "Use screenshot-grounded interaction instead of structured text.",
+                                    "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                                }
+                            ]
+                        },
+                    },
+                },
+            )
+            branch = create_branch(graph, "MechanismProposer")
+            problem = create_node(
+                graph,
+                node_type="Problem",
+                text="GUI agents fail to generalize when interface layouts and visual styles shift.",
+                role="ImpactReframer",
+                branch_id=branch.id,
+                confidence=0.82,
+            )
+            hypothesis = create_node(
+                graph,
+                node_type="Hypothesis",
+                text="A grounded visual interaction model can improve GUI-agent generalization.",
+                role="MechanismProposer",
+                branch_id=branch.id,
+                confidence=0.82,
+            )
+            method = create_node(
+                graph,
+                node_type="Method",
+                text=method_text,
+                role="MechanismProposer",
+                branch_id=branch.id,
+                confidence=0.82,
+            )
+            evaluation = create_node(
+                graph,
+                node_type="EvalPlan",
+                text=evaluation_text,
+                role="EvaluationDesigner",
+                branch_id=branch.id,
+                confidence=0.82,
+            )
+            novelty = create_node(
+                graph,
+                node_type="NoveltyClaim",
+                text="The idea targets cross-platform GUI grounding rather than only supervised click prediction.",
+                role="NoveltyExaminer",
+                branch_id=branch.id,
+                confidence=0.82,
+            )
+            for source, target in (
+                (hypothesis, problem),
+                (method, hypothesis),
+                (evaluation, method),
+                (novelty, hypothesis),
+            ):
+                create_edge(
+                    graph,
+                    source_id=source.id,
+                    relation="supports",
+                    target_id=target.id,
+                    role=source.role,
+                    branch_id=branch.id,
+                )
+            return graph
+
+        generic_breakdown = utility_breakdown(
+            build_chain(
+                method_text="Use a better agent architecture with a generic multimodal module.",
+                evaluation_text="Evaluate on benchmark datasets and report task-relevant metrics.",
+            )
+        )
+        specific_breakdown = utility_breakdown(
+            build_chain(
+                method_text=(
+                    "Train an uncertainty-aware screenshot-grounded action planner that separates visual element "
+                    "localization from command grounding and tests cross-platform GUI shifts."
+                ),
+                evaluation_text=(
+                    "Evaluate on OSWorld and held-out GUI layouts, report success rate and error rate, and ablate "
+                    "visual grounding and uncertainty calibration."
+                ),
+            )
+        )
+
+        self.assertGreater(specific_breakdown.total, generic_breakdown.total)
+
+    def test_utility_penalizes_reference_copy_collapse(self) -> None:
+        def build_chain(method_text: str) -> IdeaGraph:
+            graph = IdeaGraph(
+                topic="GUI grounding for out-of-distribution GUI agents",
+                literature=["SeeClick"],
+                metadata={
+                    "benchmark_mode": True,
+                    "generation_safe_metadata": {
+                        "benchmark": "AI_Idea_Bench_2025",
+                        "paper_grounding": {
+                            "reference_paper_snippets": [
+                                {
+                                    "resolved_title": "SeeClick",
+                                    "method": "Use screenshot-grounded interaction instead of structured text.",
+                                    "evaluation": "Evaluate on OSWorld and report success rate.",
+                                }
+                            ]
+                        },
+                    },
+                },
+            )
+            branch = create_branch(graph, "MechanismProposer")
+            problem = create_node(
+                graph,
+                node_type="Problem",
+                text="GUI agents fail when visual interfaces shift across platforms.",
+                role="ImpactReframer",
+                branch_id=branch.id,
+                confidence=0.84,
+            )
+            hypothesis = create_node(
+                graph,
+                node_type="Hypothesis",
+                text="A GUI grounding method with explicit uncertainty can improve transfer.",
+                role="MechanismProposer",
+                branch_id=branch.id,
+                confidence=0.84,
+            )
+            method = create_node(
+                graph,
+                node_type="Method",
+                text=method_text,
+                role="MechanismProposer",
+                branch_id=branch.id,
+                confidence=0.84,
+            )
+            evaluation = create_node(
+                graph,
+                node_type="EvalPlan",
+                text="Evaluate on OSWorld and report success rate with cross-platform stress tests.",
+                role="EvaluationDesigner",
+                branch_id=branch.id,
+                confidence=0.84,
+            )
+            novelty = create_node(
+                graph,
+                node_type="NoveltyClaim",
+                text="The method adds uncertainty-aware cross-platform transfer beyond the visible reference.",
+                role="NoveltyExaminer",
+                branch_id=branch.id,
+                confidence=0.84,
+            )
+            for source, target in (
+                (hypothesis, problem),
+                (method, hypothesis),
+                (evaluation, method),
+                (novelty, hypothesis),
+            ):
+                create_edge(
+                    graph,
+                    source_id=source.id,
+                    relation="supports",
+                    target_id=target.id,
+                    role=source.role,
+                    branch_id=branch.id,
+                )
+            return graph
+
+        copied_breakdown = utility_breakdown(
+            build_chain("Use screenshot-grounded interaction instead of structured text.")
+        )
+        original_breakdown = utility_breakdown(
+            build_chain(
+                "Add uncertainty-aware cross-platform element localization before command grounding and reject "
+                "ambiguous GUI targets during transfer."
+            )
+        )
+
+        self.assertLess(copied_breakdown.total, original_breakdown.total)
+
     def test_final_subgraph_includes_selection_metadata(self) -> None:
         graph = self._build_seed_graph()
 
@@ -660,6 +1118,115 @@ class EngineTests(unittest.TestCase):
         graph.utility_history = [7.6, 7.8]
         specific_round3_snapshot = maturity_snapshot(graph)
         self.assertTrue(specific_round3_snapshot.is_mature)
+
+    def test_benchmark_mode_maturity_requires_benchmark_specific_chain(self) -> None:
+        graph = IdeaGraph(
+            topic="GUI grounding for out-of-distribution GUI agents.",
+            literature=["SeeClick"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "generation_safe_metadata": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "paper_grounding": {
+                        "reference_paper_snippets": [
+                            {
+                                "resolved_title": "SeeClick",
+                                "method": "Use screenshot-grounded interaction instead of structured text.",
+                                "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                            }
+                        ]
+                    },
+                },
+            },
+        )
+        problem_branch = create_branch(graph, "ImpactReframer")
+        gap_branch = create_branch(graph, "NoveltyExaminer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+        risk_branch = create_branch(graph, "FeasibilityCritic")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="GUI agents fail under layout and visual distribution shift.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.85,
+        )
+        gap = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Visible references do not explicitly model cross-platform uncertainty in GUI grounding.",
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+            confidence=0.82,
+            evidence=["Reference methods still fail under distribution shift."],
+        )
+        hypothesis = create_node(
+            graph,
+            node_type="Hypothesis",
+            text="A stronger GUI grounding method can improve transfer.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.84,
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text="Use a better multimodal architecture for the task.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.84,
+        )
+        evaluation = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Evaluate on benchmark datasets and report task-relevant metrics.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.84,
+            evidence=["Run a standard benchmark comparison."],
+        )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="The model may still fail on unseen interface widgets.",
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+            confidence=0.75,
+        )
+
+        for source, target in (
+            (gap, problem),
+            (hypothesis, gap),
+            (method, hypothesis),
+            (evaluation, method),
+        ):
+            create_edge(
+                graph,
+                source_id=source.id,
+                relation="supports",
+                target_id=target.id,
+                role=source.role,
+                branch_id=source.branch_id,
+            )
+
+        graph.utility_history = [6.8, 6.8]
+        generic_snapshot = maturity_snapshot(graph)
+        self.assertFalse(generic_snapshot.is_mature)
+
+        method.text = (
+            "Use uncertainty-aware screenshot-grounded element localization before action decoding to handle "
+            "cross-platform GUI shift."
+        )
+        evaluation.text = (
+            "Evaluate on OSWorld and report success rate and error rate with cross-platform stress tests and "
+            "ablations on uncertainty calibration."
+        )
+
+        graph.utility_history = [8.0, 8.1]
+        specific_snapshot = maturity_snapshot(graph)
+        self.assertTrue(specific_snapshot.is_mature)
 
 
 if __name__ == "__main__":

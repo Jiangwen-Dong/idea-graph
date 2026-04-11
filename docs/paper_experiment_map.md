@@ -90,9 +90,15 @@ pass on weak-context `LiveIdeaBench` meteorology stability before larger runs.
 If we keep the current packet as the frozen small-`M1` reference, the next run
 order should be:
 
-1. optional weak-context stabilization for `ours-eig` on meteorology-like
+1. `M2` benchmark-native core automatic slice on `AI_Idea_Bench_2025`
+   - this should be the first larger slice because it is the primary benchmark
+     and the current strongest regime for `ours-eig`
+2. optional weak-context stabilization for `ours-eig` on meteorology-like
    `LiveIdeaBench` rows
-2. `M2` benchmark-native core automatic slice on `AI_Idea_Bench_2025`
+   - only if we judge the remaining weak-context variance too risky for the
+     larger keyword-only slice
 3. `M2` benchmark-native core automatic slice on `LiveIdeaBench`
+   - launch after the weak-context stability decision rather than treating it
+     as a blocker for `AI_Idea_Bench_2025`
 4. EIG ablations after the larger automatic results are stable
 5. shared human blind review after proposal formatting is stable

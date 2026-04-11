@@ -84,6 +84,75 @@ class LiteratureGroundingTests(unittest.TestCase):
         self.assertTrue("accuracy" in grounding.metric_items or "IoU" in grounding.metric_items)
         self.assertIn("Evaluate on", grounding.experiment_plan_summary)
 
+    def test_safe_grounding_does_not_recover_hidden_target_benchmark_fields(self) -> None:
+        grounding = build_literature_grounding(
+            literature=["SeeClick"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "abstract": "Visual GUI grounding for cross-platform interaction.",
+                            "method": "Use screenshot-grounded interaction instead of structured text.",
+                            "evaluation": "Evaluate on OSWorld and report success rate and error rate.",
+                        }
+                    ]
+                },
+                "benchmark_input_packet": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "topic": "The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",
+                    "reference_packet": [
+                        {"title": "SeeClick", "snippet": "Visual grounding for GUI agents."}
+                    ],
+                },
+            },
+        )
+
+        self.assertEqual(grounding.target_paper, "")
+        self.assertNotIn("os atlas", " ".join(grounding.design_highlights).lower())
+        self.assertNotIn("13 million", " ".join(grounding.dataset_items).lower())
+
+    def test_safe_grounding_filters_noisy_reference_fragments_as_fake_datasets_or_metrics(self) -> None:
+        grounding = build_literature_grounding(
+            literature=["SeeClick"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "abstract": "This innovative approach bypasses structured text and adapts to GUI platforms.",
+                            "method": "This innovative approach bypasses structured text and adapts to GUI platforms.",
+                            "evaluation": "This innovative approach bypasses structured text and adapts to GUI platforms.",
+                        }
+                    ]
+                },
+            },
+        )
+
+        self.assertEqual(grounding.dataset_items, [])
+        self.assertEqual(grounding.metric_items, [])
+
+    def test_metric_signal_matching_does_not_treat_various_as_iou(self) -> None:
+        grounding = build_literature_grounding(
+            literature=["SeeClick"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "SeeClick",
+                            "evaluation": "This method adapts to various GUI platforms without structured text.",
+                        }
+                    ]
+                },
+            },
+        )
+
+        self.assertNotIn("various GUI platforms", " ".join(grounding.metric_items))
+        self.assertEqual(grounding.metric_items, [])
+
     def test_noisy_reference_snippet_dataset_fragments_are_filtered(self) -> None:
         grounding = build_literature_grounding(
             literature=["LiDAR HPS"],
