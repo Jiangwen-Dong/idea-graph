@@ -66,10 +66,29 @@ scientific outcome metrics.
 - `Evidence coverage`
 - `Contradiction resolution`
 - `Claim-chain completeness`
-- `Rounds to maturity`
+- `Commit round`
 - `Action diversity`
+- graph-critic action accuracy against hindsight labels, when available
+- commit-vs-continue calibration
 - `API and token cost`
 - `Wall-clock runtime`
+
+For the graph-critic track, process metrics should answer whether the learned
+controller improves decision making over the heuristic prototype. They should
+not be merged into the main benchmark score.
+
+Recommended critic-specific ablations:
+
+- `ours-eig-heuristic`
+  the current utility/maturity controller
+- `ours-eig-critic-text`
+  a learned critic over flattened graph summaries
+- `ours-eig-critic-graph`
+  a learned critic over the structured idea graph
+- `ours-eig-critic-no-commit`
+  learned edit selection with fixed stopping
+- `ours-eig-critic-calibrated`
+  graph critic with calibrated commit decision
 
 ## Development-Time Local Deterministic Evaluator
 
@@ -121,7 +140,8 @@ judge model and benchmark assets are available.
 
 - graph-process diagnostics
 - fallback and controller analysis
-- maturity trajectories across rounds
+- commit trajectories across rounds
+- critic calibration curves
 - extra ablations on prompt, retrieval, or stopping policies
 
 ## Practical Repo Policy

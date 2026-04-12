@@ -59,7 +59,8 @@ Align the repository's experiment code with the revised paper framing:
   `python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-eig --max-rounds 1`
   and the pipeline completed successfully, wrote artifacts, and reported the
   canonical baseline name as `ours-eig`.
-- Rewrote `docs/paper_experiment_map.md` so the current planning note now
+- Rewrote the note now archived as
+  `docs/archive/paper_experiment_map_pre_critic.md` so the current planning note now
   reflects the revised EIG framing instead of the older delayed-consensus
   narrative.
 - Started the next method-alignment step: replacing the coarse graph-wide
@@ -253,15 +254,44 @@ table refresh.
     the proposal is now readable but still too generic on `3883`, because the
     surviving safe grounding does not yet provide enough concrete dataset and
     metric anchors for a benchmark-faithful experiment plan
+- Implemented the lightweight title-derived anchor patch:
+  - when snippet-derived grounding is weak, visible reference titles can now
+    contribute conservative benchmark-facing anchors such as
+    `Amex dataset`, `Osworld benchmark`, `grounding accuracy`,
+    `success rate`, and `error rate`
+- Added new focused regressions for:
+  - title-derived benchmark anchors in `tests/test_literature_grounding.py`
+  - final proposal use of those anchors in `tests/test_agent_backend.py`
+- Re-ran the relevant verification suite:
+  - `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_agent_backend.py tests/test_engine.py tests/test_literature_grounding.py -v`
+  - `84 passed`
+- Reran the full 4-case `ours-eig` AIIB diagnosis packet with native scoring:
+  - output root:
+    `outputs/m2_aiib_r009_diagnosis_title_anchor`
+  - mean local overall:
+    `5.91 / 10`
+  - mean local alignment:
+    `4.43 / 10`
+  - mean local graph:
+    `9.24 / 10`
+  - mean native:
+    `7.36 / 10`
+- Interpretation after the rerun:
+  - the patch clearly improves local benchmark grounding and cleans the
+    previously generic `3883` proposal surface form
+  - however, native benchmark quality is now less stable, with drops on
+    `3883` and `9849`
+  - so the title-anchor patch is directionally useful but not yet the final
+    pre-`R009` fix
 
 ## Current Next Step Queue
 
 1. Post-fix AIIB gate check:
-   - decide whether to accept the current cleanup as sufficient for a refreshed
-     4-case `R009B` rerun, or do one more lightweight grounding-specific patch
-     for benchmark titles like `OSWorld`
-   - if we rerun now, use the same 4-case diagnosis packet:
-     `13, 3883, 7909, 9849`
+   - inspect why title-derived anchors help local alignment but hurt native
+     quality on `3883` and `9849`
+   - most likely next patch target:
+     keep title-derived dataset anchors, but make evaluation synthesis less
+     template-like and less eager to overwrite stronger case-specific plans
 2. Optional narrow weak-context stabilization:
    - one more EIG-only refinement pass for meteorology-like
      `LiveIdeaBench` cases if we want lower run-to-run variance before larger
@@ -305,8 +335,8 @@ table refresh.
 
 ### 2026-04-11: R009 Launch Planning
 
-- Prepared a concrete launch note for `R009`:
-  - `docs/r009_aiib_launch_plan.md`
+- Prepared a concrete launch note for `R009`, now archived as:
+  - `docs/archive/r009_aiib_launch_plan_pre_critic.md`
 - Fixed the initial larger automatic slice to the primary benchmark
   `AI_Idea_Bench_2025` rather than a monolithic cross-benchmark launch.
 - The launch note now records:
@@ -441,7 +471,8 @@ table refresh.
 - Added a new paper-facing planning layer:
   - `docs/paper_experiment_plan.md`
   - `docs/paper_experiment_tracker.md`
-- Rewrote `docs/paper_experiment_map.md` so the compact experiment map now
+- Rewrote the note now archived as
+  `docs/archive/paper_experiment_map_pre_critic.md` so the compact experiment map now
   matches the current protocol:
   - `AI_Idea_Bench_2025` as the primary benchmark
   - `LiveIdeaBench` as the secondary benchmark
@@ -961,6 +992,36 @@ regeneration packet on the touched codepath:
 - keep `virsci` excluded from the main table for now and record it as a later
   integration task
 
+## 2026-04-12: Graph-Critic Method Track
+
+- reviewed the current heuristic maturity design and concluded that further
+  threshold engineering is unlikely to be persuasive enough for a NeurIPS-facing
+  method contribution
+- opened a new forward method track:
+  `Idea Graph Evolution with a learned graph critic`
+- core shift:
+  - previous controller:
+    hand-designed utility and maturity thresholds
+  - new target controller:
+    learned graph critic that scores candidate edits and a special `commit`
+    action
+- paper-facing optimization view:
+  - graph state:
+    \(G_t = (V_t, E_t)\)
+  - candidate action:
+    \(a \in \mathcal{A}(G_t) \cup \{\mathrm{commit}\}\)
+  - critic:
+    \(Q_\theta(G_t, a, x)\)
+  - controller:
+    select the highest-valued edit or commit action
+- documentation cleanup started:
+  - added `docs/eig_graph_critic_plan.md`
+  - marked the full `R009` 24-case launch as paused
+  - moved the active plan toward trajectory export, critic dataset construction,
+    critic training, and critic-controlled pilot evaluation
+- retained all previous `M1` and `R009` outputs as pre-critic pilot data rather
+  than deleting them, because they can support offline trajectory construction
+
 ## 2026-04-11: EIG Robustness Cleanup And Narrow AIIB Diagnosis
 
 - Executed the planned pre-`R009` robustness revision for `ours-eig` inline in the repo.
@@ -1015,3 +1076,188 @@ regeneration packet on the touched codepath:
 - Updated recommendation:
   - do not launch the full `24`-case `R009` slice yet
   - first run one more narrow cleanup targeting noisy evaluation extraction and benchmark-plan rewriting in the final proposal path
+
+## 2026-04-11: Safe-Grounding Cleanup For Title Anchors And Synthesis
+
+- implemented a follow-up benchmark-safe grounding and synthesis cleanup after
+  the title-anchor diagnosis:
+  - `src/idea_graph/literature_grounding.py`
+    - title-derived fallback is now limited to dataset / benchmark anchors only
+    - title-only metric invention was removed, so visible titles no longer
+      inject guessed metrics such as `grounding accuracy`, `success rate`, or
+      `error rate`
+    - noisy pseudo-datasets such as `Work in Progress Eval Dataset` and sample
+      count residue are now filtered from safe grounding
+  - `src/idea_graph/agent_backend.py`
+    - benchmark evaluation synthesis now compares against natural short
+      reference baselines rather than `...-style baselines`
+    - proposal cleanup now strips malformed residue such as
+      `Report satisfied by ...`
+    - final synthesis still reuses benchmark-safe dataset anchors when they are
+      the only reliable visible grounding left
+- added focused regressions for:
+  - dataset-only title anchors in `tests/test_literature_grounding.py`
+  - filtering `Work in Progress` pseudo-datasets in
+    `tests/test_literature_grounding.py`
+  - natural baseline comparison rewriting in `tests/test_agent_backend.py`
+  - malformed `Report satisfied by ...` cleanup in
+    `tests/test_agent_backend.py`
+- verification after this cleanup:
+  - `python -m pytest tests/test_literature_grounding.py tests/test_agent_backend.py tests/test_engine.py -q`
+  - `67 passed`
+- updated interpretation:
+  - the repo now follows a cleaner AIIB-safe policy:
+    keep title-derived dataset anchors when reference snippets are weak, but do
+    not hallucinate metrics from titles alone
+  - this patch also advances the next EIG revision directly on final synthesis,
+    since the mature claim-chain output is now rewritten into a cleaner
+    benchmark-facing experiment plan
+- next recommended step:
+  - rerun the same 4-case `ours-eig` AIIB diagnosis packet on
+    `13, 3883, 7909, 9849`
+  - compare that refreshed packet against both:
+    - `outputs/m2_aiib_r009_diagnosis`
+    - `outputs/m2_aiib_r009_diagnosis_title_anchor`
+  - only then decide whether to launch the full `24`-case `R009` slice
+
+## 2026-04-11: R009D Safe-Grounding 4-Case Rerun
+
+- completed the refreshed 4-case `ours-eig` AIIB rerun after the dataset-only
+  title-anchor cleanup:
+  - output root:
+    `outputs/m2_aiib_r009_diagnosis_safe_grounding`
+  - cases:
+    `13, 3883, 7909, 9849`
+- result summary:
+  - mean local overall:
+    `5.26 / 10`
+  - mean local benchmark alignment:
+    `3.48 / 10`
+  - mean local graph score:
+    `9.28 / 10`
+  - mean native available-average:
+    `8.07 / 10`
+- direct comparison against prior checkpoints:
+  - versus `R009B`:
+    - native is slightly lower overall (`8.07` vs `8.29`)
+    - local overall and alignment are both better (`5.26/3.48` vs `4.61/2.30`)
+  - versus `R009C`:
+    - native recovers strongly (`8.07` vs `7.36`)
+    - local overall and alignment drop from the more aggressive title-anchor
+      version (`5.26/3.48` vs `5.91/4.43`)
+- per-case comparison:
+  - `13`:
+    - native unchanged at `8.57`
+    - local still weak (`4.54 / 2.41`), so the 3D-language-field case remains
+      under-grounded on benchmark-facing evaluation detail
+  - `3883`:
+    - native recovered from `5.71` in `R009C` to `6.86`
+    - local remained strong (`6.22 / 4.92`)
+    - this confirms the dataset-only safe-grounding patch was helpful, but not
+      fully enough to match the stronger native `7.43` from `R009B`
+  - `7909`:
+    - native stayed strong at `8.29`
+    - but the final proposal still contains awkward truncated comparison
+      phrasing, so climate-case synthesis is not yet paper-clean
+  - `9849`:
+    - native recovered strongly from `6.86` in `R009C` to `8.57`
+    - local remained better than `R009B` but lower than `R009C`
+- updated interpretation:
+  - the current safe-grounding revision is a better compromise than `R009C`
+  - however, it does not yet justify the full `24`-case `R009` launch, because
+    the packet still has two clear bottlenecks:
+    - final synthesis still produces awkward baseline-comparison sentences on
+      some cases such as `7909`
+    - the controller still allows generic benchmark-grounded proposals on some
+      cases such as `13`
+- next recommended step:
+  - do one more core EIG revision focused on:
+    - utility: reward mechanism-evaluation coherence more strongly than visible
+      benchmark anchor coverage alone
+    - mature-subgraph / claim-chain selection: prefer claim chains whose
+      evaluation truly tests the selected mechanism
+    - synthesis: rewrite baseline comparison and ablation sentences from
+      semantic reference labels rather than raw title fragments
+  - only rerun the 4-case gate again after that controller+synthesis revision
+
+## 2026-04-12: Documentation Cleanup For Graph-Critic Transition
+
+- completed a careful documentation cleanup pass after deciding that the next
+  method stage should use a learned graph critic rather than more hand-designed
+  maturity-threshold refinement
+- added the new canonical forward method note:
+  - `docs/eig_graph_critic_plan.md`
+- updated active docs so the current path is:
+  - paper protocol
+  - graph-critic plan
+  - evaluation protocol
+  - experiment plan
+  - experiment tracker
+  - execution log
+- archived superseded active planning notes instead of deleting them:
+  - `docs/archive/paper_experiment_map_pre_critic.md`
+  - `docs/archive/r009_aiib_launch_plan_pre_critic.md`
+- updated the tracker so:
+  - `R009` is explicitly `PAUSED`
+  - pre-critic heuristic ablations are paused or optional
+  - new `G001` to `G006` graph-critic milestones track planning, trajectory
+    export, dataset construction, text critic, graph critic, and
+    critic-controlled pilot runs
+- current next step:
+  - implement `G1` trajectory export from saved pre-critic runs, preserving
+    graph states, selected actions, available candidate traces, final scores,
+    and commit-vs-continue labels where possible
+
+## 2026-04-12: G1 Trajectory Export Implemented
+
+- converted the `G1` idea into a concrete executable track:
+  - design spec:
+    `docs/superpowers/specs/2026-04-12-graph-critic-trajectory-export-design.md`
+  - implementation plan:
+    `docs/superpowers/plans/2026-04-12-graph-critic-trajectory-export.md`
+- implemented the new exporter library:
+  - `src/idea_graph/trajectory_dataset.py`
+  - responsibilities now covered:
+    - run discovery from arbitrary output roots
+    - artifact loading from `summary.json` + `graph.json`
+    - trace token / runtime / cost extraction
+    - timestamp-based pre-action state reconstruction
+    - contradiction-resolution inference from later repair actions
+    - manifest-row, transition-row, and dataset-profile construction
+- implemented the thin CLI:
+  - `scripts/export_graph_critic_dataset.py`
+- added focused TDD coverage in:
+  - `tests/test_trajectory_dataset.py`
+- verification completed:
+  - `python -m pytest tests/test_trajectory_dataset.py -q`
+  - `7 passed`
+- smoke export completed on saved pre-critic `R009D` artifacts:
+  - command:
+    `python scripts/export_graph_critic_dataset.py --input-root outputs/m2_aiib_r009_diagnosis_safe_grounding --output-dir outputs/graph_critic_datasets --dataset-name smoke_r009_safe_grounding --limit-runs 4`
+  - result:
+    - dataset dir:
+      `outputs/graph_critic_datasets/smoke_r009_safe_grounding`
+    - run count:
+      `4`
+    - transition count:
+      `100`
+    - token profile:
+      - prompt: `802,015`
+      - completion: `15,258`
+      - total: `817,273`
+      - mean total tokens per run: `204,318.25`
+      - mean total tokens per transition: `8,172.73`
+    - trace coverage on this smoke slice:
+      - `agent_traces`: `1.0`
+      - `final_synthesis_trace`: `1.0`
+      - override trace: `1.0`
+      - local evaluation: `1.0`
+      - benchmark-native evaluation: `1.0`
+- interpretation:
+  - the current saved `R009D` artifacts are sufficient to bootstrap the first
+    offline critic dataset
+  - the exporter already records the profiling indicators reviewers are likely
+    to ask about when a learned graph critic adds data-collection overhead
+  - the next concrete task is `G2`: define benchmark-instance-level splits,
+    separate weak labels from native labels, and decide the first critic target
+    package for text-only vs graph-structured baselines

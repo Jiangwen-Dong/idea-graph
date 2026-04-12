@@ -4,6 +4,7 @@ outputs/
 data/benchmarks/
 .vscode/
 .pytest_cache/
+.worktrees/
 .tmp-tests/
 .tmp-baselines/
 .tmp-external-baseline-runs/

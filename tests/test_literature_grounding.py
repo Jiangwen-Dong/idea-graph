@@ -84,6 +84,79 @@ class LiteratureGroundingTests(unittest.TestCase):
         self.assertTrue("accuracy" in grounding.metric_items or "IoU" in grounding.metric_items)
         self.assertIn("Evaluate on", grounding.experiment_plan_summary)
 
+    def test_reference_titles_can_supply_safe_dataset_anchors_when_snippets_are_weak(self) -> None:
+        grounding = build_literature_grounding(
+            literature=[
+                "Seeclick: Harnessing gui grounding for advanced visual gui agents",
+                "On the effects of data scale on computer control agents",
+                "Amex: Android multi-annotation expo dataset for mobile gui agents",
+                "Osworld: Benchmarking multimodal agents for open-ended tasks in real computer environments",
+            ],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_input_packet": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "topic": "The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",
+                },
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "Seeclick: Harnessing gui grounding for advanced visual gui agents",
+                            "method": "This innovative approach bypasses structured text and adapts to various GUI platforms.",
+                        },
+                        {
+                            "resolved_title": "Amex: Android multi-annotation expo dataset for mobile gui agents",
+                            "abstract": "Red boxes and brown tabs illustrate annotated GUI elements.",
+                        },
+                        {
+                            "resolved_title": "Osworld: Benchmarking multimodal agents for open-ended tasks in real computer environments",
+                            "evaluation": "Task Instruction (See examples above) input Agent (e.g., GPT-4V) a11y-tree screenshot keyboardmouse.",
+                        },
+                    ]
+                },
+            },
+        )
+
+        self.assertIn("Amex dataset", grounding.dataset_items)
+        self.assertIn("Osworld benchmark", grounding.dataset_items)
+        self.assertIn("Amex dataset", grounding.experiment_plan_summary)
+        self.assertIn("Osworld benchmark", grounding.experiment_plan_summary)
+        self.assertNotIn("grounding accuracy", grounding.metric_items)
+        self.assertNotIn("success rate", grounding.metric_items)
+        self.assertNotIn("error rate", grounding.metric_items)
+
+    def test_dataset_items_filter_work_in_progress_eval_residue(self) -> None:
+        grounding = build_literature_grounding(
+            literature=[
+                "MAmmoTH: Building math generalist models through hybrid instruction tuning",
+                "Program of thoughts prompting: Disentangling computation from reasoning for numerical reasoning tasks",
+            ],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_input_packet": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "topic": "The topic of this paper is improving mathematical reasoning in Large Language Models.",
+                },
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "MAmmoTH: Building math generalist models through hybrid instruction tuning",
+                            "abstract": "Work in Progress 1 I NTRODUCTION This work focuses on mathematical reasoning, a critical capability of modern large language models.",
+                            "evaluation": "Work in Progress Eval Dataset # Samples In-Domain.",
+                        },
+                        {
+                            "resolved_title": "Program of thoughts prompting: Disentangling computation from reasoning for numerical reasoning tasks",
+                            "evaluation": "Our PoT+SC achieves the best-known results on several evaluated datasets.",
+                        },
+                    ]
+                },
+            },
+        )
+
+        self.assertFalse(any("work in progress" in item.casefold() for item in grounding.dataset_items))
+        self.assertFalse(any("# samples" in item.casefold() for item in grounding.dataset_items))
+        self.assertNotIn("Work in Progress", grounding.experiment_plan_summary)
+
     def test_safe_grounding_does_not_recover_hidden_target_benchmark_fields(self) -> None:
         grounding = build_literature_grounding(
             literature=["SeeClick"],

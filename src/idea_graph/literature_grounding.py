@@ -171,6 +171,35 @@ def _reference_titles(literature: list[str], metadata: dict[str, Any]) -> list[s
     return _unique_strings(extracted)
 
 
+def _reference_title_anchor(title: str) -> str:
+    cleaned = _clean_text(title).strip(" .")
+    if not cleaned:
+        return ""
+    if ":" in cleaned:
+        cleaned = cleaned.split(":", 1)[0].strip()
+    if len(cleaned.split()) <= 5:
+        return cleaned
+    tokens = cleaned.split()
+    return tokens[0] if tokens else cleaned
+
+
+def _title_derived_dataset_items(reference_titles: list[str]) -> list[str]:
+    anchors: list[str] = []
+    for title in reference_titles:
+        cleaned = _clean_text(title)
+        lowered = cleaned.casefold()
+        anchor = _reference_title_anchor(cleaned)
+        if not anchor or _looks_noisy_sentence(anchor):
+            continue
+        if "dataset" in lowered and "dataset" not in anchor.casefold():
+            anchors.append(f"{anchor} dataset")
+        elif any(marker in lowered for marker in ("benchmark", "benchmarking")) and "benchmark" not in anchor.casefold():
+            anchors.append(f"{anchor} benchmark")
+        elif "corpus" in lowered and "corpus" not in anchor.casefold():
+            anchors.append(f"{anchor} corpus")
+    return _unique_strings(anchors)
+
+
 def _raw_record(metadata: dict[str, Any]) -> dict[str, Any]:
     payload = metadata.get("raw_record", {})
     return payload if isinstance(payload, dict) else {}
@@ -355,6 +384,18 @@ def _dataset_items(metadata: dict[str, Any]) -> list[str]:
         if not cleaned or "[" in cleaned or cleaned.casefold().startswith("such methods include"):
             return ""
         lowered = cleaned.casefold()
+        if any(
+            fragment in lowered
+            for fragment in (
+                "work in progress",
+                "# samples",
+                "samples in-domain",
+                "samples in domain",
+                "largest open-source",
+                "largest open source",
+            )
+        ):
+            return ""
         if lowered.startswith(
             (
                 "paper introduces ",
@@ -367,6 +408,8 @@ def _dataset_items(metadata: dict[str, Any]) -> list[str]:
         ):
             return ""
         if "novel dataset captured" in lowered or "captured in diverse real scenarios" in lowered:
+            return ""
+        if lowered.startswith("containing over ") or lowered.startswith("including over "):
             return ""
         if len(cleaned.split()) > 14 and "(" not in cleaned and ")" not in cleaned and "dataset" not in lowered:
             return ""
@@ -843,6 +886,12 @@ def build_literature_grounding(
     design_highlights = _design_highlights(metadata)
     dataset_items = _dataset_items(metadata)
     metric_items = _metric_items(metadata)
+    title_dataset_items = _title_derived_dataset_items(reference_titles)
+    if dataset_items or metric_items:
+        if len(dataset_items) < 2 and title_dataset_items:
+            dataset_items = _unique_strings(dataset_items + title_dataset_items)[:6]
+    else:
+        dataset_items = title_dataset_items[:6]
     weak_context_scaffold = (
         _keyword_only_scaffold(metadata, metadata.get("topic", ""))
         if _is_keyword_only_context(metadata, literature)

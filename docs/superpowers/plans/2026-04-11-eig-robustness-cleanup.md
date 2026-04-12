@@ -392,7 +392,7 @@ git commit -m "feat: make eig synthesis slot-aware and less stitched"
 **Files:**
 - Modify: `docs/experiment_execution_log.md`
 - Modify: `docs/paper_experiment_tracker.md`
-- Modify: `docs/r009_aiib_launch_plan.md`
+- Modify: `docs/archive/r009_aiib_launch_plan_pre_critic.md`
 
 - [ ] **Step 1: Run the focused regression suite**
 
@@ -439,7 +439,7 @@ Record:
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add docs/experiment_execution_log.md docs/paper_experiment_tracker.md docs/r009_aiib_launch_plan.md
+git add docs/experiment_execution_log.md docs/paper_experiment_tracker.md docs/archive/r009_aiib_launch_plan_pre_critic.md
 git commit -m "docs: record eig robustness cleanup verification"
 ```
 

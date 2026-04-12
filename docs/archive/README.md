@@ -10,7 +10,7 @@ the active protocol in:
 - `../evaluation.md`
 - `../paper_experiment_plan.md`
 - `../paper_experiment_tracker.md`
-- `../paper_experiment_map.md`
+- `../eig_graph_critic_plan.md`
 
 Use this folder when you want historical context for earlier design choices,
 pilot ablations, or superseded comparison plans. For current decisions, always
@@ -26,5 +26,11 @@ Current archive contents:
 - `eig_role_synthesis_redesign.md`
   Design memo for the role/synthesis refinement that has now been implemented
   and absorbed into the active tracker and plan.
+- `paper_experiment_map_pre_critic.md`
+  Compact pre-critic experiment map that was superseded when the forward method
+  track moved to EIG with a learned graph critic.
+- `r009_aiib_launch_plan_pre_critic.md`
+  Concrete launch note for the pre-critic 24-case AIIB `R009` slice. The launch
+  is paused while trajectory export and graph-critic training are planned.
 - `scientific_ideation_landscape.md`
   Background landscape note superseded by the active paper protocol.

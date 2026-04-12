@@ -1,15 +1,30 @@
 # Paper Experiment Plan
 
 **Problem**: benchmark-faithful scientific ideation with literature-grounded or benchmark-conditioned inputs  
-**Method Thesis**: `Evolving Idea Graphs (EIG)` improve scientific ideation quality by maintaining an explicit typed idea state and selecting edits by predicted utility, instead of collapsing reasoning into a single draft too early.  
-**Date**: 2026-04-10
+**Method Thesis**: `Evolving Idea Graphs (EIG)` improve scientific ideation quality by maintaining an explicit idea graph and learning a graph critic that selects useful edits or commits adaptively, instead of collapsing reasoning into a single draft too early.  
+**Date**: 2026-04-12
+
+## Current Method Track
+
+The forward method track is `EIG with a learned graph critic`.
+
+The pre-critic heuristic controller remains important, but it is no longer the
+target final method. It should be used as:
+
+- a prototype baseline for ablation
+- a source of saved graph-evolution trajectories
+- a diagnosis tool for identifying useful graph features and failure cases
+
+The full `R009` larger AIIB launch is paused until the graph-critic data and
+controller plan are implemented.
 
 ## Claim Map
 
 | Claim | Why It Matters | Minimum Convincing Evidence | Linked Blocks |
 |-------|----------------|-----------------------------|---------------|
 | C1. `EIG` improves final idea quality under benchmark-faithful evaluation. | This is the main paper claim. A NeurIPS reviewer must see better benchmark outcomes, not only cleaner internal graphs. | `EIG` beats or clearly matches the strongest exact baseline on benchmark-native automatic metrics on `AI_Idea_Bench_2025`, remains competitive on `LiveIdeaBench`, and improves blind human ratings on a balanced subset. | B1, B2, B3 |
-| C2. The graph mechanism is causal rather than decorative. | If gains come only from extra rounds or prompt polish, the paper contribution weakens. | Removing utility-guided action ranking, maturity control, or mature-subgraph synthesis should reduce final quality and/or graph quality in a consistent way. | B4, B5 |
+| C2. The graph mechanism is causal rather than decorative. | If gains come only from extra rounds or prompt polish, the paper contribution weakens. | Graph-critic variants should outperform text-only or heuristic controllers, and graph-process shifts should align with final quality. | B4, B5 |
+| C3. Learned graph-state control improves over hand-designed maturity rules. | Reviewers may view heuristic maturity thresholds as engineered and brittle. | A graph critic should improve edit selection and commit decisions over the heuristic controller, especially under few-shot calibration and held-out benchmark cases. | B4, B5 |
 
 ## Anti-Claims To Rule Out
 
@@ -169,25 +184,29 @@
 
 - Claim tested:
   - `C2`
+  - `C3`
 - Why this block exists:
   - isolates whether the graph mechanisms matter
 - Dataset / split / task:
   - run on a smaller but balanced subset after the main system is stable
   - recommended minimum: `6` AI Idea Bench cases plus `6` LiveIdeaBench cases
 - Compared systems:
-  - `ours-eig`
-  - `ours-eig` without utility-guided candidate ranking
-  - `ours-eig` without maturity stop
-  - `ours-eig` with flat final synthesis instead of mature-subgraph synthesis
-  - optional: `ours-eig` without controller override of weak LLM actions
+  - `ours-eig-heuristic`
+  - `ours-eig-critic-text`
+  - `ours-eig-critic-graph`
+  - `ours-eig-critic-no-commit`
+  - `ours-eig-critic-calibrated`
+  - optional: `ours-eig` with flat final synthesis instead of graph-conditioned synthesis
 - Metrics:
   - same benchmark-native automatic metrics as the benchmark being tested
   - supplementary graph metrics:
     - `Evidence coverage`
     - `Contradiction resolution`
     - `Claim-chain completeness`
-    - `Rounds to maturity`
+    - `Commit round`
     - `Action diversity`
+    - critic-vs-heuristic action agreement
+    - premature-commit and late-commit rates
 - Setup details:
   - keep prompts and backbone fixed
   - change one mechanism at a time
@@ -212,14 +231,16 @@
   - focus on `ours-eig`
   - compare cost against `direct`, `self-refine`, and `ai-researcher`
 - Metrics:
-  - `Evidence coverage`
-  - `Contradiction resolution`
-  - `Claim-chain completeness`
-  - `Rounds to maturity`
-  - `Action diversity`
-  - fallback rate
-  - controller override rate
-  - API calls
+- `Evidence coverage`
+- `Contradiction resolution`
+- `Claim-chain completeness`
+- `Commit round`
+- `Action diversity`
+- graph-critic action agreement
+- commit-vs-continue calibration
+- fallback rate
+- controller override rate
+- API calls
   - token cost
   - wall-clock runtime
 - Setup details:
@@ -240,7 +261,13 @@
 |-----------|------|------|---------------|------|------|
 | `M0` | protocol and infrastructure sanity | `1` AI Idea Bench case and `1` LiveIdeaBench case for `ours-eig`; `1` AI Idea Bench case for `ai-researcher`; `virsci` feasibility audit | benchmark packet, output schema, and benchmark-native scorer all run end to end | low to medium API cost | exact baseline wrappers may fail on benchmark-mode inputs |
 | `M1` | exact baseline smoke test | `direct`, `self-refine`, `ai-researcher`, `ours-eig` on `4 + 4` cross-benchmark slice | all main systems must finish cleanly before scaling | medium API cost | unstable wrappers or scorer failures |
-| `M2` | core automatic batch | main comparison set on at least `24 + 24` cross-benchmark slice | run `AI_Idea_Bench_2025` first; only launch the full `LiveIdeaBench` slice after deciding whether the remaining weak-context variance is acceptable | high API cost | benchmark alignment may remain weak and weak-context rows may show higher variance |
+| `G0` | graph-critic planning and data audit | no new expensive generation | active docs updated; saved trajectory sources identified | low | old heuristic records may be incomplete for training |
+| `G1` | trajectory export | export states/actions/scores from saved runs | exported examples include graph state, action, final score, and commit labels where available | low | saved artifacts may lack alternative candidates |
+| `G2` | critic dataset construction | train/validation splits from saved runs | splits are by benchmark instance, not by state, to avoid leakage | low to medium | labels may be noisy |
+| `G3` | text critic baseline | train flattened-state critic | text critic trains and validates better than random action scoring | medium | weak labels may be insufficient |
+| `G4` | graph critic | train graph-structured critic | graph critic beats text critic or reveals why graph structure needs more data | medium | graph encoder may not help at small data scale |
+| `G5` | critic-controlled pilot | 4-case AIIB gate with critic controller | critic controller is stable before larger generation | medium API cost | premature commit or over-editing |
+| `M2` | core automatic batch | main comparison set on at least `24 + 24` cross-benchmark slice | run only after `G5` stabilizes or explicitly fall back to the heuristic controller | high API cost | benchmark alignment may remain weak and weak-context rows may show higher variance |
 | `M3` | baseline decision gate | either add `virsci` if benchmark-faithful or formally demote it from the main paper table | no silent proxy substitution | low engineering cost, potentially high integration cost | upstream system lacks fixed-topic entrypoint |
 | `M4` | human evaluation packet | prepare anonymized outputs from the strongest systems on a balanced subset | only proceed after automatic outputs are clean and non-generic | medium human effort | rating burden and reviewer consistency |
 | `M5` | ablation and appendix analyses | EIG ablations plus process, reliability, and cost analyses | keep only ablations that change reviewer belief | medium API cost | too many variants can dilute the story |
@@ -298,7 +325,7 @@
 - Mitigation:
   - prepare the packet immediately after `M2` and keep the reviewed subset compact
 
-## Post-M1 Review
+## Pre-Critic Pilot Review
 
 - `M0` is complete.
 - The refreshed small-`M1` packet is complete and should be treated as the current
@@ -315,43 +342,30 @@
 
 ## Immediate Next Step
 
-Launch `M2` in a staged order instead of as one monolithic cross-benchmark batch.
+Pause the larger `M2/R009` launch and start the graph-critic track.
 
-1. `M2-AIIB`:
-   - run the benchmark-native core automatic slice on `AI_Idea_Bench_2025` first
-   - keep the main comparison set:
-     - `direct`
-     - `self-refine`
-     - `ai-researcher`
-     - `ours-eig`
-   - use this slice as the primary paper-facing automatic result because it is
-     the most benchmark-faithful setting and the current strongest regime for
-     `ours-eig`
-2. Weak-context decision gate:
-   - decide whether to accept the current weak-context stability on
-     `LiveIdeaBench`
-   - only do one more narrow `ours-eig` stabilization pass if meteorology-like
-     rows are still judged too noisy for the larger slice
-3. `M2-Live`:
-   - launch the benchmark-native `LiveIdeaBench` core automatic slice once the
-     weak-context decision is made
-   - keep the same shared output contract and baseline set
-4. `M5-core`:
-   - after the larger automatic results are stable, run the core EIG ablations
-     on utility ranking, maturity stopping, and flat synthesis
-5. `M4`:
-   - prepare the human blind-review packet only after the final proposal format
-     is stable across both benchmarks
+1. `G0`:
+   - finish documentation cleanup around the graph-critic method direction
+   - mark pre-critic `R009` as paused, not cancelled
+2. `G1`:
+   - implement trajectory export from saved heuristic EIG runs
+   - include graph states, actions, final scores, and available judge metadata
+3. `G2`:
+   - construct train/validation splits by benchmark instance
+   - separate weak local labels from benchmark-native labels
+4. `G3/G4`:
+   - train a text critic first, then the graph critic
+5. `G5`:
+   - run the same 4-case AIIB gate before spending on the full `24`-case batch
 
 ## First Concrete Run Queue
 
-1. Freeze the current small-`M1` packet as the reference development batch.
-2. Launch the `AI_Idea_Bench_2025` `M2` slice.
-3. Review the saved `AI_Idea_Bench_2025` native results before spending on the
-   full `LiveIdeaBench` slice.
-4. If needed, run one narrow weak-context `ours-eig` stabilization pass on
-   meteorology-like `LiveIdeaBench` rows.
-5. Launch the `LiveIdeaBench` `M2` slice.
+1. Freeze current pre-critic outputs as pilot data.
+2. Export trajectories from the small `M1` and `R009` pilot artifacts.
+3. Train and evaluate a text-only critic as the first learned-control sanity
+   check.
+4. Train and evaluate the graph critic.
+5. Rerun the 4-case AIIB gate with critic-controlled edit/commit decisions.
 
 ## Final Checklist
 

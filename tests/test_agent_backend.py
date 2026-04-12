@@ -449,6 +449,145 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertTrue("accuracy" in processed.evaluation or "IoU" in processed.evaluation)
         self.assertIn("ablation", processed.evaluation.casefold())
 
+    def test_postprocess_final_proposal_uses_title_derived_dataset_anchors_without_title_only_metrics(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",
+            literature=[
+                "Seeclick: Harnessing gui grounding for advanced visual gui agents",
+                "Amex: Android multi-annotation expo dataset for mobile gui agents",
+                "Osworld: Benchmarking multimodal agents for open-ended tasks in real computer environments",
+            ],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_mode": True,
+                "benchmark_input_packet": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "topic": "The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",
+                },
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "Seeclick: Harnessing gui grounding for advanced visual gui agents",
+                            "method": "This innovative approach bypasses structured text and adapts to various GUI platforms.",
+                        },
+                        {
+                            "resolved_title": "Amex: Android multi-annotation expo dataset for mobile gui agents",
+                            "abstract": "Red boxes and brown tabs illustrate annotated GUI elements.",
+                        },
+                        {
+                            "resolved_title": "Osworld: Benchmarking multimodal agents for open-ended tasks in real computer environments",
+                            "evaluation": "Task Instruction (See examples above) input Agent (e.g., GPT-4V) a11y-tree screenshot keyboardmouse.",
+                        },
+                    ]
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Visual Grounding with Dynamic Adaptation for GUI Agents",
+            problem="GUI agents fail under cross-platform shift.",
+            existing_methods="Current methods remain limited.",
+            motivation="OOD GUI grounding remains hard.",
+            hypothesis="A stronger grounding model will help.",
+            method="Integrate visual grounding with dynamic adaptation.",
+            evaluation="Evaluate on a novel benchmark with diverse UI layouts and tasks.",
+            significance="This could improve generalization.",
+            caveats="It may still fail on unseen widgets.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertIn("Amex dataset", processed.evaluation)
+        self.assertIn("Osworld benchmark", processed.evaluation)
+        self.assertNotIn("grounding accuracy", processed.evaluation)
+        self.assertNotIn("success rate", processed.evaluation)
+        self.assertNotIn("error rate", processed.evaluation)
+
+    def test_postprocess_final_proposal_rewrites_title_anchor_baseline_sentence_naturally(self) -> None:
+        graph = IdeaGraph(
+            topic="GUI grounding for out-of-distribution GUI agents.",
+            literature=["SeeClick", "Amex", "OSWorld"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_mode": True,
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "Seeclick: Harnessing gui grounding for advanced visual gui agents",
+                            "method": "This innovative approach bypasses structured text and adapts to various GUI platforms.",
+                        },
+                        {
+                            "resolved_title": "Amex: Android multi-annotation expo dataset for mobile gui agents",
+                            "abstract": "Red boxes and brown tabs illustrate annotated GUI elements.",
+                        },
+                        {
+                            "resolved_title": "Osworld: Benchmarking multimodal agents for open-ended tasks in real computer environments",
+                        },
+                    ]
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Visual Grounding with Dynamic Adaptation for GUI Agents",
+            problem="GUI agents fail under cross-platform shift.",
+            existing_methods="Current methods remain limited.",
+            motivation="OOD GUI grounding remains hard.",
+            hypothesis="A stronger grounding model will help.",
+            method="Integrate visual grounding with dynamic adaptation.",
+            evaluation="Evaluate on benchmark datasets and report task-relevant metrics.",
+            significance="This could improve generalization.",
+            caveats="It may still fail on unseen widgets.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertIn("Compare against", processed.evaluation)
+        self.assertNotIn("-style baselines", processed.evaluation)
+
+    def test_postprocess_final_proposal_removes_report_satisfied_by_residue(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is improving climate model validation.",
+            literature=[
+                "Overview of the Coupled Model Intercomparison Project Phase 6 (CMIP6) experimental design and organization",
+                "Evaluating the performance of climate models based on Wasserstein distance",
+            ],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_mode": True,
+                "paper_grounding": {
+                    "reference_paper_snippets": [
+                        {
+                            "resolved_title": "Overview of the Coupled Model Intercomparison Project Phase 6 (CMIP6) experimental design and organization",
+                            "evaluation": "Evaluate climate model performance on the CMIP6 project.",
+                        },
+                        {
+                            "resolved_title": "Evaluating the performance of climate models based on Wasserstein distance",
+                            "evaluation": "Report root-mean-square distance and Wasserstein distance.",
+                        },
+                    ]
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Approximating Wasserstein Distance for Climate Model Validation",
+            problem="Evaluating climate models using Wasserstein distance is computationally intensive.",
+            existing_methods="Current methods remain limited.",
+            motivation="Accurate climate model validation is important.",
+            hypothesis="Approximation can preserve useful signals.",
+            method="Approximate Wasserstein distance with a cheaper surrogate.",
+            evaluation=(
+                "Evaluate climate model performance using root-mean-square distance and Wasserstein distance on reanalysis data "
+                "from the CMIP6 project. Report satisfied by the root mean square distance. "
+                "Compare against Overview of the Coupled Model Intercomparison Project Phase 6 (CMIP6) experimental design and organization-style baselines."
+            ),
+            significance="This could lower evaluation cost.",
+            caveats="Approximation may lose information.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertNotIn("Report satisfied by", processed.evaluation)
+        self.assertNotIn("-style baselines", processed.evaluation)
+
     def test_postprocess_final_proposal_rewrites_ocr_like_benchmark_evaluation(self) -> None:
         graph = IdeaGraph(
             topic="The topic of this paper is improving GUI grounding and OOD generalization for GUI agents.",

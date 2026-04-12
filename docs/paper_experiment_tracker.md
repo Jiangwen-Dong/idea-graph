@@ -25,13 +25,21 @@
 | `R008` | `M1` | cross-benchmark smoke batch | `ours-eig` | `4` AIIB + `4` Live | benchmark-native automatic metrics + graph diagnostics | MUST | DONE | shared batch dir `outputs/quality_batches/20260410-192309-m1-4x4-main-slice`; aggregate overall `6.46`, alignment `5.08`, graph `9.07`, native `6.78`; strongest by the local benchmark-facing scorer, but not by the benchmark-native averages |
 | `R009A` | `M2` | preflight + smoke gate | `direct`, `self-refine`, `ai-researcher`, `ours-eig` | AIIB smoke subset `13, 3883, 7909, 9849` | local AIIB metrics + targeted native smoke check | MUST | DONE | output root `outputs/m2_aiib_r009_smoke`; preflight passed; smoke generation finished `16/16`; targeted native check finished `8/8` for `self-refine` and `ours-eig`; local smoke strongly favors `ours-eig` (`6.00/4.37`), while targeted native smoke is still slightly higher for `self-refine` (`8.36` vs `8.07`) |
 | `R009B` | `M2` | post-cleanup narrow AIIB diagnosis rerun | `ours-eig` | AIIB smoke subset `13, 3883, 7909, 9849` | native AIIB metrics + local AIIB metrics | MUST | DONE | output root `outputs/m2_aiib_r009_diagnosis`; after the robustness cleanup, mean native rises to `8.29/10` and hard case `3883` recovers to `7.43/10`, but local overall/alignment fall to `4.61/2.31` because several final experiment plans still contain OCR-like or stitched evaluation fragments |
-| `R009` | `M2` | core automatic batch | shortlisted main baselines | at least `24` AIIB | native AIIB metrics including matched-pool `IC` | MUST | IN PROGRESS | smoke gate is complete via `R009A`; the planned EIG robustness cleanup is now implemented and locally verified; next action is a post-fix hard-case gate check on `3883`, followed by a refreshed 4-case `R009B` rerun if the surface form is clean; design note: `docs/superpowers/specs/2026-04-11-eig-robustness-cleanup-design.md`; implementation plan: `docs/superpowers/plans/2026-04-11-eig-robustness-cleanup.md`; launch note: `docs/r009_aiib_launch_plan.md` |
+| `R009C` | `M2` | title-anchor narrow AIIB diagnosis rerun | `ours-eig` | AIIB smoke subset `13, 3883, 7909, 9849` | native AIIB metrics + local AIIB metrics | MUST | DONE | output root `outputs/m2_aiib_r009_diagnosis_title_anchor`; lightweight title-derived anchors (`Amex dataset`, `Osworld benchmark`) sharply improved local overall/alignment (`5.91/4.43`) and cleaned the `3883` proposal surface form, but mean native fell to `7.36/10`, with notable drops on `3883` and `9849` |
+| `R009D` | `M2` | safe-grounding + synthesis narrow AIIB rerun | `ours-eig` | AIIB smoke subset `13, 3883, 7909, 9849` | native AIIB metrics + local AIIB metrics | MUST | DONE | output root `outputs/m2_aiib_r009_diagnosis_safe_grounding`; mean native recovered to `8.07/10` after the dataset-only title-anchor cleanup, while local overall/alignment settled at `5.26/3.48`; this is a better compromise than `R009C`, but still not clean enough to justify the full `24`-case launch |
+| `R009` | `M2` | core automatic batch | shortlisted main baselines | at least `24` AIIB | native AIIB metrics including matched-pool `IC` | MUST | PAUSED | smoke gate is complete through `R009D`, but the full `24`-case launch is paused because the method track is shifting from heuristic maturity to a learned graph critic; archived launch note: `docs/archive/r009_aiib_launch_plan_pre_critic.md` |
 | `R010` | `M2` | core automatic batch | shortlisted main baselines | at least `24` LiveIdeaBench | native LiveIdeaBench metrics | MUST | TODO | launch after the weak-context stability decision; keep the same shared output contract |
 | `R011` | `M4` | human blind review packet | `direct`, `self-refine`, `ai-researcher`, `ours-eig` | balanced `8` to `12` cases per benchmark | human rubric | MUST | TODO | anonymize system names and standardize formatting |
-| `R012` | `M5` | mechanism ablation | `ours-eig` without utility-guided ranking | balanced `6 + 6` subset | native metrics + graph metrics | MUST | TODO | tests whether utility-guided selection matters |
-| `R013` | `M5` | mechanism ablation | `ours-eig` without maturity stop | balanced `6 + 6` subset | native metrics + rounds-to-maturity | MUST | TODO | tests whether current stopping is helping or harming |
-| `R014` | `M5` | mechanism ablation | `ours-eig` with flat final synthesis | balanced `6 + 6` subset | native metrics + graph metrics | MUST | TODO | tests mature-subgraph synthesis directly |
-| `R015` | `M5` | appendix analysis | `ours-eig` plus main baselines | reuse `M2` outputs | process metrics, cost, runtime, fallback statistics | MUST | TODO | report separately from the main quality table |
+| `R012` | `M5` | pre-critic heuristic ablation | `ours-eig` without utility-guided ranking | balanced `6 + 6` subset | native metrics + graph metrics | SHOULD | PAUSED | keep as optional heuristic ablation only if the critic track needs a fallback comparison |
+| `R013` | `M5` | pre-critic heuristic ablation | `ours-eig` without heuristic stop | balanced `6 + 6` subset | native metrics + commit/round diagnostics | SHOULD | PAUSED | superseded by learned commit-vs-continue evaluation in the graph-critic track |
+| `R014` | `M5` | pre-critic heuristic ablation | `ours-eig` with flat final synthesis | balanced `6 + 6` subset | native metrics + graph metrics | SHOULD | PAUSED | keep as optional synthesis ablation after the critic pilot stabilizes |
+| `R015` | `M5` | appendix analysis | `ours-eig` plus main baselines | reuse `M2` outputs | process metrics, cost, runtime, fallback statistics | SHOULD | PAUSED | will be refreshed after graph-critic outputs exist |
+| `G001` | `G0` | graph-critic method planning | docs only | no new generation | plan completeness | MUST | DONE | canonical forward plan added at `docs/eig_graph_critic_plan.md`; pre-critic records remain available as pilot data |
+| `G002` | `G1` | trajectory export | saved EIG runs | small `M1` + `R009` pilots | exported state-action-score examples | MUST | DONE | spec: `docs/superpowers/specs/2026-04-12-graph-critic-trajectory-export-design.md`; implementation: `src/idea_graph/trajectory_dataset.py` + `scripts/export_graph_critic_dataset.py`; smoke dataset: `outputs/graph_critic_datasets/smoke_r009_safe_grounding` with `4` runs, `100` transition examples, and full trace-coverage profiling |
+| `G003` | `G2` | critic dataset construction | exported trajectories | train/validation by benchmark instance | leakage-free splits | MUST | TODO | next target after `G1`; keep local weak labels separate from benchmark-native labels and add explicit overhead/profile reporting for the final training corpus |
+| `G004` | `G3` | text critic baseline | flattened graph state | held-out trajectory split | action ranking + commit-vs-continue accuracy | MUST | TODO | sanity-check whether saved labels are learnable before implementing the graph encoder |
+| `G005` | `G4` | graph critic | structured graph state | held-out trajectory split | action ranking + commit calibration | MUST | TODO | compare against the text critic to test whether graph structure helps |
+| `G006` | `G5` | critic-controlled pilot | `ours-eig-critic` | AIIB smoke subset `13, 3883, 7909, 9849` | native AIIB + local quality + commit diagnostics | MUST | TODO | run only after critic validation is stable |
 
 ## 2026-04-10: EIG Role/Synthesis Revision
 
@@ -174,3 +182,147 @@
     proposal surface form and rerun the 4-case `R009B` packet, or do one more
     lightweight grounding-specific patch for benchmark-title-derived evaluation
     anchors first
+
+## 2026-04-11: Title-Derived Anchor Patch + Refreshed 4-Case Diagnosis
+
+- implemented one lightweight grounding patch in `src/idea_graph/literature_grounding.py`:
+  - when snippet-derived grounding is weak, visible reference titles can now
+    contribute conservative evaluation anchors such as:
+    - `Amex dataset`
+    - `Osworld benchmark`
+    - `grounding accuracy`
+    - `success rate`
+    - `error rate`
+- added regression coverage for:
+  - title-derived benchmark anchors in `tests/test_literature_grounding.py`
+  - final-proposal use of those anchors in `tests/test_agent_backend.py`
+- verification after the patch:
+  - `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_agent_backend.py tests/test_engine.py tests/test_literature_grounding.py -v`
+  - `84 passed`
+- reran the full 4-case `ours-eig` diagnosis packet with native evaluation:
+  - output root:
+    `outputs/m2_aiib_r009_diagnosis_title_anchor`
+  - cases:
+    `13, 3883, 7909, 9849`
+- result summary:
+  - mean local overall:
+    `5.91 / 10`
+  - mean local benchmark alignment:
+    `4.43 / 10`
+  - mean local graph score:
+    `9.24 / 10`
+  - mean native available-average:
+    `7.36 / 10`
+- main deltas versus `R009B`:
+  - `13`: local improved; native unchanged at `8.57`
+  - `3883`: local improved strongly (`4.79 -> 6.58`) and the proposal became much cleaner, but native fell (`7.43 -> 5.71`)
+  - `7909`: local improved; native unchanged at `8.29`
+  - `9849`: local improved strongly (`4.54 -> 6.40`), but native fell (`8.86 -> 6.86`)
+- interpretation:
+  - the title-anchor patch is useful for cleaning generic or under-anchored
+    local benchmark behavior
+  - but it is not yet sufficient for stable benchmark-native gains, and may
+    currently over-steer some cases toward visible-title heuristics
+
+## 2026-04-11: Safe-Grounding Dataset-Only Anchor Cleanup
+
+- refined the benchmark-safe title-anchor fallback:
+  - kept visible-title dataset anchors such as `Amex dataset` and
+    `Osworld benchmark`
+  - removed title-only metric invention so titles alone no longer inject
+    guessed metrics such as `grounding accuracy`, `success rate`, or
+    `error rate`
+- strengthened safe-grounding cleanup for AIIB math-style OCR residue:
+  - `Work in Progress Eval Dataset` and sample-count pseudo-datasets are now
+    filtered before they reach experiment-plan synthesis
+- refined final synthesis:
+  - malformed fragments such as `Report satisfied by ...` are now stripped
+  - baseline comparison sentences now use natural short reference labels rather
+    than `...-style baselines`
+- verification after this slice:
+  - `python -m pytest tests/test_literature_grounding.py tests/test_agent_backend.py tests/test_engine.py -q`
+  - `67 passed`
+- current recommendation:
+  - run `R009D` next on the same 4 AIIB smoke cases
+  - use that refreshed packet to judge whether EIG is now ready for the full
+    `24`-case `R009` launch
+
+## 2026-04-11: R009D Completed
+
+- reran the refreshed 4-case AIIB packet for `ours-eig` under:
+  `outputs/m2_aiib_r009_diagnosis_safe_grounding`
+- aggregate result:
+  - local overall:
+    `5.26 / 10`
+  - local alignment:
+    `3.48 / 10`
+  - local graph:
+    `9.28 / 10`
+
+## 2026-04-12: Graph-Critic G1 Trajectory Export
+
+- recorded the concrete `G1` exporter design at:
+  `docs/superpowers/specs/2026-04-12-graph-critic-trajectory-export-design.md`
+- recorded the implementation plan at:
+  `docs/superpowers/plans/2026-04-12-graph-critic-trajectory-export.md`
+- implemented the reusable exporter library:
+  `src/idea_graph/trajectory_dataset.py`
+- implemented the thin CLI:
+  `scripts/export_graph_critic_dataset.py`
+- added focused regression coverage:
+  `tests/test_trajectory_dataset.py`
+- verification:
+  - `python -m pytest tests/test_trajectory_dataset.py -q`
+  - `7 passed`
+- smoke export:
+  - command:
+    `python scripts/export_graph_critic_dataset.py --input-root outputs/m2_aiib_r009_diagnosis_safe_grounding --output-dir outputs/graph_critic_datasets --dataset-name smoke_r009_safe_grounding --limit-runs 4`
+  - output dataset:
+    `outputs/graph_critic_datasets/smoke_r009_safe_grounding`
+  - current smoke profile:
+    - `4` runs
+    - `100` transition examples
+    - `817,273` total traced tokens
+    - mean traced tokens per run: `204,318.25`
+    - mean traced tokens per transition: `8,172.73`
+    - full trace coverage for `agent_traces`, `final_synthesis_trace`, override traces, local evaluation, and benchmark-native evaluation on this smoke slice
+- current interpretation:
+  - the saved pre-critic `R009D` artifacts are rich enough to support offline
+    graph-critic data construction
+  - the exporter already records the reviewer-facing profiling burden needed for
+    later overhead analysis
+  - the next stage is `G2`: build benchmark-instance-level train/validation
+    splits and define the first weak-label package for critic training
+  - native:
+    `8.07 / 10`
+- comparison:
+  - stronger native compromise than `R009C`
+  - still slightly weaker native average than `R009B`
+  - keeps a substantial part of the local grounding improvement over `R009B`
+- current decision:
+  - do not launch the full `24`-case `R009` batch yet
+  - first revise the core EIG controller and synthesis path:
+    - utility scoring
+    - mature-subgraph / claim-chain selection
+    - benchmark-faithful final synthesis
+
+## 2026-04-12: Graph-Critic Track Opened
+
+- reframed the next EIG method stage around a learned graph critic rather than
+  more hand-designed maturity thresholds
+- added the canonical forward plan:
+  - `docs/eig_graph_critic_plan.md`
+- paused the full `R009` larger AIIB launch until the critic data/export path
+  is ready
+- preserved pre-critic `M1` and `R009` artifacts as pilot data for offline
+  trajectory construction
+- added new tracker entries:
+  - `G001`: graph-critic planning
+  - `G002`: trajectory export
+  - `G003`: critic dataset construction
+  - `G004`: text critic baseline
+  - `G005`: graph critic
+  - `G006`: critic-controlled AIIB pilot
+- current next implementation target:
+  - export graph states, actions, scores, and commit-vs-continue labels from
+    saved pre-critic runs

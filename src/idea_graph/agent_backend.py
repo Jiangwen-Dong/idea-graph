@@ -1836,6 +1836,8 @@ def _is_noisy_proposal_sentence(sentence: str) -> bool:
         "bounds in screen",
         "class name",
         "content description",
+        "report satisfied by",
+        "style baselines",
         "et al",
     )
     if any(marker in normalized for marker in noisy_markers):
@@ -1996,6 +1998,26 @@ def _has_fragmentary_benchmark_plan(text: Any) -> bool:
     return False
 
 
+def _reference_baseline_labels(reference_titles: list[str], *, limit: int = 2) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for title in reference_titles:
+        cleaned = _coerce_string(title).strip(" .")
+        if not cleaned:
+            continue
+        label = cleaned.split(":", 1)[0].strip() if ":" in cleaned else cleaned
+        if len(label.split()) > 8:
+            label = " ".join(label.split()[:8]).strip()
+        normalized = _normalize_match_text(label)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        labels.append(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
 def _compose_grounded_benchmark_evaluation(
     dataset_items: list[str],
     metric_items: list[str],
@@ -2004,12 +2026,12 @@ def _compose_grounded_benchmark_evaluation(
 ) -> str:
     dataset_text = _join_natural_strings(dataset_items[:3]) or "the benchmark datasets"
     metric_text = _join_natural_strings(metric_items[:4]) or "task-relevant quantitative metrics"
-    compare_text = _join_natural_strings(reference_titles[:2]) or "strong benchmark baselines"
+    compare_text = _join_natural_strings(_reference_baseline_labels(reference_titles)) or "strong benchmark baselines"
     ablation_text = _join_natural_strings(design_anchor_terms[:2]) or "the main proposed components"
     return (
         f"Evaluate on {dataset_text}. "
         f"Report {metric_text}. "
-        f"Compare against {compare_text}. "
+        f"Compare against reference baselines such as {compare_text}. "
         f"Include ablations on {ablation_text}."
     )
 
@@ -2040,9 +2062,10 @@ def _compose_claim_chain_grounded_evaluation(
             f"Report {', '.join(metric_items[:3])}.",
         )
     if reference_titles and not _contains_any_phrase(evaluation, ("compare against", "baseline")):
+        compare_text = _join_natural_strings(_reference_baseline_labels(reference_titles)) or "strong benchmark baselines"
         evaluation = _append_unique_sentence(
             evaluation,
-            f"Compare against {', '.join(reference_titles[:2])}.",
+            f"Compare against reference baselines such as {compare_text}.",
         )
     if design_anchor_terms and not _contains_any_phrase(evaluation, ("ablation", "stress test")):
         evaluation = _append_unique_sentence(
@@ -2212,10 +2235,10 @@ def _postprocess_final_proposal(graph: IdeaGraph, proposal: FinalProposal) -> Fi
         proposal.existing_methods = _append_unique_sentence(proposal.existing_methods, summary_sentence)
 
     if grounding.reference_titles and not _contains_any_phrase(proposal.evaluation, ("compare against", "baseline")):
-        compare_titles = ", ".join(grounding.reference_titles[:2])
+        compare_titles = _join_natural_strings(_reference_baseline_labels(grounding.reference_titles))
         proposal.evaluation = _append_unique_sentence(
             proposal.evaluation,
-            f"Compare against {compare_titles}-style baselines.",
+            f"Compare against reference baselines such as {compare_titles or 'strong benchmark baselines'}.",
         )
 
     if design_anchor_terms and _contains_any_phrase(proposal.method, generic_method_markers):

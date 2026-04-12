@@ -16,7 +16,8 @@ stack.
 - Output:
   one structured research idea
 - Main claim:
-  explicit collaborative state tracking improves scientific ideation quality
+  explicit collaborative state tracking plus learned graph-state control
+  improves scientific ideation quality
 - Non-claim:
   this paper does not claim end-to-end autonomous research automation
 
@@ -68,6 +69,24 @@ These are useful references, but they should not be the main paper benchmarks.
 
 ## Baselines
 
+## Method Track
+
+The forward paper method is `EIG with a learned graph critic`.
+
+- `Idea Graph Evolution` is the representation and collaboration process:
+  agents edit a shared graph of partial scientific claims instead of rewriting a
+  single draft after every turn.
+- The `graph critic` is the controller:
+  it scores candidate graph edits and a special `commit` action from the current
+  graph state.
+- The earlier heuristic utility/maturity controller remains useful as:
+  - a pre-critic prototype
+  - an ablation baseline
+  - a source of offline trajectories for critic training
+
+This framing avoids treating maturity as a hand-tuned threshold. In the new
+track, commitment is an adaptive action selected by the learned critic.
+
 ### Main Table Baselines
 
 The recommended main comparison set is:
@@ -101,7 +120,9 @@ The recommended main comparison set is:
 5. `ours-eig`
 
 - the main proposed method
-- should be described as `Evolving Idea Graphs`, not as delayed consensus
+- should be described as `Evolving Idea Graphs`
+- the final paper target is the graph-critic variant, with the heuristic
+  controller reported as an ablation or pilot baseline if needed
 
 ### Appendix Or Optional Baselines
 
@@ -244,13 +265,15 @@ Recommended evaluation subset:
 ### Layer 3: Supplementary Mechanism And Cost Analysis
 
 These are not headline outcome metrics, but they are necessary to validate the
-collaboration mechanism.
+collaboration mechanism and the learned controller.
 
 - `Evidence coverage`
 - `Contradiction resolution`
 - `Claim-chain completeness`
-- `Rounds to maturity`
+- `Commit round`
 - `Action diversity`
+- critic-vs-heuristic action agreement
+- premature-commit and late-commit rates when commit labels are available
 - `API and token cost`
 - `Wall-clock runtime`
 

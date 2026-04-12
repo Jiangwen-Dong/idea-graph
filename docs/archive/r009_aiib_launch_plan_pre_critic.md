@@ -272,6 +272,44 @@ Smoke judge gate:
       `R009B` packet on `13, 3883, 7909, 9849`
     - or do one more lightweight grounding-specific patch for benchmark-title
       anchors before that rerun
+  - title-anchor rerun: completed
+    - output root:
+      `outputs/m2_aiib_r009_diagnosis_title_anchor`
+    - mean local overall / alignment / graph:
+      `5.91 / 4.43 / 9.24`
+    - mean native:
+      `7.36 / 10`
+    - interpretation:
+      title-derived anchors substantially improved local benchmark grounding and
+      cleaned the hard-case `3883` proposal surface form, but native quality is
+      now less stable than in the earlier `R009B` packet
+  - current gate decision:
+    - do not launch the full `24`-case Phase 3 slice yet
+    - first refine benchmark-faithful synthesis so title-derived anchors help
+      specific evaluation planning without over-templating the final proposal
+  - safe-grounding cleanup after the title-anchor rerun: implemented and locally verified
+    - title-derived fallback is now dataset-only
+    - title-only metrics have been removed
+    - malformed synthesis residue such as `Report satisfied by ...` and
+      `...-style baselines` is now cleaned
+    - targeted verification:
+      `python -m pytest tests/test_literature_grounding.py tests/test_agent_backend.py tests/test_engine.py -q`
+      -> `67 passed`
+  - next gate:
+    - `R009D`: completed
+    - mean local overall / alignment / graph:
+      `5.26 / 3.48 / 9.28`
+    - mean native:
+      `8.07 / 10`
+    - interpretation:
+      this is a better compromise than `R009C`: native quality recovers while
+      retaining part of the local grounding gain, but the packet still does not
+      cleanly dominate the earlier `R009B` checkpoint
+    - current launch decision:
+      do not launch the full `24`-case slice yet
+    - next required revision before Phase 3:
+      one more EIG-focused pass on utility, mature-subgraph selection, and
+      final synthesis quality
 
 ## Phase 3: Full 24-Case Generation
 
