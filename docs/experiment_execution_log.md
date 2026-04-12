@@ -1199,3 +1199,49 @@ regeneration packet on the touched codepath:
     contract where still missing
   - then start the first warm-start trainer on top of the refreshed full-pool
     `G2.5` artifact and `G3.5` partition manifest
+
+### 2026-04-12: Offline Warm-Start Text Critic
+
+- Implemented the offline warm-start trainer slice only:
+  - `src/idea_graph/online_text_critic.py`
+  - `scripts/train_text_critic_warmstart.py`
+  - weighted warm-start support in `src/idea_graph/text_critic.py`
+  - warm-start tests in `tests/test_online_text_critic.py`
+- Warm-start slice review state:
+  - spec-compliance review: approved
+  - code-quality review: approved
+- Local verification for the warm-start slice:
+  - `python -m pytest tests/test_text_critic.py tests/test_online_text_critic.py -q`
+    passed with `13 passed`
+  - `python -m pytest tests/test_trajectory_dataset.py tests/test_critic_dataset.py tests/test_candidate_slate_dataset.py tests/test_critic_partitions.py tests/test_text_critic.py tests/test_online_text_critic.py -q`
+    passed with `46 passed`
+- Warm-start training command:
+  `python scripts/train_text_critic_warmstart.py --candidate-dataset-dir outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g25_commit_enriched --partition-manifest outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/partition_manifest.jsonl --output-dir outputs/graph_critic_models/current_benchmarked_ours_eig_full_g4_text_warmstart`
+- Warm-start artifact:
+  `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g4_text_warmstart`
+- Warm-start metrics:
+  - `state_count`: `110`
+  - `top1_accuracy`: `0.7545454545454545`
+  - `mean_reciprocal_rank`: `0.8596969696969696`
+  - `train_example_count`: `9067`
+  - `validation_example_count`: `1025`
+- Warm-start metadata highlights:
+  - `train_group_count`: `9`
+  - `validation_group_count`: `2`
+  - `group_overlap_count`: `0`
+  - `train_commit_positive_count`: `55`
+  - `validation_commit_positive_count`: `5`
+  - namespace support is now explicitly recorded for:
+    - `teacher_logged`
+    - `terminal_commit`
+- Interpretation:
+  - the warm-start model is modest, but it is already stronger than the
+    refreshed plain text pilot (`0.755` vs `0.736` top-1, `0.860` vs `0.848`
+    MRR)
+  - this is the first learned-controller checkpoint that is both split-safe and
+    materially supported by positive `commit` supervision in train and dev
+- Immediate next step after this checkpoint:
+  - keep `paper_eval` untouched
+  - define the replay buffer / safe critic policy layer
+  - then start the first batched online adaptation pilot only after the replay
+    and freeze rules are explicit

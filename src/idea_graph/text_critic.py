@@ -82,12 +82,18 @@ def build_training_examples(candidate_rows: Sequence[Mapping[str, Any]]) -> list
     return examples
 
 
-def train_text_critic(train_examples: Sequence[CandidateExample]) -> TextCriticModel:
+def train_text_critic(
+    train_examples: Sequence[CandidateExample],
+    *,
+    sample_weights: Sequence[float] | None = None,
+) -> TextCriticModel:
     if not train_examples:
         raise ValueError("train_examples must not be empty.")
     labels = [example.label for example in train_examples]
     if len(set(labels)) < 2:
         raise ValueError("train_examples must contain both positive and negative labels.")
+    if sample_weights is not None and len(sample_weights) != len(train_examples):
+        raise ValueError("sample_weights must match the number of train_examples.")
 
     pipeline = Pipeline(
         [
@@ -96,7 +102,10 @@ def train_text_critic(train_examples: Sequence[CandidateExample]) -> TextCriticM
         ]
     )
     train_texts = [_join_text(example) for example in train_examples]
-    pipeline.fit(train_texts, labels)
+    fit_kwargs: dict[str, object] = {}
+    if sample_weights is not None:
+        fit_kwargs["clf__sample_weight"] = [float(weight) for weight in sample_weights]
+    pipeline.fit(train_texts, labels, **fit_kwargs)
     return TextCriticModel(pipeline)
 
 

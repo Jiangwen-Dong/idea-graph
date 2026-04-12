@@ -279,17 +279,36 @@ Key reviewer-facing tests:
   the text critic still remains a modest pilot, but the supervision gap that
   previously blocked commit-learning evidence is now materially reduced
 
-### Stage G4: Graph Critic
+### Stage G4: Offline Warm-Start Text Critic
+
+- train the first partition-aware offline warm-start scorer over the refreshed
+  full-pool `G2.5` commit-enriched dataset
+- enforce clean split usage:
+  - `critic_train` for training
+  - `critic_dev` for validation
+  - ignore `paper_eval`
+- warm-start artifact:
+  `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g4_text_warmstart`
+- current warm-start result:
+  - validation top-1 accuracy `0.755`
+  - mean reciprocal rank `0.860`
+  - `train_commit_positive_count = 55`
+  - `validation_commit_positive_count = 5`
+- practical conclusion:
+  this is still a lightweight text scorer, but it is a stronger and cleaner
+  offline controller baseline than the earlier plain `G3` pilot
+
+### Stage G5: Graph Critic
 
 - implement the graph encoder and action scorer
 - compare against the text critic on held-out trajectories
 
-### Stage G5: Controlled Generation Pilot
+### Stage G6: Controlled Generation Pilot
 
 - plug the critic into action selection and commit decisions
 - run the same 4-case AIIB gate before launching larger batches
 
-### Stage G6: Paper Experiments
+### Stage G7: Paper Experiments
 
 - rerun the main comparison only after the critic pilot is stable
 - include critic ablations and calibration analysis

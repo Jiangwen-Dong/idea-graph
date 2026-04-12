@@ -10,6 +10,34 @@
 
 ---
 
+## Current Checkpoint
+
+- `Task 0` is complete on `main`.
+- The `G3.5` partition-manifest layer is implemented and reviewed.
+- The stale `48`-run commit-enriched artifacts have been rebuilt from the full
+  current `60`-run `ours-eig` pool.
+- The refreshed full-pool text pilot now has non-zero positive `commit` labels
+  in both train and validation:
+  - `train_commit_positive_count = 55`
+  - `validation_commit_positive_count = 5`
+
+## Current Execution Slice
+
+The next concrete execution block is intentionally narrow:
+
+1. finish the offline warm-start trainer only
+2. validate it on the refreshed full-pool commit-enriched dataset and the
+   `G3.5` partition manifest
+3. defer replay / online adaptation until the warm-start gate is green
+
+Success criteria for this slice:
+
+- the warm-start trainer runs end-to-end on
+  `current_benchmarked_ours_eig_full_g25_commit_enriched`
+- it reports group counts, namespace counts, and positive `commit` support
+- it produces a stable offline checkpoint and evaluation report
+- it does not collapse on `critic_dev`
+
 ## Problem Framing
 
 This plan resolves the main supervision concern in the current graph-critic track:
@@ -579,4 +607,3 @@ That wording is important for both correctness and reviewer trust.
   `critic_train`, `critic_dev`, `paper_eval`
 - supervision namespaces:
   `teacher_logged`, `terminal_commit`, `hindsight_commit`, `trajectory_return`
-

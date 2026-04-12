@@ -133,6 +133,12 @@ class TextCriticTests(unittest.TestCase):
         self.assertEqual(len(scores), 2)
         self.assertTrue(all(isinstance(score, float) for score in scores))
 
+    def test_train_text_critic_rejects_sample_weight_length_mismatch(self) -> None:
+        examples = build_training_examples(self.rows)
+        train_examples = [example for example in examples if example.split == "train"]
+        with self.assertRaises(ValueError):
+            train_text_critic(train_examples, sample_weights=[1.0])
+
     def test_evaluate_state_rankings_reports_top1_and_mrr(self) -> None:
         validation_examples = [
             CandidateExample(
