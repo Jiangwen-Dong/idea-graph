@@ -11,6 +11,12 @@ from .agent_backend import (
     ROLE_DISPLAY_NAMES,
     append_agent_trace,
 )
+from .action_candidates import (
+    action_spec_from_action as _action_spec_from_action,
+    build_action_spec as _build_action_spec,
+    dedupe_action_specs as _dedupe_action_specs,
+    enumerate_candidate_specs,
+)
 from .claim_chain import select_claim_chain
 from .collaboration_protocol import (
     ACTION_REQUIRED_PAYLOAD_FIELDS,
@@ -1258,64 +1264,6 @@ def _legacy_choose_round_action(graph: IdeaGraph, round_name: str, role: str) ->
     )
 
 
-def _build_action_spec(
-    *,
-    kind: str,
-    target_ids: list[str],
-    payload: dict[str, object] | None = None,
-    rationale: str = "",
-    candidate_source: str = "heuristic",
-) -> dict[str, object]:
-    return {
-        "kind": kind,
-        "target_ids": list(target_ids),
-        "payload": dict(payload or {}),
-        "rationale": rationale,
-        "candidate_source": candidate_source,
-    }
-
-
-def _action_spec_from_action(action: GraphAction, *, candidate_source: str) -> dict[str, object]:
-    return _build_action_spec(
-        kind=action.kind,
-        target_ids=list(action.target_ids),
-        payload=dict(action.payload),
-        rationale=action.rationale,
-        candidate_source=candidate_source,
-    )
-
-
-def _normalize_spec_value(value: object) -> object:
-    if isinstance(value, dict):
-        return tuple((str(key), _normalize_spec_value(item)) for key, item in sorted(value.items()))
-    if isinstance(value, list):
-        return tuple(_normalize_spec_value(item) for item in value)
-    return str(value)
-
-
-def _action_spec_signature(spec: dict[str, object]) -> tuple[object, ...]:
-    payload = spec.get("payload", {})
-    if not isinstance(payload, dict):
-        payload = {}
-    return (
-        str(spec.get("kind", "")).strip(),
-        tuple(str(item).strip() for item in spec.get("target_ids", []) if str(item).strip()),
-        tuple((str(key), _normalize_spec_value(value)) for key, value in sorted(payload.items())),
-    )
-
-
-def _dedupe_action_specs(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
-    deduped: list[dict[str, object]] = []
-    seen: set[tuple[object, ...]] = set()
-    for candidate in candidates:
-        signature = _action_spec_signature(candidate)
-        if signature in seen:
-            continue
-        seen.add(signature)
-        deduped.append(candidate)
-    return deduped
-
-
 def _candidate_nodes(
     graph: IdeaGraph,
     *,
@@ -1641,6 +1589,15 @@ def _generic_candidate_action_specs(
     return _dedupe_action_specs(candidates)
 
 
+def generic_candidate_action_specs(
+    graph: IdeaGraph,
+    round_name: str,
+    role: str,
+    branch: Branch,
+) -> list[dict[str, object]]:
+    return _generic_candidate_action_specs(graph, round_name, role, branch)
+
+
 def _reference_subgraph(graph: IdeaGraph) -> dict[str, object]:
     candidate = _best_candidate_subgraph(graph)
     if candidate is not None:
@@ -1781,13 +1738,14 @@ def _select_ranked_action(
     *,
     record_trace: bool,
 ) -> tuple[GraphAction, dict[str, object]]:
-    branch = branch_for_role(graph, role)
-    baseline_candidate = _action_spec_from_action(
-        _legacy_choose_round_action(deepcopy(graph), round_name, role),
-        candidate_source="legacy_policy",
+    baseline_action = _legacy_choose_round_action(deepcopy(graph), round_name, role)
+    candidates = enumerate_candidate_specs(
+        graph,
+        round_name=round_name,
+        role=role,
+        baseline_action=baseline_action,
     )
-    candidates = [baseline_candidate, *_generic_candidate_action_specs(graph, round_name, role, branch)]
-    candidates = _dedupe_action_specs(candidates)
+    candidates = [candidate for candidate in candidates if str(candidate.get("kind", "")).strip() != "commit"]
 
     reference_subgraph = _reference_subgraph(graph)
     reference_snapshot = _compute_maturity_snapshot(

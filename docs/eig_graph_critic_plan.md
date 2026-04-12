@@ -213,10 +213,30 @@ Key reviewer-facing tests:
 - prevent leakage across trajectories from the same benchmark case
 - store weak labels separately from benchmark-native and human labels
 
-### Stage G3: Baseline Critic
+### Stage G2.5: Candidate-Slate Dataset
 
-- start with a text-only critic over flattened graph summaries
-- this gives a simple learned baseline and checks whether the labels are useful
+- derive feasible candidate slates from frozen `G1` and `G2` artifacts
+- keep `G2` immutable, so label/split construction remains auditable
+- add `commit` as an explicit candidate action for every graph state
+- store stable candidate IDs, model-facing candidate text, and state-level
+  candidate counts
+- current full derived dataset:
+  `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g25`
+  with `910` states and `9456` candidates
+
+### Stage G3: Text Critic Pilot
+
+- train a modest text-only scorer over `state_text [SEP] candidate_text`
+- evaluate ranking quality on held-out benchmark-instance groups
+- treat this as a low-data logged-edit imitation pilot that serves as a simple
+  baseline and data-sanity check, not as final learned controller evidence
+- current pilot artifact:
+  `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g3_text_pilot`
+  with validation top-1 accuracy `0.724` and mean reciprocal rank `0.841`
+- important limitation: the current train and validation splits contain zero
+  positive `commit` labels even though every candidate slate includes one
+  explicit `commit` action, so this pilot does not yet demonstrate learned
+  commit control and should be read as a supervision-limited baseline
 
 ### Stage G4: Graph Critic
 

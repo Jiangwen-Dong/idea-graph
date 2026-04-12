@@ -16,10 +16,12 @@ from idea_graph.fs_utils import _windows_safe_path, write_text_file
 from idea_graph.trajectory_dataset import (
     PricingConfig,
     aggregate_dataset_profile,
+    build_terminal_state_rows,
     build_run_manifest_row,
     build_transition_rows,
     discover_run_dirs,
     extract_trace_stats,
+    reconstruct_terminal_state,
     reconstruct_state_before_action,
 )
 
@@ -62,6 +64,10 @@ class TrajectoryDatasetTests(unittest.TestCase):
     def _graph_payload(self, *, baseline_name: str = "ours-eig") -> dict[str, object]:
         return {
             "topic": "Toy topic",
+            "literature": [
+                "Paper A: Structured collaboration for idea graphs.",
+                "Paper B: Benchmark-specific evaluation protocols.",
+            ],
             "metadata": {
                 "benchmark": "AI_Idea_Bench_2025",
                 "benchmark_index": 7,
@@ -284,6 +290,19 @@ class TrajectoryDatasetTests(unittest.TestCase):
         self.assertEqual(before_repair["contradiction_count"], 1)
         self.assertEqual(after_repair["contradiction_count"], 0)
 
+    def test_reconstruct_terminal_state_contains_final_graph_for_commit_supervision(self) -> None:
+        graph_payload = self._graph_payload()
+
+        snapshot = reconstruct_terminal_state(graph_payload)
+
+        self.assertEqual(set(snapshot["nodes"].keys()), {"N1", "N2", "N3"})
+        self.assertEqual({edge["id"] for edge in snapshot["edges"]}, {"E1", "E2"})
+        self.assertEqual(snapshot["node_count"], 3)
+        self.assertEqual(snapshot["edge_count"], 2)
+        self.assertEqual(snapshot["support_edge_count"], 1)
+        self.assertEqual(snapshot["contradiction_count"], 0)
+        self.assertEqual(snapshot["state_kind"], "terminal_commit")
+
     def test_build_run_manifest_row_handles_eig_and_non_eig_runs(self) -> None:
         eig_row = build_run_manifest_row(
             self.tmp_dir / "eig_run",
@@ -344,31 +363,6 @@ class TrajectoryDatasetTests(unittest.TestCase):
         self.assertEqual(row["native_metric_map"]["i2i_motivation"]["score"], 4.0)
         self.assertEqual(row["native_metric_map"]["fps"]["max_score"], 5.0)
 
-    def test_build_run_manifest_row_preserves_full_local_and_native_label_payloads(self) -> None:
-        summary_payload = {
-            **self._summary_payload(),
-            "idea_evaluation": {
-                "overall_score": 6.4,
-                "category_scores": {
-                    "benchmark_alignment": 4.8,
-                    "expert_style_quality": 7.1,
-                    "graph_process": 7.5,
-                },
-            },
-            "benchmark_native_evaluation": {
-                "benchmark": "AI_Idea_Bench_2025",
-                "metrics": [
-                    {"key": "i2i_motivation", "score": 4.0, "max_score": 5.0, "available": True},
-                    {"key": "fps", "score": 4.0, "max_score": 5.0, "available": True},
-                ],
-                "summary": {"available_average_normalized_10": 6.9},
-            },
-        }
-        row = build_run_manifest_row(self.tmp_dir / "eig_run", summary_payload, self._graph_payload())
-        self.assertEqual(row["local_category_scores"]["graph_process"], 7.5)
-        self.assertEqual(row["native_metric_map"]["i2i_motivation"]["score"], 4.0)
-        self.assertEqual(row["native_metric_map"]["fps"]["max_score"], 5.0)
-
     def test_build_transition_rows_only_exports_action_runs(self) -> None:
         snapshot_dir = self.tmp_dir / "state_snapshots"
         eig_rows = build_transition_rows(
@@ -392,7 +386,36 @@ class TrajectoryDatasetTests(unittest.TestCase):
         self.assertEqual(baseline_rows, [])
         self.assertEqual(eig_rows[0]["selected_action_kind"], "add_support_edge")
         self.assertEqual(eig_rows[1]["selected_action_kind"], "propose_repair")
+        self.assertEqual(eig_rows[2]["selected_action_kind"], "attach_evidence")
+        self.assertEqual(eig_rows[2]["selected_action_payload"], {"branch_id": "B1", "evidence": "Toy evidence"})
+        self.assertEqual(eig_rows[2]["selected_action_rationale"], "Attach evidence after repair.")
+        self.assertEqual(eig_rows[2]["selected_action_branch_id"], "B1")
+        self.assertEqual(
+            eig_rows[2]["state_literature"],
+            [
+                "Paper A: Structured collaboration for idea graphs.",
+                "Paper B: Benchmark-specific evaluation protocols.",
+            ],
+        )
         self.assertEqual(len(list(snapshot_dir.glob("*.json"))), 3)
+
+    def test_build_terminal_state_rows_exports_positive_commit_target(self) -> None:
+        snapshot_dir = self.tmp_dir / "terminal_state_snapshots"
+
+        rows = build_terminal_state_rows(
+            self.tmp_dir / "eig_run",
+            self._summary_payload(),
+            self._graph_payload(),
+            snapshot_dir=snapshot_dir,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["state_kind"], "terminal_commit")
+        self.assertEqual(row["selected_action_kind"], "commit")
+        self.assertEqual(row["commit_supervision"]["label"], 1)
+        self.assertEqual(row["commit_supervision"]["source"], "terminal_final_graph")
+        self.assertTrue((self.tmp_dir / row["before_state_snapshot"]).exists())
 
     def test_build_dataset_profile_aggregates_counts(self) -> None:
         manifest_rows = [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import sys
 from pathlib import Path
 import unittest
@@ -12,8 +13,14 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from idea_graph.agent_backend import ActionDecision
+from idea_graph.action_candidates import (
+    action_spec_from_action,
+    enumerate_candidate_specs,
+    flatten_candidate_text,
+)
 from idea_graph.claim_chain import select_claim_chain
 from idea_graph.engine import (
+    make_action,
     build_seed_graphs,
     choose_round_action,
     create_branch,
@@ -24,10 +31,11 @@ from idea_graph.engine import (
     run_experiment,
     select_final_subgraph,
     synthesize_proposal,
+    validate_action,
     unresolved_contradiction_edges,
     utility_breakdown,
 )
-from idea_graph.models import FinalProposal, IdeaGraph, MaturitySnapshot
+from idea_graph.models import FinalProposal, GraphAction, IdeaGraph, MaturitySnapshot
 from idea_graph.models import UtilityBreakdown
 
 
@@ -117,6 +125,92 @@ class EngineTests(unittest.TestCase):
         self.assertIn("seed_generation_error", graph.metadata)
         self.assertEqual(len(graph.metadata.get("action_errors", [])), len(graph.actions))
         self.assertTrue(any("using deterministic fallback" in message for message in messages))
+
+    def test_action_spec_from_action_preserves_fields(self) -> None:
+        action = GraphAction(
+            id="A999",
+            round_name="Round2",
+            role="MechanismProposer",
+            kind="attach_evidence",
+            target_ids=["N001"],
+            payload={"branch_id": "B001", "evidence": "paper://x"},
+            rationale="Attach concrete prior support.",
+        )
+
+        spec = action_spec_from_action(action, candidate_source="legacy_policy")
+
+        self.assertEqual(spec["kind"], action.kind)
+        self.assertEqual(spec["target_ids"], action.target_ids)
+        self.assertEqual(spec["payload"], action.payload)
+        self.assertEqual(spec["candidate_source"], "legacy_policy")
+
+    def test_enumerate_candidate_specs_default_includes_commit(self) -> None:
+        graph = self._build_seed_graph()
+        baseline_action = choose_round_action(graph, "Round1", "ImpactReframer")
+
+        specs = enumerate_candidate_specs(
+            graph,
+            round_name="Round1",
+            role="ImpactReframer",
+            baseline_action=baseline_action,
+        )
+
+        self.assertTrue(
+            any(
+                spec.get("kind") == baseline_action.kind
+                and list(spec.get("target_ids", [])) == baseline_action.target_ids
+                and spec.get("candidate_source") == "legacy_policy"
+                for spec in specs
+            )
+        )
+        self.assertTrue(any(spec.get("kind") == "commit" for spec in specs))
+
+    def test_enumerate_candidate_specs_live_safe_excludes_commit_and_validates(self) -> None:
+        graph = self._build_seed_graph()
+        role = "ImpactReframer"
+        round_name = "Round1"
+        baseline_action = choose_round_action(graph, round_name, role)
+
+        self.assertNotIn("include_commit", inspect.signature(enumerate_candidate_specs).parameters)
+        specs = enumerate_candidate_specs(
+            graph,
+            round_name=round_name,
+            role=role,
+            baseline_action=baseline_action,
+        )
+        live_specs = [spec for spec in specs if str(spec.get("kind", "")).strip() != "commit"]
+
+        self.assertTrue(live_specs)
+        self.assertTrue(all(spec.get("kind") != "commit" for spec in live_specs))
+        for spec in live_specs:
+            action = make_action(
+                graph,
+                round_name=round_name,
+                role=role,
+                kind=str(spec.get("kind", "")).strip(),
+                target_ids=[str(item).strip() for item in spec.get("target_ids", []) if str(item).strip()],
+                payload=dict(spec.get("payload", {}) or {}),
+                rationale=str(spec.get("rationale", "")).strip(),
+            )
+            validate_action(graph, action)
+
+    def test_flatten_candidate_text_uses_target_text_and_payload(self) -> None:
+        graph = self._build_seed_graph()
+        target = graph.active_nodes()[0]
+        spec = {
+            "kind": "attach_evidence",
+            "target_ids": [target.id],
+            "payload": {"branch_id": target.branch_id, "evidence": "grounding-snippet"},
+            "rationale": "Ground this claim with concrete evidence.",
+            "candidate_source": "utility_attach_evidence",
+        }
+
+        text = flatten_candidate_text(graph, spec)
+
+        self.assertIn(target.type, text)
+        self.assertIn(target.text, text)
+        self.assertIn("grounding-snippet", text)
+        self.assertIn("Ground this claim with concrete evidence.", text)
 
     def test_progress_callback_receives_round_updates(self) -> None:
         messages: list[str] = []

@@ -20,6 +20,7 @@ class ExportResult:
     dataset_dir: Path
     run_count: int
     transition_count: int
+    terminal_state_count: int = 0
 
 
 def discover_run_dirs(input_roots: Sequence[Path]) -> list[Path]:
@@ -216,6 +217,18 @@ def build_run_manifest_row(
     category_scores = idea_evaluation.get("category_scores", {})
     if not isinstance(category_scores, Mapping):
         category_scores = {}
+    local_category_scores = dict(category_scores)
+
+    native_metrics = native_evaluation.get("metrics", [])
+    native_metric_map: dict[str, dict[str, Any]] = {}
+    if isinstance(native_metrics, list):
+        for metric in native_metrics:
+            if not isinstance(metric, Mapping):
+                continue
+            key = str(metric.get("key", "")).strip()
+            if not key:
+                continue
+            native_metric_map[key] = dict(metric)
 
     baseline_name = str(metadata.get("baseline_name", "")).strip() or "unknown"
     benchmark = (
@@ -242,7 +255,9 @@ def build_run_manifest_row(
         "matured_at_round": summary_payload.get("matured_at_round"),
         "final_local_overall": _safe_float(idea_evaluation.get("overall_score")),
         "final_local_alignment": _safe_float(category_scores.get("benchmark_alignment")),
+        "local_category_scores": local_category_scores,
         "final_native_average": _native_average(native_evaluation),
+        "native_metric_map": native_metric_map,
         "trace_llm_call_count": trace_stats["llm_call_count"],
         "trace_prompt_tokens": trace_stats["prompt_tokens"],
         "trace_completion_tokens": trace_stats["completion_tokens"],
@@ -346,6 +361,55 @@ def reconstruct_state_before_action(graph_payload: Mapping[str, Any], action_ind
         "action_id": str(action.get("id", "")).strip(),
         "action_index": action_index,
         "action_timestamp": action.get("timestamp"),
+        "state_kind": "pre_action",
+        "nodes": included_nodes,
+        "edges": included_edges,
+        "node_count": len(included_nodes),
+        "edge_count": len(included_edges),
+        "contradiction_count": unresolved_contradictions,
+        "support_edge_count": support_edge_count,
+    }
+
+
+def reconstruct_terminal_state(graph_payload: Mapping[str, Any]) -> dict[str, Any]:
+    nodes_payload = graph_payload.get("nodes", {})
+    if not isinstance(nodes_payload, Mapping):
+        nodes_payload = {}
+    edges_payload = graph_payload.get("edges", [])
+    if not isinstance(edges_payload, list):
+        edges_payload = []
+
+    included_nodes: dict[str, dict[str, Any]] = {}
+    for node_id, node_payload in nodes_payload.items():
+        if isinstance(node_payload, Mapping):
+            included_nodes[str(node_id)] = dict(node_payload)
+
+    included_edges: list[dict[str, Any]] = []
+    unresolved_contradictions = 0
+    support_edge_count = 0
+    for edge_payload in edges_payload:
+        if not isinstance(edge_payload, Mapping):
+            continue
+        source_id = str(edge_payload.get("source_id", "")).strip()
+        target_id = str(edge_payload.get("target_id", "")).strip()
+        if source_id and source_id not in included_nodes:
+            continue
+        if target_id and target_id not in included_nodes:
+            continue
+        edge_copy = dict(edge_payload)
+        if _edge_is_contradiction(edge_payload) and not bool(edge_copy.get("resolved", False)):
+            unresolved_contradictions += 1
+        if str(edge_payload.get("relation", "")).strip().lower() == "supports":
+            support_edge_count += 1
+        included_edges.append(edge_copy)
+
+    actions = graph_payload.get("actions", [])
+    action_count = len(actions) if isinstance(actions, list) else 0
+    return {
+        "action_id": "terminal_commit",
+        "action_index": action_count,
+        "action_timestamp": None,
+        "state_kind": "terminal_commit",
         "nodes": included_nodes,
         "edges": included_edges,
         "node_count": len(included_nodes),
@@ -458,6 +522,10 @@ def build_transition_rows(
     metadata = graph_payload.get("metadata", {})
     if not isinstance(metadata, Mapping):
         metadata = {}
+    raw_literature = graph_payload.get("literature", [])
+    state_literature: list[str] = []
+    if isinstance(raw_literature, list):
+        state_literature = [str(item).strip() for item in raw_literature if str(item).strip()]
 
     write_rows: list[dict[str, Any]] = []
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -482,6 +550,11 @@ def build_transition_rows(
 
         override = override_lookup.get((round_name, str(action.get("role", "")).strip()), {})
         step_trace = _action_step_trace(graph_payload, action)
+        action_payload = action.get("payload", {})
+        if not isinstance(action_payload, Mapping):
+            action_payload = {}
+        selected_action_payload = dict(action_payload)
+        selected_action_branch_id = str(selected_action_payload.get("branch_id", "")).strip() or None
 
         write_rows.append(
             {
@@ -496,6 +569,10 @@ def build_transition_rows(
                 "selected_action_kind": str(action.get("kind", "")).strip(),
                 "selected_action_targets": list(action.get("target_ids", []) or []),
                 "selected_action_source": str(action.get("source", "")).strip() or "unknown",
+                "selected_action_payload": selected_action_payload,
+                "selected_action_rationale": str(action.get("rationale", "")).strip(),
+                "selected_action_branch_id": selected_action_branch_id,
+                "state_literature": list(state_literature),
                 "before_state_snapshot": f"state_snapshots/{snapshot_name}",
                 "before_state_node_count": snapshot["node_count"],
                 "before_state_edge_count": snapshot["edge_count"],
@@ -519,9 +596,84 @@ def build_transition_rows(
     return write_rows
 
 
+def _terminal_branch_id(graph_payload: Mapping[str, Any]) -> str:
+    nodes_payload = graph_payload.get("nodes", {})
+    if isinstance(nodes_payload, Mapping):
+        for node_payload in nodes_payload.values():
+            if not isinstance(node_payload, Mapping):
+                continue
+            branch_id = str(node_payload.get("branch_id", "")).strip()
+            if branch_id:
+                return branch_id
+    return "B_terminal"
+
+
+def build_terminal_state_rows(
+    run_dir: Path,
+    summary_payload: Mapping[str, Any],
+    graph_payload: Mapping[str, Any],
+    *,
+    snapshot_dir: Path,
+) -> list[dict[str, Any]]:
+    metadata = graph_payload.get("metadata", {})
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    baseline_name = str(metadata.get("baseline_name", "")).strip() or "unknown"
+    actions = graph_payload.get("actions", [])
+    if baseline_name != "ours-eig" or not isinstance(actions, list) or not actions:
+        return []
+
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot = reconstruct_terminal_state(graph_payload)
+    snapshot_name = f"{run_dir.name}-terminal.json"
+    write_text_file(
+        snapshot_dir / snapshot_name,
+        json.dumps(snapshot, indent=2, ensure_ascii=False, default=str),
+    )
+
+    native_evaluation = summary_payload.get("benchmark_native_evaluation", {})
+    if not isinstance(native_evaluation, Mapping):
+        native_evaluation = {}
+
+    branch_id = _terminal_branch_id(graph_payload)
+    return [
+        {
+            "run_dir": str(run_dir),
+            "benchmark": str(metadata.get("benchmark", "")).strip() or str(native_evaluation.get("benchmark", "")).strip() or "unknown",
+            "instance_name": str(summary_payload.get("instance_name", run_dir.name)).strip() or run_dir.name,
+            "baseline_name": baseline_name,
+            "topic": str(summary_payload.get("topic", graph_payload.get("topic", ""))).strip(),
+            "step_index": len(actions),
+            "round_name": "Terminal",
+            "role": "CommitController",
+            "selected_action_kind": "commit",
+            "selected_action_targets": [],
+            "selected_action_source": "terminal_commit_supervision",
+            "selected_action_payload": {"branch_id": branch_id},
+            "selected_action_rationale": "Commit after the final exported idea graph state.",
+            "selected_action_branch_id": branch_id,
+            "state_literature": [str(item) for item in graph_payload.get("literature", [])]
+            if isinstance(graph_payload.get("literature"), list)
+            else [],
+            "before_state_snapshot": f"terminal_state_snapshots/{snapshot_name}",
+            "before_state_node_count": snapshot["node_count"],
+            "before_state_edge_count": snapshot["edge_count"],
+            "before_state_contradiction_count": snapshot["contradiction_count"],
+            "before_state_support_edge_count": snapshot["support_edge_count"],
+            "state_kind": "terminal_commit",
+            "commit_supervision": {
+                "available": True,
+                "label": 1,
+                "source": "terminal_final_graph",
+            },
+        }
+    ]
+
+
 def aggregate_dataset_profile(
     manifest_rows: Sequence[Mapping[str, Any]],
     transition_rows: Sequence[Mapping[str, Any]],
+    terminal_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     benchmark_counts: dict[str, int] = {}
     baseline_counts: dict[str, int] = {}
@@ -562,6 +714,7 @@ def aggregate_dataset_profile(
 
     run_count = len(manifest_rows)
     transition_count = len(transition_rows)
+    terminal_state_count = len(terminal_rows or [])
     usable_eig_run_count = sum(1 for row in manifest_rows if bool(row.get("is_eig_run", False)))
 
     def _fraction(count: int) -> float:
@@ -574,6 +727,7 @@ def aggregate_dataset_profile(
         "usable_run_count": run_count,
         "usable_eig_run_count": usable_eig_run_count,
         "transition_count": transition_count,
+        "terminal_state_count": terminal_state_count,
         "average_actions_per_usable_eig_run": (
             sum(eig_action_counts) / len(eig_action_counts) if eig_action_counts else 0.0
         ),
@@ -617,8 +771,10 @@ def _readme_text() -> str:
             "Files:",
             "- `run_manifest.jsonl`: one row per discovered run directory",
             "- `trajectory_examples.jsonl`: one row per exported graph action",
+            "- `terminal_state_manifest.jsonl`: one positive commit-supervision state per completed EIG run",
             "- `dataset_profile.json`: aggregate counts, coverage, token, and cost indicators",
             "- `state_snapshots/`: JSON snapshots of the reconstructed pre-action graph state",
+            "- `terminal_state_snapshots/`: JSON snapshots of final graph states used for commit supervision",
             "",
             "Caveat: state reconstruction is timestamp-based and approximate. It is",
             "structurally faithful for offline critic training, but it is not a full",
@@ -644,10 +800,13 @@ def export_graph_critic_dataset(
 
     dataset_dir = Path(output_dir) / dataset_name
     snapshot_dir = dataset_dir / "state_snapshots"
+    terminal_snapshot_dir = dataset_dir / "terminal_state_snapshots"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
+    terminal_snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_rows: list[dict[str, Any]] = []
     transition_rows: list[dict[str, Any]] = []
+    terminal_rows: list[dict[str, Any]] = []
 
     for run_dir in run_dirs:
         summary_payload, graph_payload = load_run_artifacts(run_dir)
@@ -660,11 +819,20 @@ def export_graph_critic_dataset(
         transition_rows.extend(
             build_transition_rows(run_dir, summary_payload, graph_payload, snapshot_dir=snapshot_dir)
         )
+        terminal_rows.extend(
+            build_terminal_state_rows(
+                run_dir,
+                summary_payload,
+                graph_payload,
+                snapshot_dir=terminal_snapshot_dir,
+            )
+        )
 
-    profile = aggregate_dataset_profile(manifest_rows, transition_rows)
+    profile = aggregate_dataset_profile(manifest_rows, transition_rows, terminal_rows)
 
     write_text_file(dataset_dir / "run_manifest.jsonl", _jsonl_lines(manifest_rows))
     write_text_file(dataset_dir / "trajectory_examples.jsonl", _jsonl_lines(transition_rows))
+    write_text_file(dataset_dir / "terminal_state_manifest.jsonl", _jsonl_lines(terminal_rows))
     write_text_file(
         dataset_dir / "dataset_profile.json",
         json.dumps(profile, indent=2, ensure_ascii=False, default=str),
@@ -675,4 +843,5 @@ def export_graph_critic_dataset(
         dataset_dir=dataset_dir,
         run_count=len(manifest_rows),
         transition_count=len(transition_rows),
+        terminal_state_count=len(terminal_rows),
     )
