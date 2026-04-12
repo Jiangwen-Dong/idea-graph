@@ -1114,3 +1114,45 @@ regeneration packet on the touched codepath:
   - `python -m pytest tests/test_trajectory_dataset.py tests/test_candidate_slate_dataset.py tests/test_critic_dataset.py -q` passed
   - `python -m pytest tests/test_text_critic.py -q` passed
   - `python -m pytest tests/test_engine.py tests/test_candidate_slate_dataset.py tests/test_text_critic.py tests/test_critic_dataset.py tests/test_trajectory_dataset.py -q` passed
+
+### 2026-04-12: G3.5 Partition Manifest Layer
+
+- Closed Task 0 of the online-critic plan on the canonical `main` branch:
+  - committed reviewed graph-critic sync as `8652962`
+  - reran the focused critic packet on `main`
+  - verification result:
+    `python -m pytest tests/test_engine.py tests/test_candidate_slate_dataset.py tests/test_text_critic.py tests/test_critic_dataset.py tests/test_trajectory_dataset.py -q`
+    passed with `61 passed`
+- Implemented the new deterministic partition-manifest layer:
+  - `src/idea_graph/critic_partitions.py`
+  - `scripts/build_critic_partition_manifest.py`
+  - `tests/test_critic_partitions.py`
+- Task 1A review state:
+  - spec-compliance review: approved
+  - code-quality review: approved after one CLI output-dir fix
+- New local verification for the partition layer:
+  - `python -m pytest tests/test_critic_partitions.py -q` passed with `7 passed`
+  - `python -m pytest tests/test_trajectory_dataset.py tests/test_critic_dataset.py tests/test_candidate_slate_dataset.py tests/test_critic_partitions.py -q` passed with `33 passed`
+- Built the first concrete partition artifact:
+  - command:
+    `python scripts/build_critic_partition_manifest.py --g2-dataset-dir outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g2 --output-dir outputs/graph_critic_datasets --dataset-name current_benchmarked_ours_eig_full_g35_partitions`
+  - artifact:
+    `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions`
+  - current stats:
+    - `group_count`: `11`
+    - `critic_train`: `9`
+    - `critic_dev`: `2`
+    - `paper_eval`: `0`
+    - `has_paper_eval`: `false`
+- Recovery diagnosis update:
+  - the active repo can currently rediscover the full `60` benchmarked
+    `ours-eig` runs from `outputs/`
+  - this means the older `48`-run `current_benchmarked_ours_eig_full_g1_commit_enriched`
+    artifact is a stale partial rebuild, not evidence of missing runs in the
+    current workspace
+- Immediate next step after this checkpoint:
+  - extend the enriched dataset contract with explicit provenance /
+    `partition_role` fields
+  - rebuild the commit-enriched `G1/G2/G2.5` datasets from the full `60`-run
+    pool
+  - then move to the warm-start pilot on the clean partitioned dataset

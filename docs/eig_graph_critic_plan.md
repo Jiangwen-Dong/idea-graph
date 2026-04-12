@@ -238,6 +238,23 @@ Key reviewer-facing tests:
   explicit `commit` action, so this pilot does not yet demonstrate learned
   commit control and should be read as a supervision-limited baseline
 
+### Stage G3.5: Partition Manifest Layer
+
+- add a deterministic group-level partition manifest over the existing `G2`
+  split rows
+- keep the assignment unit at benchmark-instance group granularity, never
+  individual state rows
+- map source `train` / `validation` into `critic_train` / `critic_dev`
+  explicitly, with optional `paper_eval` holdouts
+- current artifact:
+  `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions`
+  with `11` groups, `9` `critic_train`, `2` `critic_dev`, and no `paper_eval`
+  groups yet
+- current diagnostic conclusion:
+  the repo can rediscover the full current `60`-run `ours-eig` pool from the
+  active `outputs/` tree, so the older `48`-run commit-enriched export should
+  be treated as a stale partial rebuild rather than a true missing-run problem
+
 ### Stage G4: Graph Critic
 
 - implement the graph encoder and action scorer
