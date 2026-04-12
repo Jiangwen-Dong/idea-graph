@@ -255,6 +255,30 @@ Key reviewer-facing tests:
   active `outputs/` tree, so the older `48`-run commit-enriched export should
   be treated as a stale partial rebuild rather than a true missing-run problem
 
+### Stage G3.6: Full-Pool Commit-Enriched Refresh
+
+- regenerate the commit-enriched `G1 / G2 / G2.5` stack from the current full
+  `60`-run `ours-eig` pool
+- refreshed artifacts:
+  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g1_commit_enriched`
+  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g2_commit_enriched`
+  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g25_commit_enriched`
+- refreshed counts:
+  - `G1` run count `60`, transition count `910`, terminal commit states `60`
+  - `G2` run count `60`, transition count `910`
+  - `G2.5` state count `970`, candidate count `10092`, commit-positive count
+    `60`
+- rerun the text critic on the refreshed `G2.5` artifact:
+  `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g3_text_pilot_commit_enriched`
+- refreshed `G3` pilot result:
+  - validation top-1 accuracy `0.736`
+  - mean reciprocal rank `0.848`
+  - crucially, `train_commit_positive_count = 55` and
+    `validation_commit_positive_count = 5`
+- practical conclusion:
+  the text critic still remains a modest pilot, but the supervision gap that
+  previously blocked commit-learning evidence is now materially reduced
+
 ### Stage G4: Graph Critic
 
 - implement the graph encoder and action scorer

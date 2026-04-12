@@ -1154,5 +1154,48 @@ regeneration packet on the touched codepath:
   - extend the enriched dataset contract with explicit provenance /
     `partition_role` fields
   - rebuild the commit-enriched `G1/G2/G2.5` datasets from the full `60`-run
-    pool
+  pool
   - then move to the warm-start pilot on the clean partitioned dataset
+
+### 2026-04-12: Full 60-Run Commit-Enriched Refresh
+
+- Rebuilt the stale commit-enriched dataset stack from the current full
+  `60`-run `ours-eig` pool in the active repo.
+- Rebuild commands:
+  - `python scripts/export_graph_critic_dataset.py --input-root outputs --output-dir outputs/graph_critic_datasets --dataset-name current_benchmarked_ours_eig_full_g1_commit_enriched --baseline ours-eig`
+  - `python scripts/build_graph_critic_dataset.py --g1-dataset-dir outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g1_commit_enriched --output-dir outputs/graph_critic_datasets --dataset-name current_benchmarked_ours_eig_full_g2_commit_enriched`
+  - `python scripts/build_graph_critic_candidate_dataset.py --g1-dataset-dir outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g1_commit_enriched --g2-dataset-dir outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g2_commit_enriched --output-dir outputs/graph_critic_datasets --dataset-name current_benchmarked_ours_eig_full_g25_commit_enriched`
+- Refreshed artifact counts:
+  - `G1`:
+    - `run_count`: `60`
+    - `transition_count`: `910`
+    - `terminal_state_count`: `60`
+  - `G2`:
+    - `run_count`: `60`
+    - `transition_count`: `910`
+    - `group_count`: `11`
+  - `G2.5`:
+    - `state_count`: `970`
+    - `candidate_count`: `10092`
+    - `commit_positive_count`: `60`
+    - `terminal_state_count`: `60`
+- Reran the text-only critic on the refreshed full-pool candidate dataset:
+  - command:
+    `python scripts/train_text_critic.py --candidate-dataset-dir outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g25_commit_enriched --output-dir outputs/graph_critic_models/current_benchmarked_ours_eig_full_g3_text_pilot_commit_enriched`
+  - metrics:
+    - `state_count`: `110`
+    - `top1_accuracy`: `0.7363636363636363`
+    - `mean_reciprocal_rank`: `0.8484848484848484`
+  - commit-label metadata:
+    - `train_commit_positive_count`: `55`
+    - `validation_commit_positive_count`: `5`
+- Interpretation:
+  - the refreshed `G3` pilot remains a modest logged-edit scorer, but it no
+    longer suffers from the earlier zero-positive-commit supervision problem
+  - this makes the next warm-start / scorer-based controller step much more
+    meaningful than before
+- Immediate next step after this refresh:
+  - add explicit `partition_role` / provenance fields to the enriched dataset
+    contract where still missing
+  - then start the first warm-start trainer on top of the refreshed full-pool
+    `G2.5` artifact and `G3.5` partition manifest
