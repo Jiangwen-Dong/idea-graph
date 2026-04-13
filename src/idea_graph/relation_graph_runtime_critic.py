@@ -322,6 +322,191 @@ def _load_torch_checkpoint(path: Path) -> Any:
         return torch.load(path, map_location="cpu")
 
 
+def _require_trailing_unknown_bucket(vocab: Mapping[str, int], *, vocab_name: str) -> int:
+    unknown_id = vocab.get("unknown")
+    if unknown_id is None:
+        raise ValueError(f"Runtime vocabulary '{vocab_name}' is missing required trailing 'unknown' bucket.")
+    normalized_unknown_id = int(unknown_id)
+    expected_unknown_id = len(vocab) - 1
+    if normalized_unknown_id != expected_unknown_id:
+        raise ValueError(
+            f"Runtime vocabulary '{vocab_name}' must place 'unknown' at id {expected_unknown_id}, "
+            f"found {normalized_unknown_id}."
+        )
+    return normalized_unknown_id
+
+
+def _edge_linear_weight_key(layer_index: int, edge_type_id: int) -> str:
+    return f"layers.{layer_index}.edge_linears.{edge_type_id}.weight"
+
+
+def _edge_linear_indices_from_state_dict(
+    state_dict: Mapping[str, Any],
+    *,
+    layer_index: int,
+) -> list[int]:
+    prefix = f"layers.{layer_index}.edge_linears."
+    suffix = ".weight"
+    indices: set[int] = set()
+    for key, value in state_dict.items():
+        if not isinstance(key, str):
+            continue
+        if not key.startswith(prefix) or not key.endswith(suffix):
+            continue
+        middle = key[len(prefix): -len(suffix)]
+        try:
+            edge_type_id = int(middle)
+        except ValueError:
+            continue
+        if not isinstance(value, torch.Tensor):
+            raise ValueError(f"Checkpoint entry '{key}' must be a tensor.")
+        indices.add(edge_type_id)
+    return sorted(indices)
+
+
+def _maybe_pad_legacy_unknown_embedding_row(
+    *,
+    state_dict: dict[str, Any],
+    model_state_dict: Mapping[str, Any],
+    key: str,
+    vocab_name: str,
+    unknown_id: int,
+) -> None:
+    checkpoint_tensor = state_dict.get(key)
+    if not isinstance(checkpoint_tensor, torch.Tensor):
+        raise ValueError(f"Checkpoint is missing tensor '{key}'.")
+    runtime_tensor = model_state_dict.get(key)
+    if not isinstance(runtime_tensor, torch.Tensor):
+        raise ValueError(f"Runtime model is missing tensor '{key}'.")
+
+    checkpoint_shape = tuple(int(value) for value in checkpoint_tensor.shape)
+    runtime_shape = tuple(int(value) for value in runtime_tensor.shape)
+    if checkpoint_shape == runtime_shape:
+        return
+
+    if (
+        len(checkpoint_shape) == 2
+        and len(runtime_shape) == 2
+        and checkpoint_shape[1] == runtime_shape[1]
+        and checkpoint_shape[0] + 1 == runtime_shape[0]
+        and unknown_id == runtime_shape[0] - 1
+    ):
+        padding = torch.zeros(
+            (1, checkpoint_shape[1]),
+            dtype=checkpoint_tensor.dtype,
+            device=checkpoint_tensor.device,
+        )
+        state_dict[key] = torch.cat([checkpoint_tensor, padding], dim=0)
+        return
+
+    raise ValueError(
+        f"Checkpoint tensor '{key}' does not match runtime vocab shape for {vocab_name}: "
+        f"checkpoint={checkpoint_shape}, runtime={runtime_shape}. "
+        "Only legacy trailing 'unknown' bucket compatibility is supported."
+    )
+
+
+def _maybe_pad_legacy_unknown_edge_linears(
+    *,
+    state_dict: dict[str, Any],
+    model_state_dict: Mapping[str, Any],
+    layer_count: int,
+    edge_type_count: int,
+    unknown_edge_type_id: int,
+) -> None:
+    expected_indices = list(range(edge_type_count))
+    legacy_indices = expected_indices[:-1]
+    for layer_index in range(layer_count):
+        present_indices = _edge_linear_indices_from_state_dict(
+            state_dict,
+            layer_index=layer_index,
+        )
+        if present_indices == expected_indices:
+            continue
+        if present_indices == legacy_indices and unknown_edge_type_id == edge_type_count - 1:
+            target_key = _edge_linear_weight_key(layer_index, unknown_edge_type_id)
+            runtime_tensor = model_state_dict.get(target_key)
+            if not isinstance(runtime_tensor, torch.Tensor):
+                raise ValueError(f"Runtime model is missing tensor '{target_key}'.")
+            template_tensor: torch.Tensor | None = None
+            for edge_type_id in legacy_indices:
+                source_key = _edge_linear_weight_key(layer_index, edge_type_id)
+                source_value = state_dict.get(source_key)
+                if isinstance(source_value, torch.Tensor):
+                    template_tensor = source_value
+                    break
+            if template_tensor is None:
+                template_tensor = runtime_tensor
+            state_dict[target_key] = torch.zeros(
+                tuple(int(value) for value in runtime_tensor.shape),
+                dtype=template_tensor.dtype,
+                device=template_tensor.device,
+            )
+            continue
+        raise ValueError(
+            "Checkpoint edge-type linears do not match runtime vocab shape: "
+            f"layer={layer_index}, checkpoint_edge_ids={present_indices}, "
+            f"runtime_edge_ids={expected_indices}. "
+            "Only legacy trailing 'unknown' bucket compatibility is supported."
+        )
+
+
+def _apply_legacy_unknown_bucket_compatibility(
+    *,
+    state_dict: Mapping[str, Any],
+    model: RelationGraphCritic,
+    vocabs: RelationGraphVocabularies,
+) -> dict[str, Any]:
+    node_type_unknown_id = _require_trailing_unknown_bucket(
+        vocabs.node_type_to_id,
+        vocab_name="node_type",
+    )
+    role_unknown_id = _require_trailing_unknown_bucket(
+        vocabs.role_to_id,
+        vocab_name="role",
+    )
+    edge_type_unknown_id = _require_trailing_unknown_bucket(
+        vocabs.edge_type_to_id,
+        vocab_name="edge_type",
+    )
+    candidate_kind_unknown_id = _require_trailing_unknown_bucket(
+        vocabs.candidate_kind_to_id,
+        vocab_name="candidate_kind",
+    )
+
+    adapted_state_dict = dict(state_dict)
+    model_state_dict = model.state_dict()
+    _maybe_pad_legacy_unknown_embedding_row(
+        state_dict=adapted_state_dict,
+        model_state_dict=model_state_dict,
+        key="node_type_embed.weight",
+        vocab_name="node_type",
+        unknown_id=node_type_unknown_id,
+    )
+    _maybe_pad_legacy_unknown_embedding_row(
+        state_dict=adapted_state_dict,
+        model_state_dict=model_state_dict,
+        key="role_embed.weight",
+        vocab_name="role",
+        unknown_id=role_unknown_id,
+    )
+    _maybe_pad_legacy_unknown_embedding_row(
+        state_dict=adapted_state_dict,
+        model_state_dict=model_state_dict,
+        key="candidate_kind_embed.weight",
+        vocab_name="candidate_kind",
+        unknown_id=candidate_kind_unknown_id,
+    )
+    _maybe_pad_legacy_unknown_edge_linears(
+        state_dict=adapted_state_dict,
+        model_state_dict=model_state_dict,
+        layer_count=len(model.layers),
+        edge_type_count=len(vocabs.edge_type_to_id),
+        unknown_edge_type_id=edge_type_unknown_id,
+    )
+    return adapted_state_dict
+
+
 def load_relation_graph_runtime_bundle(model_dir: Path | str) -> LoadedRelationGraphRuntimeCritic:
     resolved = Path(model_dir).resolve()
     training_config = _require_json_object(resolved / "training_config.json")
@@ -350,7 +535,17 @@ def load_relation_graph_runtime_bundle(model_dir: Path | str) -> LoadedRelationG
     state_dict = state_payload.get("model_state_dict", state_payload)
     if not isinstance(state_dict, Mapping):
         raise ValueError(f"{resolved / 'model.pt'} does not contain a valid model state dict.")
-    model.load_state_dict(dict(state_dict))
+    compatible_state_dict = _apply_legacy_unknown_bucket_compatibility(
+        state_dict=state_dict,
+        model=model,
+        vocabs=vocabs,
+    )
+    try:
+        model.load_state_dict(compatible_state_dict)
+    except RuntimeError as exc:
+        raise ValueError(
+            f"{resolved / 'model.pt'} does not match runtime vocab shape or architecture: {exc}"
+        ) from exc
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     model.eval()

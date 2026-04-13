@@ -410,6 +410,104 @@ class RelationGraphRuntimeSelectorTests(unittest.TestCase):
         self.assertEqual(bundle.vocabs.edge_type_to_id, self.vocabularies.edge_type_to_id)
         self.assertEqual(bundle.vocabs.candidate_kind_to_id, self.vocabularies.candidate_kind_to_id)
 
+    def test_load_relation_graph_runtime_bundle_pads_legacy_unknown_bucket_parameters(self) -> None:
+        model_dir = self.tmp_dir / "artifact-legacy-unknown-compat"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "training_config.json").write_text(
+            json.dumps(
+                {
+                    "candidate_dataset_dir": str(self.fixture.candidate_dir.resolve()),
+                    "g1_dataset_dir": str(self.fixture.g1_dir.resolve()),
+                    "partition_manifest": str(self.fixture.partition_manifest.resolve()),
+                    "text_backend": "hash",
+                    "text_model_name": None,
+                    "embedding_dim": 8,
+                    "hidden_dim": 16,
+                    "batch_size": 2,
+                    "epochs": 1,
+                    "learning_rate": 1e-3,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (model_dir / "metadata.json").write_text(
+            json.dumps({"text_backend": "hash", "hidden_dim": 16}, indent=2),
+            encoding="utf-8",
+        )
+
+        legacy_model = RelationGraphCritic(
+            text_dim=8,
+            hidden_dim=16,
+            node_type_count=len(self.vocabularies.node_type_to_id) - 1,
+            role_count=len(self.vocabularies.role_to_id) - 1,
+            edge_type_count=len(self.vocabularies.edge_type_to_id) - 1,
+            candidate_kind_count=len(self.vocabularies.candidate_kind_to_id) - 1,
+        )
+        torch.save(legacy_model.state_dict(), model_dir / "model.pt")
+
+        bundle = load_relation_graph_runtime_bundle(model_dir)
+
+        node_unknown_id = self.vocabularies.node_type_to_id["unknown"]
+        role_unknown_id = self.vocabularies.role_to_id["unknown"]
+        edge_unknown_id = self.vocabularies.edge_type_to_id["unknown"]
+        kind_unknown_id = self.vocabularies.candidate_kind_to_id["unknown"]
+        self.assertTrue(
+            torch.allclose(bundle.model.node_type_embed.weight[node_unknown_id], torch.zeros(16))
+        )
+        self.assertTrue(
+            torch.allclose(bundle.model.role_embed.weight[role_unknown_id], torch.zeros(16))
+        )
+        self.assertTrue(
+            torch.allclose(bundle.model.candidate_kind_embed.weight[kind_unknown_id], torch.zeros(16))
+        )
+        for layer in bundle.model.layers:
+            self.assertTrue(
+                torch.allclose(
+                    layer.edge_linears[edge_unknown_id].weight,
+                    torch.zeros_like(layer.edge_linears[edge_unknown_id].weight),
+                )
+            )
+
+    def test_load_relation_graph_runtime_bundle_rejects_non_legacy_vocab_shape_drift(self) -> None:
+        model_dir = self.tmp_dir / "artifact-non-legacy-drift"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "training_config.json").write_text(
+            json.dumps(
+                {
+                    "candidate_dataset_dir": str(self.fixture.candidate_dir.resolve()),
+                    "g1_dataset_dir": str(self.fixture.g1_dir.resolve()),
+                    "partition_manifest": str(self.fixture.partition_manifest.resolve()),
+                    "text_backend": "hash",
+                    "text_model_name": None,
+                    "embedding_dim": 8,
+                    "hidden_dim": 16,
+                    "batch_size": 2,
+                    "epochs": 1,
+                    "learning_rate": 1e-3,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (model_dir / "metadata.json").write_text(
+            json.dumps({"text_backend": "hash", "hidden_dim": 16}, indent=2),
+            encoding="utf-8",
+        )
+
+        legacy_model = RelationGraphCritic(
+            text_dim=8,
+            hidden_dim=16,
+            node_type_count=len(self.vocabularies.node_type_to_id) - 2,
+            role_count=len(self.vocabularies.role_to_id) - 1,
+            edge_type_count=len(self.vocabularies.edge_type_to_id) - 1,
+            candidate_kind_count=len(self.vocabularies.candidate_kind_to_id) - 1,
+        )
+        torch.save(legacy_model.state_dict(), model_dir / "model.pt")
+
+        with self.assertRaisesRegex(ValueError, "does not match runtime vocab shape"):
+            load_relation_graph_runtime_bundle(model_dir)
+
     def test_select_relation_graph_critic_candidate_overrides_when_margin_is_large(self) -> None:
         graph = _build_runtime_graph()
         decision = select_relation_graph_critic_candidate(
