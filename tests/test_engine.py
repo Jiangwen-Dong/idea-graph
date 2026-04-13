@@ -280,6 +280,8 @@ class EngineTests(unittest.TestCase):
         controller_log = graph.metadata.get("runtime_controller_log")
         self.assertTrue(controller_log)
         self.assertEqual(controller_log[0]["round"], "Round1")
+        self.assertIn("selected_source", controller_log[0])
+        self.assertIn("used_heuristic_fallback", controller_log[0])
 
     def test_progress_callback_uses_functional_role_display_names(self) -> None:
         messages: list[str] = []

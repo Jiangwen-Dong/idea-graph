@@ -18,6 +18,7 @@ from idea_graph.candidate_slate_dataset import (
     build_candidate_dataset_stats,
     build_graph_critic_candidate_dataset,
 )
+from idea_graph.critic_dataset import build_graph_critic_dataset
 
 
 class CandidateSlateDatasetTests(unittest.TestCase):
@@ -313,6 +314,184 @@ class CandidateSlateDatasetTests(unittest.TestCase):
 
         self.assertEqual(stats["terminal_state_count"], 1)
         self.assertEqual(stats["commit_positive_count"], 1)
+
+    def test_graph_critic_builder_honors_split_overrides(self) -> None:
+        g1_dataset_dir = self.tmp_dir / "g1_graph_critic"
+        output_dir = self.tmp_dir / "out_graph_critic"
+        g1_dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 6.0,
+                "final_native_average": 7.0,
+            },
+            {
+                "run_dir": "run-b",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-02",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 6.5,
+                "final_native_average": 7.5,
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-03",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 7.0,
+                "final_native_average": 8.0,
+            },
+        ]
+        transition_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+            },
+            {
+                "run_dir": "run-b",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-02",
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-03",
+            },
+        ]
+        split_override_rows = [
+            {"group_id": "AI_Idea_Bench_2025::aiib-01", "split": "validation"},
+            {"group_id": "AI_Idea_Bench_2025::aiib-03", "split": "train"},
+        ]
+
+        write_text_file(
+            g1_dataset_dir / "run_manifest.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in manifest_rows),
+        )
+        write_text_file(
+            g1_dataset_dir / "trajectory_examples.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in transition_rows),
+        )
+        split_overrides_path = g1_dataset_dir / "split_overrides.jsonl"
+        write_text_file(
+            split_overrides_path,
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in split_override_rows),
+        )
+
+        result = build_graph_critic_dataset(
+            g1_dataset_dir=g1_dataset_dir,
+            output_dir=output_dir,
+            dataset_name="g2-override-smoke",
+            split_overrides_path=split_overrides_path,
+        )
+        split_manifest_rows = [
+            json.loads(line)
+            for line in (result.dataset_dir / "split_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        split_by_group = {
+            str(row["group_id"]): str(row["split"])
+            for row in split_manifest_rows
+        }
+        self.assertEqual(split_by_group["AI_Idea_Bench_2025::aiib-01"], "validation")
+        self.assertEqual(split_by_group["AI_Idea_Bench_2025::aiib-03"], "train")
+        self.assertEqual(split_by_group["AI_Idea_Bench_2025::aiib-02"], "train")
+
+    def test_graph_critic_builder_overrides_do_not_change_uncovered_default_splits(self) -> None:
+        g1_dataset_dir = self.tmp_dir / "g1_graph_critic_uncovered"
+        output_dir = self.tmp_dir / "out_graph_critic_uncovered"
+        g1_dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 6.0,
+                "final_native_average": 7.0,
+            },
+            {
+                "run_dir": "run-b",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-02",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 6.5,
+                "final_native_average": 7.5,
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-03",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 7.0,
+                "final_native_average": 8.0,
+            },
+        ]
+        transition_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+            },
+            {
+                "run_dir": "run-b",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-02",
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-03",
+            },
+        ]
+        split_override_rows = [
+            {"group_id": "AI_Idea_Bench_2025::aiib-01", "split": "validation"},
+        ]
+
+        write_text_file(
+            g1_dataset_dir / "run_manifest.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in manifest_rows),
+        )
+        write_text_file(
+            g1_dataset_dir / "trajectory_examples.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in transition_rows),
+        )
+        split_overrides_path = g1_dataset_dir / "split_overrides.jsonl"
+        write_text_file(
+            split_overrides_path,
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in split_override_rows),
+        )
+
+        result = build_graph_critic_dataset(
+            g1_dataset_dir=g1_dataset_dir,
+            output_dir=output_dir,
+            dataset_name="g2-override-uncovered-defaults",
+            split_overrides_path=split_overrides_path,
+        )
+        split_manifest_rows = [
+            json.loads(line)
+            for line in (result.dataset_dir / "split_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        split_by_group = {
+            str(row["group_id"]): str(row["split"])
+            for row in split_manifest_rows
+        }
+
+        self.assertEqual(split_by_group["AI_Idea_Bench_2025::aiib-01"], "validation")
+        self.assertEqual(split_by_group["AI_Idea_Bench_2025::aiib-02"], "train")
+        self.assertEqual(split_by_group["AI_Idea_Bench_2025::aiib-03"], "validation")
 
 
 if __name__ == "__main__":

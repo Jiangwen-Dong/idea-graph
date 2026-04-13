@@ -95,6 +95,10 @@ def load_g1_dataset(dataset_dir: Path) -> tuple[list[dict[str, Any]], list[dict[
     return manifest_rows, transition_rows
 
 
+def load_split_override_rows(path: Path) -> list[dict[str, Any]]:
+    return _load_jsonl(Path(path))
+
+
 def make_group_id(row: Mapping[str, Any]) -> str:
     benchmark = str(row.get("benchmark", "unknown")).strip() or "unknown"
     instance_name = str(row.get("instance_name", "unknown")).strip() or "unknown"
@@ -149,7 +153,34 @@ def build_group_manifest(
 def assign_group_splits(
     group_rows: Sequence[Mapping[str, Any]],
     validation_fraction: float = 0.2,
+    split_override_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    split_overrides: dict[str, str] = {}
+    if split_override_rows:
+        for row in split_override_rows:
+            group_id = str(row.get("group_id", "")).strip()
+            if not group_id:
+                raise ValueError("Split override row is missing required group_id.")
+            split = str(row.get("split", "")).strip()
+            if split not in {"train", "validation"}:
+                raise ValueError(
+                    f"Split override for group_id '{group_id}' has invalid split '{split}'. "
+                    "Allowed values are 'train' and 'validation'."
+                )
+            if group_id in split_overrides:
+                raise ValueError(f"Duplicate split override for group_id '{group_id}'.")
+            split_overrides[group_id] = split
+
+    known_group_ids = {
+        str(row.get("group_id", "")).strip()
+        for row in group_rows
+        if str(row.get("group_id", "")).strip()
+    }
+    unknown_override_group_ids = sorted(group_id for group_id in split_overrides if group_id not in known_group_ids)
+    if unknown_override_group_ids:
+        listed = ", ".join(unknown_override_group_ids)
+        raise ValueError(f"Split overrides contain unknown group_id(s): {listed}")
+
     by_benchmark: dict[str, list[Mapping[str, Any]]] = {}
     for row in group_rows:
         benchmark = str(row.get("benchmark", "unknown")).strip() or "unknown"
@@ -158,12 +189,18 @@ def assign_group_splits(
     output_rows: list[dict[str, Any]] = []
     for _, benchmark_rows in by_benchmark.items():
         ordered = sorted(benchmark_rows, key=lambda row: str(row.get("group_id", "")))
+        default_split_by_group: dict[str, str] = {}
         validation_count = 0
         if len(ordered) >= 3:
             validation_count = max(1, round(len(ordered) * validation_fraction))
         boundary = len(ordered) - validation_count
         for index, row in enumerate(ordered):
-            split = "validation" if index >= boundary else "train"
+            group_id = str(row.get("group_id", "")).strip()
+            default_split_by_group[group_id] = "validation" if index >= boundary else "train"
+
+        for row in ordered:
+            group_id = str(row.get("group_id", "")).strip()
+            split = split_overrides.get(group_id, default_split_by_group.get(group_id, "train"))
             copied = dict(row)
             copied["split"] = split
             output_rows.append(copied)
@@ -380,10 +417,18 @@ def build_graph_critic_dataset(
     output_dir: Path,
     dataset_name: str,
     validation_fraction: float = 0.2,
+    split_overrides_path: Path | None = None,
 ) -> CriticDatasetBuildResult:
     manifest_rows, transition_rows = load_g1_dataset(Path(g1_dataset_dir))
     group_rows = build_group_manifest(manifest_rows, transition_rows)
-    split_rows = assign_group_splits(group_rows, validation_fraction=validation_fraction)
+    split_override_rows = (
+        load_split_override_rows(split_overrides_path) if split_overrides_path is not None else None
+    )
+    split_rows = assign_group_splits(
+        group_rows,
+        validation_fraction=validation_fraction,
+        split_override_rows=split_override_rows,
+    )
     critic_rows = build_critic_dataset_rows(manifest_rows, transition_rows, split_rows)
     label_schema = build_label_schema()
     dataset_stats = build_dataset_stats(critic_rows, split_rows)

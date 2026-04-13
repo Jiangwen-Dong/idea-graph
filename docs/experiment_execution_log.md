@@ -9,6 +9,19 @@ Align the repository's experiment code with the revised paper framing:
 - experiment scripts, method plans, and paper-artifact builders should use the
   same naming and comparison protocol
 
+## Dataset Layout Note
+
+The local `outputs/graph_critic_datasets/` tree was reorganized into:
+
+- `01_active_text_critic`
+- `02_active_graph_critic`
+- `03_archive`
+
+Earlier log entries may still mention the pre-reorganization paths. For the
+current local layout, use:
+
+- `docs/graph_critic_dataset_layout.md`
+
 ## Implementation Plan
 
 1. Refactor experiment method names and metadata around `ours-eig`.
@@ -1597,3 +1610,279 @@ regeneration packet on the touched codepath:
   - only if the rerun is neutral or positive, consider a larger controller
     comparison; otherwise keep `ours-eig` as the main paper method and treat
     the learned critic as a mechanism/pilot ablation
+
+## 2026-04-13: Critic Dataset Expansion Infrastructure
+
+- Motivation:
+  - the current critic dataset remains sufficient for a bounded text-critic
+    pilot but too small for a strong graph-critic claim
+  - the bottleneck is the number of leakage-safe benchmark-instance groups,
+    not just raw candidate-row count
+- Conflict-control setup:
+  - created a fresh isolated worktree:
+    `.worktrees/critic-roadmap-exec`
+  - used one writer subagent at a time
+  - kept reviewer subagents read-only
+  - did not launch any API-backed generation in this stage
+- Implemented role-aware episode selection:
+  - `select_pool_rows(...)`
+  - CLI flags:
+    - `--partition-role`
+    - `--required-usage`
+  - preserved old `critic_train` default behavior
+  - verification:
+    `python -m pytest tests/test_critic_episode_collection.py -q`
+    passed with `6 passed`
+- Implemented frozen split overrides for G2 dataset construction:
+  - `--split-overrides`
+  - explicit split overrides now apply on top of the existing deterministic
+    per-benchmark split rule
+  - uncovered groups preserve their default train/validation assignment
+  - verification:
+    - `python -m unittest tests.test_candidate_slate_dataset.CandidateSlateDatasetTests.test_graph_critic_builder_honors_split_overrides`
+    - `python -m unittest tests.test_candidate_slate_dataset.CandidateSlateDatasetTests.test_graph_critic_builder_overrides_do_not_change_uncovered_default_splits`
+    - `python -m unittest tests.test_critic_dataset`
+- Implemented overlap-safe expansion-pool tooling:
+  - `src/idea_graph/critic_pool_expansion.py`
+  - `scripts/build_critic_expansion_pool.py`
+  - `tests/test_critic_pool_expansion.py`
+  - robustness checks:
+    - rejects duplicate candidates
+    - rejects unsupported partition roles
+    - rejects unsafe `::` and newline characters in new candidate group fields
+    - blocks overlap using canonical benchmark/instance IDs as well as raw
+      `group_id`
+  - verification:
+    `python -m pytest tests/test_critic_pool_expansion.py -q`
+    passed with `8 passed`
+- Materialized the first development-only expansion pool:
+  - `outputs/graph_critic_datasets/development_pool_v2_candidate_pool_v1`
+  - candidate groups:
+    - `12` total
+    - `8` `critic_train`
+    - `4` `critic_dev`
+  - benchmark-role breakdown:
+    - `AI_Idea_Bench_2025`: `6` train, `2` dev
+    - `liveideabench`: `2` train, `2` dev
+  - blocked against:
+    - `development_pool_v1`
+    - `paper_eval_candidate_pool_v1`
+- Verified no-API dry-run collection manifests:
+  - train dry-run:
+    `outputs/graph_critic_online_episodes/development_pool_v2_critic_train_qwen_v1`
+    - selected groups: `8`
+    - benchmark counts: `6` AIIB, `2` LiveIdeaBench
+  - dev dry-run:
+    `outputs/graph_critic_online_episodes/development_pool_v2_critic_dev_qwen_v1`
+    - selected groups: `4`
+    - benchmark counts: `2` AIIB, `2` LiveIdeaBench
+- Next step:
+  - run the API-backed `development_pool_v2` train/dev collections only after
+    this infrastructure branch is reviewed or synced back
+  - then export the fresh runs into G1/G2/G2.5 and write the expanded training
+    readiness report with group counts, candidate rows, token usage, and cost
+
+## 2026-04-13: Text-Critic Maturity-Safety Patch
+
+- Motivation:
+  - the first `ours-eig-critic-text` 4-case gate showed a likely indirect
+    maturity failure on AIIB case `3883`
+  - the learned reranker did not learn `commit`, but a different edit ranking
+    made the unchanged heuristic maturity rule stop at `Round2` instead of
+    `Round4`
+- Subagent / subprocess-control policy for this pass:
+  - used only one read-only explorer subagent for roadmap review
+  - kept all file edits, artifact copies, and test subprocesses in the main
+    session
+  - did not launch API-backed generation or long-running collection from a
+    subagent
+- Implemented safety patch:
+  - `ScoredCandidate` now carries candidate-level gain metadata:
+    `predicted_gain`, `support_gain`, `contradiction_gain`,
+    `maturity_gain`, and `after_is_mature`
+  - `SafeCriticPolicyConfig` now exposes guard knobs:
+    `guard_support_threshold`, `guard_support_gain_floor`, and
+    `guard_requires_contradiction_progress`
+  - `choose_critic_action(...)` blocks a critic edit override when it creates
+    a fragile maturity jump without enough support gain
+  - `select_text_critic_candidate(...)` now forwards candidate gain metadata
+    and optional state-level maturity features into the policy
+  - `_select_ranked_action(...)` now passes current reference-subgraph
+    maturity features into runtime reranking
+  - `baselines.py` forwards optional runtime-controller guard metadata while
+    preserving the existing defaults
+- Verified tests:
+  - `python -m pytest tests/test_critic_policy.py tests/test_runtime_critic.py -q`
+    passed with `9 passed`
+  - `python -m pytest tests/test_engine.py tests/test_runtime_critic.py tests/test_critic_policy.py -q`
+    passed with `38 passed`
+  - `python -m pytest tests/test_engine.py tests/test_runtime_critic.py tests/test_benchmark_mode_and_baselines.py tests/test_online_text_critic.py tests/test_critic_policy.py tests/test_critic_replay.py tests/test_critic_episode_collection.py tests/test_critic_split_registry.py -q`
+    passed with `81 passed`
+- Artifact reconciliation:
+  - copied the ignored, no-API `development_pool_v2` expansion manifests from
+    the isolated worktree into the main checkout so the local output tree is
+    consistent
+  - no tracked code was copied from the worktree during this step
+- Next step:
+  - rerun the frozen 4-case AIIB gate as
+    `outputs/m2_aiib_g48_controller_gate_v2`
+  - compare stop rounds and native/local scores against
+    `outputs/m2_aiib_g48_controller_gate_v1`
+  - if the text critic remains fragile, freeze it as a mixed pilot and shift
+    effort to offline graph-critic development plus development-pool expansion
+
+## 2026-04-13: Frozen 4-Case Controller Gate V2
+
+- Ran the post-safety-patch frozen 4-case AIIB controller gate:
+  - artifact root:
+    `outputs/m2_aiib_g48_controller_gate_v2`
+  - summary:
+    `outputs/m2_aiib_g48_controller_gate_v2/paired_summary.md`
+  - cases:
+    `13`, `3883`, `7909`, `9849`
+  - baselines:
+    `ours-eig`, `ours-eig-critic-text`
+- Runtime setup:
+  - sequential local execution
+  - OpenAI-compatible DashScope backend via environment variable only
+  - no API key written into repo config
+  - per-run stdout logs stored under:
+    `outputs/m2_aiib_g48_controller_gate_v2/_run_logs`
+- Main result:
+  - mean local overall:
+    - `ours-eig = 5.23`
+    - `ours-eig-critic-text = 5.29`
+    - delta `+0.06`
+  - mean local benchmark alignment:
+    - `ours-eig = 3.39`
+    - `ours-eig-critic-text = 3.56`
+    - delta `+0.16`
+  - mean AIIB native average:
+    - `ours-eig = 8.00`
+    - `ours-eig-critic-text = 7.93`
+    - delta `-0.07`
+- Per-case native deltas:
+  - `13`: `+0.57`
+  - `3883`: `-1.15`
+  - `7909`: `+0.00`
+  - `9849`: `+0.29`
+- Maturity readout:
+  - the safety patch fixed the clearest V1 failure symptom on `3883`
+  - V1 critic stopped at `Round2`; V2 critic stopped at `Round4`
+  - however, the `3883` native gap remained `-1.15`, so early stopping was
+    not the only failure mechanism
+- Trace readout:
+  - all four `ours-eig-critic-text` runs now contain
+    `runtime_controller_log`
+  - total runtime-controller trace entries: `95`
+  - critic-selected edits: `31`
+  - heuristic fallbacks: `64`
+- Token profile:
+  - LLM/API calls with token usage: `235`
+  - prompt tokens: `1,523,396`
+  - completion tokens: `28,032`
+  - total traced tokens: `1,551,428`
+- Current interpretation:
+  - text-critic safety is improved and the obvious `Round2` early-stop
+    pathology is removed
+  - end-to-end native quality is still mixed and not yet strong enough to make
+    `ours-eig-critic-text` the main paper system
+  - the next high-value step is trace diagnosis plus offline graph-critic and
+    development-pool expansion, rather than scaling the text-critic controller
+    batch immediately
+
+## 2026-04-13: V2 Trace Diagnosis And Expanded Graph-Critic Dataset Build
+
+- Trace diagnosis artifact:
+  `outputs/m2_aiib_g48_controller_gate_v2/trace_diagnosis.md`
+- Main diagnosis:
+  - the maturity-safety patch fixed the clearest `3883` early-stop symptom
+    because the critic-text run now stops at `Round4` instead of V1 `Round2`
+  - the remaining `3883` failure is action-ranking/calibration, not just
+    maturity stopping
+  - `ours-eig-critic-text` still loses `-1.15` native score on `3883`, mainly
+    because the native multiple-choice experiment alignment failed
+  - across the four v2 critic-text runs, critic-selected edits often have lower
+    graph-utility gain than the heuristic fallback, which motivates a
+    structured graph critic rather than further text-only tuning
+- `3883` trace readout:
+  - runtime-controller trace entries: `20`
+  - critic-selected edits: `2`
+  - heuristic fallbacks: `18`
+  - one critic selection had negative predicted graph gain
+  - the console progress messages use human-readable role aliases, while the
+    graph artifacts preserve canonical role names such as
+    `MechanismProposer`, `FeasibilityCritic`, `NoveltyExaminer`,
+    `EvaluationDesigner`, and `ImpactReframer`
+- Completed development-pool v2 API-backed collections:
+  - train collection:
+    `outputs/graph_critic_online_episodes/development_pool_v2_critic_train_qwen_v1`
+    - selected groups: `8`
+    - completed groups: `8`
+    - traced tokens: `1,623,590`
+  - dev collection:
+    `outputs/graph_critic_online_episodes/development_pool_v2_critic_dev_qwen_v1`
+    - selected groups: `4`
+    - completed groups: `4`
+    - traced tokens: `777,552`
+- Exported expansion-only G1:
+  `outputs/graph_critic_datasets/development_pool_v2_expansion_only_g1`
+  - runs: `12`
+  - transitions: `285`
+  - terminal commit states: `12`
+  - total traced tokens: `2,401,142`
+- Built curated combined G1 without rescanning unrelated `outputs/` runs:
+  `outputs/graph_critic_datasets/development_pool_v2_combined_g1`
+  - runs: `72`
+  - transitions: `1,195`
+  - terminal commit states: `72`
+  - total traced tokens: `10,109,416`
+- Wrote explicit split overrides:
+  `outputs/graph_critic_datasets/development_pool_v2_candidate_pool_v1/group_split_overrides.jsonl`
+  - total groups: `23`
+  - train groups: `17`
+  - validation groups: `6`
+  - preserves old `development_pool_v1` assignments and maps new v2
+    `critic_train` / `critic_dev` rows to train / validation
+- Built combined G2:
+  `outputs/graph_critic_datasets/development_pool_v2_combined_g2`
+  - groups: `23`
+  - transitions: `1,195`
+  - train transitions: `995`
+  - validation transitions: `200`
+  - native-average label coverage: `0.841`
+- Built combined G2.5:
+  `outputs/graph_critic_datasets/development_pool_v2_combined_g25`
+  - states: `1,267`
+  - candidate rows: `13,004`
+  - explicit commit candidates: `1,267`
+  - terminal commit-positive states: `72`
+- Readiness report:
+  `outputs/graph_critic_datasets/development_pool_v2_combined_readiness/training_readiness_report.md`
+- Current conclusion:
+  - the expanded dataset is now suitable for a first offline graph-feature
+    scorer against the text scorer
+  - it remains development-only and should not be used as final paper evidence
+  - the next step is to train offline text and graph scorers on the same frozen
+    G2.5 split and only return to controller-in-the-loop generation if the
+    graph scorer beats the text scorer offline
+
+## 2026-04-13: Graph-Critic Dataset Folder Reorganization
+
+- Reorganized the local `outputs/graph_critic_datasets/` tree into three
+  clearer buckets:
+  - `01_active_text_critic`
+  - `02_active_graph_critic`
+  - `03_archive`
+- Active text-critic roots now live under:
+  `outputs/graph_critic_datasets/01_active_text_critic`
+- Active graph-critic roots now live under:
+  `outputs/graph_critic_datasets/02_active_graph_critic`
+- Historical smoke and intermediate exports now live under:
+  `outputs/graph_critic_datasets/03_archive`
+- Tracked reference note:
+  `docs/graph_critic_dataset_layout.md`
+- Practical purpose:
+  - make the next training stage harder to misconfigure
+  - keep current text-critic and graph-critic datasets easy to distinguish
+  - preserve older exports without letting them pollute the default workflow

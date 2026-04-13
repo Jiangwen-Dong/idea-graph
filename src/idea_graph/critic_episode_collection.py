@@ -39,9 +39,31 @@ def select_critic_train_rows(
     limit: int | None = None,
     required_usage: str = "train_online_critic",
 ) -> list[dict[str, Any]]:
+    return select_pool_rows(
+        rows,
+        pool_name=pool_name,
+        partition_role="critic_train",
+        group_ids=group_ids,
+        limit=limit,
+        required_usage=required_usage,
+    )
+
+
+def select_pool_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    pool_name: str,
+    partition_role: str,
+    group_ids: Sequence[str] | None = None,
+    limit: int | None = None,
+    required_usage: str = "",
+) -> list[dict[str, Any]]:
     normalized_pool = str(pool_name).strip()
     if not normalized_pool:
         raise ValueError("pool_name must not be empty.")
+    normalized_partition_role = str(partition_role).strip()
+    if not normalized_partition_role:
+        raise ValueError("partition_role must not be empty.")
 
     allowed_group_ids = {str(group_id).strip() for group_id in group_ids or [] if str(group_id).strip()}
     matched_group_ids: set[str] = set()
@@ -55,7 +77,7 @@ def select_critic_train_rows(
             usages = []
         if row_pool != normalized_pool:
             continue
-        if row_role != "critic_train":
+        if row_role != normalized_partition_role:
             continue
         if required_usage and required_usage not in {str(item).strip() for item in usages}:
             continue
@@ -68,7 +90,9 @@ def select_critic_train_rows(
     if allowed_group_ids:
         missing = sorted(allowed_group_ids - matched_group_ids)
         if missing:
-            raise ValueError("Requested group_ids were not found in the selected critic_train pool: " + ", ".join(missing))
+            raise ValueError(
+                "Requested group_ids were not found in the selected pool/partition: " + ", ".join(missing)
+            )
 
     ordered = sorted(
         selected,

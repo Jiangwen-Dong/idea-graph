@@ -1579,6 +1579,15 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
         gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
         min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
         use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
+        guard_support_threshold=float(
+            graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
+        ),
+        guard_support_gain_floor=float(
+            graph.metadata.get("runtime_controller_guard_support_gain_floor", 0.10)
+        ),
+        guard_requires_contradiction_progress=bool(
+            graph.metadata.get("runtime_controller_guard_requires_contradiction_progress", False)
+        ),
     )
     controller_metadata = {
         "kind": "text_critic_rerank",

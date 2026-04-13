@@ -5,6 +5,10 @@ supersedes the earlier heuristic-maturity refinement notes for new method
 development, while preserving those runs as useful pilot data and historical
 diagnosis.
 
+Current local dataset layout guide:
+
+- `docs/graph_critic_dataset_layout.md`
+
 ## Purpose
 
 The paper studies scientific ideation as a structured, multi-step process. The
@@ -221,8 +225,12 @@ Key reviewer-facing tests:
 - store stable candidate IDs, model-facing candidate text, and state-level
   candidate counts
 - current full derived dataset:
-  `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g25`
+  `outputs/graph_critic_datasets/03_archive/current_benchmarked_ours_eig_full_g25`
   with `910` states and `9456` candidates
+- expanded development-pool dataset:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+  with `1267` states, `13004` candidates, and `72` commit-positive
+  terminal states
 
 ### Stage G3: Text Critic Pilot
 
@@ -247,7 +255,7 @@ Key reviewer-facing tests:
 - map source `train` / `validation` into `critic_train` / `critic_dev`
   explicitly, with optional `paper_eval` holdouts
 - current artifact:
-  `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions`
+  `outputs/graph_critic_datasets/01_active_text_critic/current_benchmarked_ours_eig_full_g35_partitions`
   with `11` groups, `9` `critic_train`, `2` `critic_dev`, and no `paper_eval`
   groups yet
 - current diagnostic conclusion:
@@ -260,9 +268,9 @@ Key reviewer-facing tests:
 - regenerate the commit-enriched `G1 / G2 / G2.5` stack from the current full
   `60`-run `ours-eig` pool
 - refreshed artifacts:
-  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g1_commit_enriched`
-  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g2_commit_enriched`
-  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g25_commit_enriched`
+  - `outputs/graph_critic_datasets/01_active_text_critic/current_benchmarked_ours_eig_full_g1_commit_enriched`
+  - `outputs/graph_critic_datasets/01_active_text_critic/current_benchmarked_ours_eig_full_g2_commit_enriched`
+  - `outputs/graph_critic_datasets/01_active_text_critic/current_benchmarked_ours_eig_full_g25_commit_enriched`
 - refreshed counts:
   - `G1` run count `60`, transition count `910`, terminal commit states `60`
   - `G2` run count `60`, transition count `910`
@@ -284,8 +292,8 @@ Key reviewer-facing tests:
 - freeze the current 11-group partition artifact as:
   - `development_pool_v1`
 - generate a canonical split registry:
-  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry.jsonl`
-  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry_stats.json`
+  - `outputs/graph_critic_datasets/01_active_text_critic/current_benchmarked_ours_eig_full_g35_partitions/split_registry.jsonl`
+  - `outputs/graph_critic_datasets/01_active_text_critic/current_benchmarked_ours_eig_full_g35_partitions/split_registry_stats.json`
 - current registry status:
   - `11` rows
   - pool name `development_pool_v1`
@@ -299,7 +307,7 @@ Key reviewer-facing tests:
 ### Stage G3.8: First Untouched Paper-Eval Candidate Pool
 
 - define the first proposed untouched benchmark list:
-  - `outputs/graph_critic_datasets/paper_eval_candidate_pool_v1/candidate_instances.json`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/paper_eval_candidate_pool_v1/candidate_instances.json`
 - current candidate composition:
   - `AI_Idea_Bench_2025`: 6 proposed untouched instances
   - `LiveIdeaBench`: 4 proposed untouched instances
@@ -418,7 +426,7 @@ Key reviewer-facing tests:
   buffer using the existing `G1` export plus forced-`critic_train`
   reconstruction:
   - `G1` export:
-    `outputs/graph_critic_datasets/development_pool_v1_critic_train_qwen_v1_g1`
+    `outputs/graph_critic_datasets/01_active_text_critic/development_pool_v1_critic_train_qwen_v1_g1`
   - replay buffer:
     `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1/online_replay_buffer.jsonl`
   - replay stats:
@@ -444,10 +452,71 @@ Key reviewer-facing tests:
   critic; this is the first positive end-to-end result for the online
   adaptation line
 
+### Stage G4.9: Development-Pool Expansion Infrastructure
+
+- status:
+  - implemented and synced into the main checkout
+  - API-backed train/dev expansion collection completed
+  - combined G1/G2/G2.5 datasets materialized
+- purpose:
+  - address the main critic-dataset bottleneck: too few leakage-safe
+    benchmark-instance groups
+  - keep `development_pool_v1` frozen while creating a separate
+    development-only expansion pool
+- added tooling:
+  - role-aware episode selection:
+    `select_pool_rows(...)`
+  - `collect_critic_train_episodes.py` flags:
+    - `--partition-role`
+    - `--required-usage`
+  - split override support:
+    - `build_graph_critic_dataset.py --split-overrides`
+  - overlap-safe expansion pool builder:
+    `scripts/build_critic_expansion_pool.py`
+- new development-only candidate pool:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_candidate_pool_v1`
+- pool size:
+  - `12` unique groups
+  - `8` `critic_train`
+  - `4` `critic_dev`
+  - `8` AIIB groups
+  - `4` LiveIdeaBench groups
+- verified dry-run manifests:
+- completed real collections:
+  - `outputs/graph_critic_online_episodes/development_pool_v2_critic_train_qwen_v1`
+    - `8` selected groups
+    - `8` completed groups
+    - `1,623,590` traced tokens
+  - `outputs/graph_critic_online_episodes/development_pool_v2_critic_dev_qwen_v1`
+    - `4` selected groups
+    - `4` completed groups
+    - `777,552` traced tokens
+- combined datasets:
+  - G1:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g1`
+    with `72` runs and `1195` transitions
+  - G2:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g2`
+    with `23` groups, `17` train groups, `6` validation groups, and
+    `1195` transitions
+  - G2.5:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+    with `1267` states and `13004` candidate rows
+  - readiness report:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_readiness/training_readiness_report.md`
+- current conclusion:
+  the expanded dataset is now adequate for a first offline graph-feature
+  scorer comparison against the text scorer, but it remains development-only
+  and should not yet support final learned-controller benchmark claims
+
 ### Stage G5: Graph Critic
 
-- implement the graph encoder and action scorer
-- compare against the text critic on held-out trajectories
+- implement a first graph-feature action scorer on the frozen
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25` split
+- compare against the refreshed text scorer on held-out development groups
+- keep learned `commit` out of runtime until edit-action ranking is stable
+- only promote graph critic into controller-in-the-loop generation after it
+  beats the text scorer offline on the same candidate slates
 
 ### Stage G6: Controlled Generation Pilot
 
@@ -482,8 +551,34 @@ Key reviewer-facing tests:
     entries, with regression coverage in `tests/test_engine.py`
 - immediate next requirement before any larger controller comparison:
   - use the patched runtime-controller trace path in future LLM-backed runs
-  - add stricter maturity-sensitive safety around reranked edits
+  - use the maturity-sensitive safety guard around reranked edits
   - rerun the same frozen 4-case AIIB gate before any broader paper packet
+- current safety update:
+  - `ScoredCandidate` carries gain metadata from the engine simulation path
+  - the runtime text critic receives current support and contradiction
+    features from the reference subgraph
+  - critic edit overrides that would make the graph newly mature are blocked
+    when they do not add enough support evidence
+  - learned `commit` remains disabled, so this patch only makes edit
+    reranking safer near the heuristic maturity boundary
+- verified regression packet:
+  `python -m pytest tests/test_engine.py tests/test_runtime_critic.py tests/test_benchmark_mode_and_baselines.py tests/test_online_text_critic.py tests/test_critic_policy.py tests/test_critic_replay.py tests/test_critic_episode_collection.py tests/test_critic_split_registry.py -q`
+  passed with `81 passed`
+- second frozen gate artifact:
+  `outputs/m2_aiib_g48_controller_gate_v2`
+- second frozen gate result:
+  - the `3883` early-stop symptom improved from `Round2` in V1 to `Round4`
+    in V2
+  - mean local overall changed from `5.23` for `ours-eig` to `5.29` for
+    `ours-eig-critic-text`
+  - mean local benchmark alignment changed from `3.39` to `3.56`
+  - mean AIIB native average changed from `8.00` to `7.93`
+  - controller traces are now present for all critic runs
+- practical conclusion:
+  the safety patch is useful, but the text critic remains a mixed pilot rather
+  than a main-system replacement; the next learned-controller progress should
+  prioritize trace diagnosis, development-pool expansion, and offline
+  graph-critic comparison
 
 ### Stage G7: Paper Experiments
 

@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
 from idea_graph.critic_episode_collection import (
     build_episode_launch_manifest,
     load_split_registry_rows,
+    select_pool_rows,
     select_critic_train_rows,
 )
 from idea_graph.fs_utils import write_text_file
@@ -77,6 +78,14 @@ class CriticEpisodeCollectionTests(unittest.TestCase):
                 "partition_role": "critic_train",
                 "allowed_usages": ["development_analysis"],
             },
+            {
+                "group_id": "liveideabench::liveideabench-climate-5",
+                "benchmark": "liveideabench",
+                "instance_name": "liveideabench-climate-5",
+                "pool_name": "development_pool_v2_candidate_pool_v1",
+                "partition_role": "critic_dev",
+                "allowed_usages": ["development_analysis"],
+            },
         ]
         registry_text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in self.registry_rows)
         write_text_file(self.registry_path, registry_text)
@@ -108,6 +117,29 @@ class CriticEpisodeCollectionTests(unittest.TestCase):
             selected[0]["group_id"],
             "liveideabench::liveideabench-meteorology-0",
         )
+
+    def test_select_pool_rows_supports_critic_dev_with_required_usage(self) -> None:
+        rows = load_split_registry_rows(self.registry_path)
+        selected = select_pool_rows(
+            rows,
+            pool_name="development_pool_v2_candidate_pool_v1",
+            partition_role="critic_dev",
+            required_usage="development_analysis",
+        )
+        self.assertEqual(
+            [str(row["group_id"]) for row in selected],
+            ["liveideabench::liveideabench-climate-5"],
+        )
+
+    def test_select_pool_rows_raises_for_missing_requested_group(self) -> None:
+        rows = load_split_registry_rows(self.registry_path)
+        with self.assertRaises(ValueError):
+            select_pool_rows(
+                rows,
+                pool_name="development_pool_v1",
+                partition_role="critic_train",
+                group_ids=["missing::group-1"],
+            )
 
     def test_build_episode_launch_manifest_parses_benchmark_selectors(self) -> None:
         manifest = build_episode_launch_manifest(

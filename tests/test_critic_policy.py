@@ -28,12 +28,22 @@ class CriticPolicyTests(unittest.TestCase):
         score: float,
         is_commit: bool = False,
         confidence: float | None = None,
+        predicted_gain: float = 0.0,
+        support_gain: float = 0.0,
+        contradiction_gain: float = 0.0,
+        maturity_gain: float = 0.0,
+        after_is_mature: bool = False,
     ) -> ScoredCandidate:
         return ScoredCandidate(
             candidate_id=candidate_id,
             score=score,
             is_commit=is_commit,
             confidence=confidence,
+            predicted_gain=predicted_gain,
+            support_gain=support_gain,
+            contradiction_gain=contradiction_gain,
+            maturity_gain=maturity_gain,
+            after_is_mature=after_is_mature,
         )
 
     def test_commit_blocked_before_min_round(self) -> None:
@@ -82,6 +92,82 @@ class CriticPolicyTests(unittest.TestCase):
         )
         self.assertEqual(decision.selected_candidate_id, "commit")
         self.assertTrue(decision.commit_allowed)
+
+    def test_blocks_fragile_maturity_jump_without_support_gain(self) -> None:
+        decision = choose_critic_action(
+            state={
+                "round_index": 3,
+                "support_coverage": 0.66,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            critic_candidates=[
+                self._candidate(
+                    "critic-fragile",
+                    score=0.82,
+                    predicted_gain=1.10,
+                    support_gain=0.00,
+                    contradiction_gain=0.00,
+                    maturity_gain=1.0,
+                    after_is_mature=True,
+                ),
+            ],
+            heuristic_candidate=self._candidate(
+                "heuristic-safe",
+                score=0.72,
+                predicted_gain=0.74,
+                support_gain=0.25,
+                contradiction_gain=0.00,
+                maturity_gain=0.0,
+                after_is_mature=False,
+            ),
+            config=SafeCriticPolicyConfig(
+                tau_override=0.05,
+                guard_support_threshold=0.66,
+                guard_support_gain_floor=0.10,
+            ),
+        )
+
+        self.assertEqual(decision.selected_candidate_id, "heuristic-safe")
+        self.assertEqual(decision.selected_source, "heuristic")
+        self.assertTrue(decision.used_heuristic_fallback)
+
+    def test_allows_maturity_override_when_support_gain_is_real(self) -> None:
+        decision = choose_critic_action(
+            state={
+                "round_index": 3,
+                "support_coverage": 0.70,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            critic_candidates=[
+                self._candidate(
+                    "critic-grounded",
+                    score=0.84,
+                    predicted_gain=0.90,
+                    support_gain=0.20,
+                    contradiction_gain=0.00,
+                    maturity_gain=1.0,
+                    after_is_mature=True,
+                ),
+            ],
+            heuristic_candidate=self._candidate(
+                "heuristic",
+                score=0.73,
+                predicted_gain=0.60,
+                support_gain=0.00,
+                contradiction_gain=0.00,
+                maturity_gain=0.0,
+                after_is_mature=False,
+            ),
+            config=SafeCriticPolicyConfig(
+                tau_override=0.05,
+                guard_support_threshold=0.66,
+                guard_support_gain_floor=0.10,
+            ),
+        )
+
+        self.assertEqual(decision.selected_candidate_id, "critic-grounded")
+        self.assertEqual(decision.selected_source, "critic")
+        self.assertFalse(decision.used_heuristic_fallback)
 
 
 if __name__ == "__main__":

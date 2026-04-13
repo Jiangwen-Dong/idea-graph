@@ -24,6 +24,9 @@ class TextCriticRuntimeConfig:
     gamma_commit: float = 0.60
     min_commit_round: int = 2
     use_commit: bool = False
+    guard_support_threshold: float = 0.66
+    guard_support_gain_floor: float = 0.10
+    guard_requires_contradiction_progress: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,11 +113,40 @@ def _normalized_candidate_specs(
     return rows
 
 
+def _candidate_float(spec: Mapping[str, Any], key: str, default: float = 0.0) -> float:
+    try:
+        return float(spec.get(key, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _candidate_after_is_mature(spec: Mapping[str, Any]) -> bool:
+    after_subgraph = spec.get("after_subgraph")
+    if not isinstance(after_subgraph, Mapping):
+        return False
+    return bool(after_subgraph.get("is_mature", False))
+
+
+def _policy_candidate_from_scored_spec(spec: Mapping[str, Any]) -> ScoredCandidate:
+    return ScoredCandidate(
+        candidate_id=str(spec["candidate_id"]),
+        score=float(spec["critic_score"]),
+        is_commit=str(spec.get("kind", "")).strip() == "commit",
+        confidence=float(spec["critic_score"]),
+        predicted_gain=_candidate_float(spec, "predicted_gain"),
+        support_gain=_candidate_float(spec, "support_gain"),
+        contradiction_gain=_candidate_float(spec, "contradiction_gain"),
+        maturity_gain=_candidate_float(spec, "maturity_gain"),
+        after_is_mature=_candidate_after_is_mature(spec),
+    )
+
+
 def select_text_critic_candidate(
     graph: IdeaGraph,
     *,
     round_name: str,
     role: str,
+    state_features: Mapping[str, Any] | None = None,
     candidate_specs: Sequence[Mapping[str, Any]],
     heuristic_candidate_id: str,
     model: Any,
@@ -143,15 +175,11 @@ def select_text_critic_candidate(
                 **spec,
                 "critic_score": score_value,
                 "candidate_text": flatten_candidate_text(graph, spec),
+                "after_is_mature": _candidate_after_is_mature(spec),
             }
         )
         scored_policy_candidates.append(
-            ScoredCandidate(
-                candidate_id=candidate_id,
-                score=score_value,
-                is_commit=str(spec.get("kind", "")).strip() == "commit",
-                confidence=score_value,
-            )
+            _policy_candidate_from_scored_spec(scored_candidates[-1])
         )
 
     scored_lookup = {str(row["candidate_id"]): row for row in scored_candidates}
@@ -160,19 +188,22 @@ def select_text_critic_candidate(
         raise ValueError(f"heuristic_candidate_id '{heuristic_candidate_id}' is not present in candidate_specs.")
 
     policy_decision = choose_critic_action(
-        state={"round_index": _parse_round_index(round_name)},
+        state={
+            "round_index": _parse_round_index(round_name),
+            **dict(state_features or {}),
+        },
         critic_candidates=scored_policy_candidates,
-        heuristic_candidate=ScoredCandidate(
-            candidate_id=str(heuristic_candidate["candidate_id"]),
-            score=float(heuristic_candidate["critic_score"]),
-            is_commit=False,
-            confidence=float(heuristic_candidate["critic_score"]),
-        ),
+        heuristic_candidate=_policy_candidate_from_scored_spec(heuristic_candidate),
         config=SafeCriticPolicyConfig(
             min_commit_round=int(config.min_commit_round),
             tau_override=float(config.tau_override),
             tau_commit=float(config.tau_commit),
             gamma_commit=float(config.gamma_commit),
+            guard_support_threshold=float(config.guard_support_threshold),
+            guard_support_gain_floor=float(config.guard_support_gain_floor),
+            guard_requires_contradiction_progress=bool(
+                config.guard_requires_contradiction_progress
+            ),
         ),
     )
     selected_spec = scored_lookup[policy_decision.selected_candidate_id]

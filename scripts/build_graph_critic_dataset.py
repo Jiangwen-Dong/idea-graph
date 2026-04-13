@@ -70,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.2,
         help="Fraction of groups assigned to validation split (per benchmark).",
     )
+    parser.add_argument(
+        "--split-overrides",
+        type=Path,
+        default=None,
+        help="Optional JSONL file with explicit group_id -> split assignments.",
+    )
     return parser
 
 
@@ -80,6 +86,7 @@ def main() -> None:
         output_dir=args.output_dir,
         dataset_name=args.dataset_name,
         validation_fraction=args.validation_fraction,
+        split_overrides_path=args.split_overrides,
     )
     print(f"Dataset directory: {result.dataset_dir}")
     print(f"Group count: {result.group_count}")

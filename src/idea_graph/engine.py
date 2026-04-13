@@ -1884,10 +1884,23 @@ def _select_ranked_action(
     if runtime_controller is not None and runtime_controller_metadata is not None and valid_candidates:
         controller_config = runtime_controller_metadata.get("config")
         if controller_config is not None:
+            round_index = (
+                int(round_name[5:])
+                if str(round_name).startswith("Round") and str(round_name)[5:].isdigit()
+                else 0
+            )
+            controller_state = {
+                "round_index": round_index,
+                "support_coverage": reference_snapshot.support_coverage,
+                "unresolved_contradiction_ratio": reference_snapshot.unresolved_contradiction_ratio,
+                "completeness": reference_snapshot.completeness,
+                "is_mature": reference_snapshot.is_mature,
+            }
             controller_decision = select_text_critic_candidate(
                 graph,
                 round_name=round_name,
                 role=role,
+                state_features=controller_state,
                 candidate_specs=valid_candidates,
                 heuristic_candidate_id=str(heuristic_selected_candidate.get("candidate_id", "")).strip(),
                 model=runtime_controller,

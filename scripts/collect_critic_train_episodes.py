@@ -15,7 +15,7 @@ from idea_graph.critic_episode_collection import (
     build_episode_launch_manifest,
     execute_episode_collection,
     load_split_registry_rows,
-    select_critic_train_rows,
+    select_pool_rows,
     write_collection_artifacts,
 )
 
@@ -49,6 +49,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pool name to select from the registry.",
     )
     parser.add_argument(
+        "--partition-role",
+        type=str,
+        default="critic_train",
+        help="Partition role to select from the registry.",
+    )
+    parser.add_argument(
+        "--required-usage",
+        type=str,
+        default="train_online_critic",
+        help="Required usage tag that must be present in allowed_usages.",
+    )
+    parser.add_argument(
         "--group-id",
         action="append",
         default=[],
@@ -58,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=None,
-        help="Optional cap on selected critic_train groups after filtering.",
+        help="Optional cap on selected groups after filtering.",
     )
     parser.add_argument(
         "--baseline",
@@ -122,11 +134,13 @@ def main() -> None:
     collection_dir = _resolve_collection_dir(args.output_dir, args.collection_name)
     runs_dir = collection_dir / "runs"
     registry_rows = load_split_registry_rows(args.split_registry)
-    selected_rows = select_critic_train_rows(
+    selected_rows = select_pool_rows(
         registry_rows,
         pool_name=args.pool_name,
+        partition_role=args.partition_role,
         group_ids=args.group_id,
         limit=args.limit,
+        required_usage=args.required_usage,
     )
     manifest_rows = build_episode_launch_manifest(
         selected_rows,
@@ -143,6 +157,8 @@ def main() -> None:
         "split_registry": str(args.split_registry.resolve()),
         "collection_dir": str(collection_dir.resolve()),
         "pool_name": args.pool_name,
+        "partition_role": args.partition_role,
+        "required_usage": args.required_usage,
         "group_ids": list(args.group_id),
         "limit": args.limit,
         "baseline": args.baseline,

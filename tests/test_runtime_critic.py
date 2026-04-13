@@ -119,6 +119,56 @@ class RuntimeCriticTests(unittest.TestCase):
         self.assertEqual(decision.policy_decision.selected_source, "heuristic")
         self.assertTrue(decision.policy_decision.used_heuristic_fallback)
 
+    def test_runtime_critic_preserves_candidate_gain_metadata(self) -> None:
+        graph = self._build_graph()
+        candidates = [
+            {
+                "candidate_id": "heuristic",
+                "kind": "attach_evidence",
+                "target_ids": ["N001"],
+                "payload": {"branch_id": "B001", "evidence": "weak-signal"},
+                "rationale": "heuristic",
+                "predicted_gain": 0.50,
+                "support_gain": 0.00,
+                "contradiction_gain": 0.00,
+                "maturity_gain": 1.0,
+                "after_subgraph": {"is_mature": True},
+            },
+            {
+                "candidate_id": "critic-safe",
+                "kind": "attach_evidence",
+                "target_ids": ["N002"],
+                "payload": {"branch_id": "B001", "evidence": "strong-signal"},
+                "rationale": "critic",
+                "predicted_gain": 0.75,
+                "support_gain": 0.20,
+                "contradiction_gain": 0.00,
+                "maturity_gain": 0.0,
+                "after_subgraph": {"is_mature": False},
+            },
+        ]
+
+        decision = select_text_critic_candidate(
+            graph,
+            round_name="Round3",
+            role="MechanismProposer",
+            state_features={
+                "round_index": 3,
+                "support_coverage": 0.70,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            candidate_specs=candidates,
+            heuristic_candidate_id="heuristic",
+            model=_KeywordScoreModel({"weak-signal": 0.45, "strong-signal": 0.80}),
+            config=TextCriticRuntimeConfig(tau_override=0.05, use_commit=False),
+        )
+
+        self.assertEqual(decision.selected_spec["candidate_id"], "critic-safe")
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "critic-safe")
+        scored = {str(row["candidate_id"]): row for row in decision.scored_candidates}
+        self.assertEqual(scored["critic-safe"]["support_gain"], 0.20)
+        self.assertFalse(scored["critic-safe"]["after_is_mature"])
+
 
 if __name__ == "__main__":
     unittest.main()

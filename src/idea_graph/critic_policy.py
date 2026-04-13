@@ -10,6 +10,11 @@ class ScoredCandidate:
     score: float
     is_commit: bool = False
     confidence: float | None = None
+    predicted_gain: float = 0.0
+    support_gain: float = 0.0
+    contradiction_gain: float = 0.0
+    maturity_gain: float = 0.0
+    after_is_mature: bool = False
 
 
 @dataclass(frozen=True)
@@ -18,6 +23,9 @@ class SafeCriticPolicyConfig:
     tau_override: float = 0.05
     tau_commit: float = 0.08
     gamma_commit: float = 0.60
+    guard_support_threshold: float = 0.66
+    guard_support_gain_floor: float = 0.10
+    guard_requires_contradiction_progress: bool = False
 
 
 @dataclass(frozen=True)
@@ -42,6 +50,33 @@ def _best_candidate(candidates: Sequence[ScoredCandidate]) -> ScoredCandidate | 
     if not candidates:
         return None
     return max(candidates, key=lambda candidate: (candidate.score, candidate.candidate_id))
+
+
+def _state_float(state: Mapping[str, object], key: str, default: float = 0.0) -> float:
+    try:
+        return float(state.get(key, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_fragile_maturity_override(
+    *,
+    state: Mapping[str, object],
+    candidate: ScoredCandidate,
+    config: SafeCriticPolicyConfig,
+) -> bool:
+    if not candidate.after_is_mature:
+        return False
+    if candidate.maturity_gain <= 0.0:
+        return False
+    support_coverage = _state_float(state, "support_coverage")
+    if support_coverage < float(config.guard_support_threshold):
+        return False
+    if candidate.support_gain >= float(config.guard_support_gain_floor):
+        return False
+    if bool(config.guard_requires_contradiction_progress) and candidate.contradiction_gain > 0.0:
+        return False
+    return True
 
 
 def choose_critic_action(
@@ -85,6 +120,20 @@ def choose_critic_action(
     if best_edit is not None:
         override_margin = float(best_edit.score - heuristic_candidate.score)
         if override_margin >= float(config.tau_override):
+            if _is_fragile_maturity_override(
+                state=state,
+                candidate=best_edit,
+                config=config,
+            ):
+                return CriticPolicyDecision(
+                    selected_candidate_id=heuristic_candidate.candidate_id,
+                    selected_source="heuristic",
+                    used_heuristic_fallback=True,
+                    commit_allowed=commit_allowed,
+                    commit_requested=commit_requested,
+                    override_margin=override_margin,
+                    commit_margin=commit_margin,
+                )
             return CriticPolicyDecision(
                 selected_candidate_id=best_edit.candidate_id,
                 selected_source="critic",
