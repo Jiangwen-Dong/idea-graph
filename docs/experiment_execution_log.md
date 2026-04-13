@@ -1886,3 +1886,52 @@ regeneration packet on the touched codepath:
   - make the next training stage harder to misconfigure
   - keep current text-critic and graph-critic datasets easy to distinguish
   - preserve older exports without letting them pollute the default workflow
+
+## 2026-04-13: Offline Text-Scorer Refresh Vs First Graph-Feature Scorer
+
+- Offline comparison target:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+- Frozen validation split:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g2_partitions/partition_manifest.jsonl`
+- Matching state-snapshot root for graph features:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g1`
+- Trained refreshed text scorer:
+  `outputs/graph_critic_models/development_pool_v2_text_warmstart_v1`
+- Trained first graph-feature scorer:
+  `outputs/graph_critic_models/development_pool_v2_graph_feature_v1`
+- Comparison protocol:
+  - same frozen `critic_train` and `critic_dev` groups
+  - same `G2.5` candidate slates
+  - same positive commit weighting (`2.0`)
+  - graph scorer intentionally limited to lightweight structured
+    graph-and-action features with `DictVectorizer + LogisticRegression`
+- Refreshed text scorer result:
+  - validation states: `209`
+  - top-1 accuracy: `0.7081`
+  - mean reciprocal rank: `0.8147`
+  - train candidate rows: `11,013`
+  - validation candidate rows: `1,991`
+  - train / validation commit-positive states: `63 / 9`
+- First graph-feature scorer result:
+  - validation states: `209`
+  - top-1 accuracy: `0.5024`
+  - mean reciprocal rank: `0.6824`
+  - train candidate rows: `11,013`
+  - validation candidate rows: `1,991`
+  - train / validation commit-positive states: `63 / 9`
+- Offline delta vs refreshed text scorer:
+  - top-1: `-0.2057` absolute, about `29.1%` lower
+  - MRR: `-0.1323` absolute, about `16.2%` lower
+- Current interpretation:
+  - the refreshed text scorer remains the stronger offline controller on the
+    frozen development groups
+  - the first pure graph-feature scorer is useful as a baseline, but it is not
+    yet strong enough for runtime deployment
+  - the graph-critic line should stay offline for now; controller-in-the-loop
+    testing remains blocked until a stronger graph or hybrid scorer beats the
+    text scorer on the same split
+- Immediate next method recommendation:
+  - diagnose which missed signals matter most in the current graph-feature
+    representation
+  - then test either a hybrid text-plus-graph scorer or a richer graph encoder
+    before any new controller batch

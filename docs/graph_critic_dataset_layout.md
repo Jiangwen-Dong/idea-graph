@@ -31,6 +31,7 @@ Active artifacts for the current graph-critic and dataset-expansion line:
 - `development_pool_v2_candidate_pool_v1`
 - `development_pool_v2_combined_g1`
 - `development_pool_v2_combined_g2`
+- `development_pool_v2_combined_g2_partitions`
 - `development_pool_v2_combined_g25`
 - `development_pool_v2_combined_readiness`
 - `paper_eval_candidate_pool_v1`
@@ -81,5 +82,9 @@ If you are starting new critic training now:
   `outputs/graph_critic_datasets/01_active_text_critic/current_benchmarked_ours_eig_full_g35_partitions/partition_manifest.jsonl`
 - Graph-critic candidate dataset:
   `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+- Graph-critic partition manifest:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g2_partitions/partition_manifest.jsonl`
+- Graph-critic snapshot root:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g1`
 - Graph-critic readiness report:
   `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_readiness/training_readiness_report.md`

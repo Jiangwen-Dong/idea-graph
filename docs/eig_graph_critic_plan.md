@@ -518,6 +518,45 @@ Key reviewer-facing tests:
 - only promote graph critic into controller-in-the-loop generation after it
   beats the text scorer offline on the same candidate slates
 
+### Stage G5.1: First Offline Graph-Feature Baseline Gate
+
+- added the first lightweight graph-feature scorer implementation:
+  - `src/idea_graph/graph_feature_critic.py`
+  - `scripts/train_graph_feature_critic.py`
+  - `tests/test_graph_feature_critic.py`
+- frozen comparison protocol:
+  - candidate-slate root:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+  - snapshot root:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g1`
+  - partition manifest:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g2_partitions/partition_manifest.jsonl`
+  - same `critic_train` / `critic_dev` groups, same candidate slates, same
+    positive commit weighting as the refreshed text scorer
+- refreshed text scorer artifact:
+  `outputs/graph_critic_models/development_pool_v2_text_warmstart_v1`
+  - top-1 `0.7081`
+  - MRR `0.8147`
+- first graph-feature scorer artifact:
+  `outputs/graph_critic_models/development_pool_v2_graph_feature_v1`
+  - top-1 `0.5024`
+  - MRR `0.6824`
+- practical conclusion:
+  - the first pure graph-feature baseline does **not** clear the offline gate
+  - graph-critic runtime testing should remain blocked
+  - the current graph line is still development-only evidence, not controller
+    replacement evidence
+- implication for the roadmap:
+  - do **not** spend new benchmark-generation budget on a graph-critic runtime
+    controller yet
+  - next graph-critic work should strengthen representation quality first,
+    likely through either:
+    - hybrid text-plus-graph features, or
+    - a richer learned graph encoder with node-text integration
+  - keep the long-term controller framing intact: the graph critic still aims
+    to rank full next-action candidates, including `commit`, but the current
+    offline result shows that the first structured baseline is not yet ready
+
 ### Stage G6: Controlled Generation Pilot
 
 - plug the critic into action selection and commit decisions
