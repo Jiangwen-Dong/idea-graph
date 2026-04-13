@@ -661,6 +661,54 @@ Key reviewer-facing tests:
     scorer, while keeping learned `commit` conservative and benchmark spending
     small until end-to-end quality is revalidated
 
+### Stage G6.1: Graph-Critic Controller Gate
+
+- artifact:
+  `outputs/m2_aiib_g6_graph_controller_gate_v1`
+- paired summary:
+  `outputs/m2_aiib_g6_graph_controller_gate_v1/paired_summary.md`
+- compared:
+  - `ours-eig`
+  - `ours-eig-critic-graph`
+- frozen cases:
+  - `13`
+  - `3883`
+  - `7909`
+  - `9849`
+- result:
+  - mean AIIB native:
+    - `ours-eig = 8.07`
+    - `ours-eig-critic-graph = 7.86`
+  - mean local overall:
+    - `ours-eig = 5.22`
+    - `ours-eig-critic-graph = 4.98`
+  - mean local benchmark alignment:
+    - `ours-eig = 3.35`
+    - `ours-eig-critic-graph = 2.95`
+- trace evidence:
+  - graph-critic controller remained active across the gate, with `85`
+    recorded decisions in the saved `graph.json` files
+  - aggregate selection sources:
+    - critic-selected: `53`
+    - heuristic-selected: `32`
+  - the gate therefore tested a real live controller, not a silent fallback
+  - however, the current `summary.json` artifact does not surface the full
+    `runtime_controller_log`, and fallback reasons are not yet populated in the
+    stored trace rows
+- key failure signal:
+  - case `3883` still regressed badly in native score (`6.86 -> 5.71`) and
+    stopped early at `mature_at_Round2`
+- decision:
+  - `no-go` for larger controller packets right now
+  - keep `ours-eig` as the stable main system and treat the graph-controller
+    line as a narrow mixed pilot
+- immediate next step:
+  - run targeted trace diagnosis on the hard graph-controller cases, beginning
+    with `3883`
+  - then decide whether the next iteration should be robustness-data expansion,
+    safer near-maturity override policy, or a controller observability cleanup
+    before any new benchmark spend
+
 ### Stage G7: Paper Experiments
 
 - rerun the main comparison only after the critic pilot is stable

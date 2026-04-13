@@ -1979,3 +1979,59 @@ regeneration packet on the touched codepath:
     and is now strong enough for a narrow controller-in-the-loop planning stage
   - runtime promotion should still begin with a small frozen gate rather than a
     large benchmark packet, because this remains development-pool evidence
+
+## 2026-04-13: Frozen 4-Case AIIB Graph-Controller Gate
+
+- artifact:
+  `outputs/m2_aiib_g6_graph_controller_gate_v1`
+- paired summary:
+  `outputs/m2_aiib_g6_graph_controller_gate_v1/paired_summary.md`
+- baselines:
+  - `ours-eig`
+  - `ours-eig-critic-graph`
+- cases:
+  - `13`
+  - `3883`
+  - `7909`
+  - `9849`
+- per-case AIIB native deltas (`graph critic - ours-eig`):
+  - `13`: `+0.00`
+  - `3883`: `-1.15`
+  - `7909`: `+0.29`
+  - `9849`: `+0.00`
+- mean result:
+  - mean AIIB native:
+    - `ours-eig = 8.07`
+    - `ours-eig-critic-graph = 7.86`
+    - delta: `-0.21`
+  - mean local overall:
+    - `ours-eig = 5.22`
+    - `ours-eig-critic-graph = 4.98`
+  - mean local benchmark alignment:
+    - `ours-eig = 3.35`
+    - `ours-eig-critic-graph = 2.95`
+- runtime-controller trace readout:
+  - graph-critic traces were recovered from each run's `graph.json`; the full
+    trace is not currently surfaced in `summary.json`
+  - total graph-critic controller decisions: `85`
+  - critic-selected actions: `53`
+  - heuristic-selected actions: `32`
+  - case-level heuristic fallbacks:
+    - `13`: `10 / 25`
+    - `3883`: `5 / 10`
+    - `7909`: `4 / 25`
+    - `9849`: `13 / 25`
+  - observability caveat:
+    stored trace rows currently leave fallback reasons empty, so the gate is
+    diagnosable but not yet fully self-explaining
+- key interpretation:
+  - the controller is genuinely active, so this is not a silent fallback run
+  - however, the narrow transfer test is mixed and not ready for larger-scale
+    benchmark spending
+  - the strongest warning sign is still case `3883`, where the graph critic
+    version matured at `Round2` and lost `1.15` native points despite slightly
+    higher local scores
+- decision:
+  - `no-go` for broader controller-in-the-loop scaling
+  - next step should be targeted trace diagnosis on the hard cases, then a
+    robustness-data or policy-adjustment pass before any larger packet
