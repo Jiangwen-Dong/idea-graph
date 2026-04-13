@@ -11,6 +11,10 @@ from .benchmark_mode import apply_io_mode
 from .engine import emit_progress, run_experiment
 from .literature_grounding import build_literature_grounding
 from .models import FinalProposal, IdeaGraph
+from .relation_graph_runtime_critic import (
+    RelationGraphRuntimeConfig,
+    load_relation_graph_runtime_bundle,
+)
 from .runtime_critic import TextCriticRuntimeConfig, load_pickled_text_critic_model
 
 
@@ -28,13 +32,59 @@ class BaselineSpec:
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_TEXT_CRITIC_MODEL_PATH = (
-    ROOT
-    / "outputs"
+TEXT_CRITIC_MODEL_RELATIVE_PATH = (
+    Path("outputs")
     / "graph_critic_models"
     / "current_benchmarked_ours_eig_full_g46_text_online_real_train_v1"
     / "model.pkl"
 )
+RELATION_GRAPH_CRITIC_MODEL_RELATIVE_DIR = (
+    Path("outputs")
+    / "graph_critic_models"
+    / "development_pool_v2_relation_graph_sanitized_v1"
+)
+
+
+RUNTIME_CONTROLLER_METADATA_KEYS = (
+    "runtime_controller_enabled",
+    "runtime_controller_kind",
+    "runtime_controller_use_commit",
+    "runtime_controller_tau_override",
+    "runtime_controller_tau_commit",
+    "runtime_controller_gamma_commit",
+    "runtime_controller_min_commit_round",
+    "runtime_controller_guard_support_threshold",
+    "runtime_controller_guard_support_gain_floor",
+    "runtime_controller_guard_requires_contradiction_progress",
+    "runtime_controller_model_path",
+    "runtime_controller_model_dir",
+    "runtime_controller_error",
+    "runtime_controller_loaded",
+)
+
+
+def _shared_repo_root_from_worktree(root: Path) -> Path | None:
+    if root.parent.name != ".worktrees":
+        return None
+    return root.parent.parent
+
+
+def _default_graph_critic_models_root() -> Path:
+    shared_root = _shared_repo_root_from_worktree(ROOT)
+    if shared_root is not None:
+        return shared_root
+    return ROOT
+
+
+def _default_text_critic_model_path() -> Path:
+    return (_default_graph_critic_models_root() / TEXT_CRITIC_MODEL_RELATIVE_PATH).resolve()
+
+
+def _default_relation_graph_runtime_model_dir() -> Path:
+    return (_default_graph_critic_models_root() / RELATION_GRAPH_CRITIC_MODEL_RELATIVE_DIR).resolve()
+
+
+DEFAULT_TEXT_CRITIC_MODEL_PATH = _default_text_critic_model_path()
 
 
 BASELINE_ALIASES: dict[str, str] = {
@@ -66,6 +116,14 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         description="Evolving Idea Graph multi-agent collaboration with the G4.8 adapted text critic as a conservative edit reranker.",
         prompt_style="ours",
         runtime_controller="text_critic_rerank",
+    ),
+    "ours-eig-critic-graph": BaselineSpec(
+        name="ours-eig-critic-graph",
+        display_name="Ours (EIG + Relation-Graph Critic)",
+        strategy="evolving_graph",
+        description="Evolving Idea Graph multi-agent collaboration with a relation-graph runtime critic as a conservative edit reranker.",
+        prompt_style="ours",
+        runtime_controller="relation_graph_critic_rerank",
     ),
     "direct": BaselineSpec(
         name="direct",
@@ -188,12 +246,21 @@ def attach_baseline_metadata(
     metadata["baseline_proxy"] = baseline.is_proxy
     metadata["baseline_proxy_target"] = baseline.proxy_target
     metadata["baseline_runtime_controller"] = baseline.runtime_controller
+    for key in RUNTIME_CONTROLLER_METADATA_KEYS:
+        metadata.pop(key, None)
+
     if baseline.runtime_controller == "text_critic_rerank":
-        metadata.setdefault("runtime_controller_enabled", True)
-        metadata.setdefault("runtime_controller_kind", "text_critic_rerank")
-        metadata.setdefault("runtime_controller_use_commit", False)
-        metadata.setdefault("runtime_controller_tau_override", 0.05)
-        metadata.setdefault("runtime_controller_model_path", str(DEFAULT_TEXT_CRITIC_MODEL_PATH.resolve()))
+        metadata["runtime_controller_enabled"] = True
+        metadata["runtime_controller_kind"] = "text_critic_rerank"
+        metadata["runtime_controller_use_commit"] = False
+        metadata["runtime_controller_tau_override"] = 0.05
+        metadata["runtime_controller_model_path"] = str(_default_text_critic_model_path())
+    elif baseline.runtime_controller == "relation_graph_critic_rerank":
+        metadata["runtime_controller_enabled"] = True
+        metadata["runtime_controller_kind"] = "relation_graph_critic_rerank"
+        metadata["runtime_controller_use_commit"] = False
+        metadata["runtime_controller_tau_override"] = 0.05
+        metadata["runtime_controller_model_dir"] = str(_default_relation_graph_runtime_model_dir())
     return instance.__class__(
         name=instance.name,
         topic=instance.topic,
@@ -1559,44 +1626,87 @@ def _build_baseline_graph(
 
 
 def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) -> tuple[Any | None, dict[str, Any] | None]:
-    if baseline.runtime_controller != "text_critic_rerank":
+    runtime_kind = str(graph.metadata.get("runtime_controller_kind", "")).strip() or baseline.runtime_controller
+    if not runtime_kind:
         return None, None
 
-    model_path = Path(
-        str(
-            graph.metadata.get("runtime_controller_model_path")
-            or DEFAULT_TEXT_CRITIC_MODEL_PATH
+    if runtime_kind == "text_critic_rerank":
+        model_path = Path(
+            str(
+                graph.metadata.get("runtime_controller_model_path")
+                or _default_text_critic_model_path()
+            )
         )
-    )
-    if not model_path.exists():
-        graph.metadata["runtime_controller_error"] = f"Missing runtime controller model at {model_path}."
-        return None, None
+        if not model_path.exists():
+            graph.metadata["runtime_controller_error"] = f"Missing runtime controller model at {model_path}."
+            return None, None
 
-    model = load_pickled_text_critic_model(str(model_path))
-    config = TextCriticRuntimeConfig(
-        tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
-        tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
-        gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
-        min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
-        use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
-        guard_support_threshold=float(
-            graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
-        ),
-        guard_support_gain_floor=float(
-            graph.metadata.get("runtime_controller_guard_support_gain_floor", 0.10)
-        ),
-        guard_requires_contradiction_progress=bool(
-            graph.metadata.get("runtime_controller_guard_requires_contradiction_progress", False)
-        ),
-    )
-    controller_metadata = {
-        "kind": "text_critic_rerank",
-        "model_path": str(model_path.resolve()),
-        "use_commit": bool(config.use_commit),
-        "tau_override": float(config.tau_override),
-    }
-    graph.metadata["runtime_controller_loaded"] = controller_metadata
-    return model, {"config": config, **controller_metadata}
+        model = load_pickled_text_critic_model(str(model_path))
+        config = TextCriticRuntimeConfig(
+            tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
+            tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
+            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+            use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
+            guard_support_threshold=float(
+                graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
+            ),
+            guard_support_gain_floor=float(
+                graph.metadata.get("runtime_controller_guard_support_gain_floor", 0.10)
+            ),
+            guard_requires_contradiction_progress=bool(
+                graph.metadata.get("runtime_controller_guard_requires_contradiction_progress", False)
+            ),
+        )
+        controller_metadata = {
+            "kind": "text_critic_rerank",
+            "model_path": str(model_path.resolve()),
+            "use_commit": bool(config.use_commit),
+            "tau_override": float(config.tau_override),
+        }
+        graph.metadata["runtime_controller_loaded"] = controller_metadata
+        return model, {"config": config, **controller_metadata}
+
+    if runtime_kind == "relation_graph_critic_rerank":
+        model_dir = Path(
+            str(
+                graph.metadata.get("runtime_controller_model_dir")
+                or _default_relation_graph_runtime_model_dir()
+            )
+        )
+        if not model_dir.exists():
+            graph.metadata["runtime_controller_error"] = f"Missing runtime controller model directory at {model_dir}."
+            return None, None
+
+        runtime_bundle = load_relation_graph_runtime_bundle(model_dir)
+        config = RelationGraphRuntimeConfig(
+            tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
+            tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
+            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+            use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
+            guard_support_threshold=float(
+                graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
+            ),
+            guard_support_gain_floor=float(
+                graph.metadata.get("runtime_controller_guard_support_gain_floor", 0.10)
+            ),
+            guard_requires_contradiction_progress=bool(
+                graph.metadata.get("runtime_controller_guard_requires_contradiction_progress", False)
+            ),
+        )
+        controller_metadata = {
+            "kind": "relation_graph_critic_rerank",
+            "model_dir": str(model_dir.resolve()),
+            "model_path": str(model_dir.resolve()),
+            "use_commit": bool(config.use_commit),
+            "tau_override": float(config.tau_override),
+        }
+        graph.metadata["runtime_controller_loaded"] = controller_metadata
+        return runtime_bundle, {"config": config, **controller_metadata}
+
+    graph.metadata["runtime_controller_error"] = f"Unsupported runtime controller kind '{runtime_kind}'."
+    return None, None
 
 
 def run_baseline_experiment(
@@ -1621,10 +1731,28 @@ def run_baseline_experiment(
         runtime_controller = None
         runtime_controller_metadata = None
         if bool(baseline_graph.metadata.get("runtime_controller_enabled", False)):
-            runtime_controller, runtime_controller_metadata = _maybe_build_runtime_controller(
-                baseline_graph,
-                baseline,
-            )
+            runtime_controller_kind = str(
+                baseline_graph.metadata.get("runtime_controller_kind", baseline.runtime_controller)
+            ).strip()
+            try:
+                runtime_controller, runtime_controller_metadata = _maybe_build_runtime_controller(
+                    baseline_graph,
+                    baseline,
+                )
+            except Exception as exc:
+                baseline_graph.metadata["runtime_controller_error"] = str(exc)
+                raise RuntimeError(
+                    f"Runtime controller '{runtime_controller_kind or baseline.runtime_controller}' failed to load "
+                    f"for baseline '{baseline.name}': {exc}"
+                ) from exc
+            if runtime_controller is None or runtime_controller_metadata is None:
+                error_detail = str(
+                    baseline_graph.metadata.get("runtime_controller_error", "unknown runtime controller load failure")
+                ).strip()
+                raise RuntimeError(
+                    f"Runtime controller '{runtime_controller_kind or baseline.runtime_controller}' failed "
+                    f"for baseline '{baseline.name}': {error_detail}"
+                )
         return run_experiment(
             topic=instance.topic,
             literature=list(instance.literature),

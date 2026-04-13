@@ -4,6 +4,7 @@ import json
 import inspect
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -37,6 +38,7 @@ from idea_graph.engine import (
 )
 from idea_graph.models import FinalProposal, GraphAction, IdeaGraph, MaturitySnapshot
 from idea_graph.models import UtilityBreakdown
+from idea_graph.relation_graph_runtime_critic import RelationGraphRuntimeConfig
 from idea_graph.runtime_critic import TextCriticRuntimeConfig
 
 
@@ -282,6 +284,109 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(controller_log[0]["round"], "Round1")
         self.assertIn("selected_source", controller_log[0])
         self.assertIn("used_heuristic_fallback", controller_log[0])
+
+    def test_run_experiment_accepts_runtime_relation_graph_critic_reranker(self) -> None:
+        def _mock_relation_graph_selector(*args, **kwargs):  # type: ignore[no-untyped-def]
+            valid_candidates = list(kwargs["candidate_specs"])
+            selected_id = str(valid_candidates[0]["candidate_id"])
+            return SimpleNamespace(
+                selected_spec={
+                    "candidate_id": selected_id,
+                    "critic_score": 0.91,
+                },
+                policy_decision=SimpleNamespace(
+                    selected_candidate_id=selected_id,
+                    selected_source="critic",
+                    override_margin=0.05,
+                    used_heuristic_fallback=False,
+                ),
+                scored_candidates=tuple(
+                    {
+                        **candidate,
+                        "critic_score": 0.80 - (index * 0.1),
+                    }
+                    for index, candidate in enumerate(valid_candidates)
+                ),
+            )
+
+        with patch(
+            "idea_graph.engine.select_relation_graph_critic_candidate",
+            side_effect=_mock_relation_graph_selector,
+        ) as mock_selector:
+            graph = run_experiment(
+                topic="graph-based scientific ideation",
+                literature=["paper a", "paper b", "paper c", "paper d"],
+                runtime_controller=object(),
+                runtime_controller_metadata={
+                    "kind": "relation_graph_critic_rerank",
+                    "model_dir": "memory://stub-bundle",
+                    "use_commit": False,
+                    "tau_override": 0.05,
+                    "config": RelationGraphRuntimeConfig(tau_override=0.05, use_commit=False),
+                },
+                max_rounds=1,
+                stop_when_mature=False,
+            )
+
+        self.assertTrue(mock_selector.called)
+        self.assertIsNotNone(graph.final_proposal)
+        self.assertEqual(graph.metadata["runtime_controller"]["kind"], "relation_graph_critic_rerank")
+        self.assertTrue(graph.metadata.get("runtime_controller_log"))
+
+    def test_runtime_controller_trace_records_kind_and_fallback_reason_when_present(self) -> None:
+        def _mock_relation_graph_selector(*args, **kwargs):  # type: ignore[no-untyped-def]
+            valid_candidates = list(kwargs["candidate_specs"])
+            selected_id = str(kwargs["heuristic_candidate_id"])
+            return SimpleNamespace(
+                selected_spec={
+                    "candidate_id": selected_id,
+                    "critic_score": float("-inf"),
+                    "controller_fallback_reason": "unmapped_runtime_token",
+                    "controller_fallback_candidate_ids": (selected_id,),
+                },
+                policy_decision=SimpleNamespace(
+                    selected_candidate_id=selected_id,
+                    selected_source="heuristic",
+                    override_margin=float("-inf"),
+                    used_heuristic_fallback=True,
+                ),
+                scored_candidates=tuple(
+                    {
+                        **candidate,
+                        "critic_score": float("-inf"),
+                        "controller_fallback_reason": "unmapped_runtime_token",
+                    }
+                    for candidate in valid_candidates
+                ),
+            )
+
+        with patch(
+            "idea_graph.engine.select_relation_graph_critic_candidate",
+            side_effect=_mock_relation_graph_selector,
+        ):
+            graph = run_experiment(
+                topic="graph-based scientific ideation",
+                literature=["paper a", "paper b", "paper c", "paper d"],
+                runtime_controller=object(),
+                runtime_controller_metadata={
+                    "kind": "relation_graph_critic_rerank",
+                    "model_dir": "memory://stub-bundle",
+                    "use_commit": False,
+                    "tau_override": 0.05,
+                    "config": RelationGraphRuntimeConfig(tau_override=0.05, use_commit=False),
+                },
+                max_rounds=1,
+                stop_when_mature=False,
+            )
+
+        controller_log = graph.metadata.get("runtime_controller_log")
+        self.assertTrue(controller_log)
+        self.assertEqual(controller_log[0]["controller_kind"], "relation_graph_critic_rerank")
+        self.assertEqual(controller_log[0]["selected_fallback_reason"], "unmapped_runtime_token")
+        self.assertEqual(
+            controller_log[0]["selected_fallback_candidate_ids"],
+            [controller_log[0]["selected_candidate_id"]],
+        )
 
     def test_progress_callback_uses_functional_role_display_names(self) -> None:
         messages: list[str] = []

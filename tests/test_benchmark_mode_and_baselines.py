@@ -24,6 +24,8 @@ from idea_graph.baselines import (
     _ai_researcher_proxy_postprocess_proposal,
     _ai_researcher_topic_fidelity_score,
     _baseline_postprocess_proposal,
+    _default_relation_graph_runtime_model_dir,
+    _maybe_build_runtime_controller,
     _direct_system_prompt,
     _refine_system_prompt,
     attach_baseline_metadata,
@@ -32,7 +34,7 @@ from idea_graph.baselines import (
 from idea_graph.external_baselines import load_external_baseline_config
 from idea_graph.instances import ExperimentInstance
 from idea_graph.literature_grounding import build_literature_grounding
-from idea_graph.models import FinalProposal
+from idea_graph.models import FinalProposal, IdeaGraph
 from idea_graph.settings import OpenAICompatibleSettings
 
 
@@ -252,12 +254,147 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIn("scipip", BASELINE_SPECS)
         self.assertIn("virsci", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-text", BASELINE_SPECS)
+        self.assertIn("ours-eig-critic-graph", BASELINE_SPECS)
         self.assertEqual(BASELINE_SPECS["ai-researcher"].strategy, "external")
         self.assertIn("ai-researcher-proxy", BASELINE_SPECS)
         self.assertIn("scipip-proxy", BASELINE_SPECS)
         self.assertIn("virsci-proxy", BASELINE_SPECS)
         self.assertNotIn("research-agent-proxy", BASELINE_SPECS)
         self.assertTrue(BASELINE_SPECS["ai-researcher-proxy"].is_proxy)
+        self.assertEqual(
+            BASELINE_SPECS["ours-eig-critic-graph"].runtime_controller,
+            "relation_graph_critic_rerank",
+        )
+
+    def test_attach_baseline_metadata_enables_relation_graph_runtime_defaults(self) -> None:
+        instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-graph",
+            io_mode="auto",
+        )
+
+        self.assertEqual(instance.metadata["baseline_runtime_controller"], "relation_graph_critic_rerank")
+        self.assertEqual(instance.metadata["runtime_controller_kind"], "relation_graph_critic_rerank")
+        self.assertFalse(instance.metadata["runtime_controller_use_commit"])
+        self.assertIn(
+            "development_pool_v2_relation_graph_sanitized_v1",
+            instance.metadata["runtime_controller_model_dir"],
+        )
+
+    def test_attach_baseline_metadata_overwrites_stale_controller_fields_on_baseline_switch(self) -> None:
+        text_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-text",
+            io_mode="auto",
+        )
+        self.assertEqual(text_instance.metadata["runtime_controller_kind"], "text_critic_rerank")
+        self.assertIn("runtime_controller_model_path", text_instance.metadata)
+
+        graph_instance = attach_baseline_metadata(
+            text_instance,
+            baseline_name="ours-eig-critic-graph",
+            io_mode="auto",
+        )
+        self.assertEqual(graph_instance.metadata["runtime_controller_kind"], "relation_graph_critic_rerank")
+        self.assertIn("runtime_controller_model_dir", graph_instance.metadata)
+        self.assertNotIn("runtime_controller_model_path", graph_instance.metadata)
+
+        plain_instance = attach_baseline_metadata(
+            graph_instance,
+            baseline_name="ours-eig",
+            io_mode="auto",
+        )
+        self.assertEqual(plain_instance.metadata["baseline_runtime_controller"], "")
+        self.assertNotIn("runtime_controller_enabled", plain_instance.metadata)
+        self.assertNotIn("runtime_controller_kind", plain_instance.metadata)
+        self.assertNotIn("runtime_controller_model_path", plain_instance.metadata)
+        self.assertNotIn("runtime_controller_model_dir", plain_instance.metadata)
+
+    def test_default_relation_graph_runtime_model_dir_prefers_shared_outputs_from_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_root = Path(tmp_dir) / "idea-graph"
+            worktree_root = repo_root / ".worktrees" / "g6-graph-controller-gate"
+            expected_dir = (
+                repo_root
+                / "outputs"
+                / "graph_critic_models"
+                / "development_pool_v2_relation_graph_sanitized_v1"
+            )
+            expected_dir.mkdir(parents=True, exist_ok=True)
+            worktree_root.mkdir(parents=True, exist_ok=True)
+
+            with patch("idea_graph.baselines.ROOT", worktree_root):
+                resolved = _default_relation_graph_runtime_model_dir()
+
+        self.assertEqual(resolved, expected_dir.resolve())
+
+    def test_default_runtime_model_resolution_does_not_walk_arbitrary_ancestors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            parent_root = Path(tmp_dir) / "parent-repo"
+            nested_repo_root = parent_root / "nested-repo"
+            (parent_root / "outputs" / "graph_critic_models").mkdir(parents=True, exist_ok=True)
+            nested_repo_root.mkdir(parents=True, exist_ok=True)
+
+            with patch("idea_graph.baselines.ROOT", nested_repo_root):
+                resolved = _default_relation_graph_runtime_model_dir()
+
+        expected = (
+            nested_repo_root
+            / "outputs"
+            / "graph_critic_models"
+            / "development_pool_v2_relation_graph_sanitized_v1"
+        ).resolve()
+        self.assertEqual(resolved, expected)
+
+    def test_runtime_builder_loads_relation_graph_runtime_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_dir = Path(tmp_dir) / "graph-runtime-model"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            sentinel_bundle = object()
+            graph = IdeaGraph(
+                topic="runtime test",
+                literature=[],
+                metadata={
+                    "runtime_controller_kind": "relation_graph_critic_rerank",
+                    "runtime_controller_model_dir": str(model_dir),
+                },
+            )
+            baseline = BASELINE_SPECS["ours-eig-critic-graph"]
+
+            with patch(
+                "idea_graph.baselines.load_relation_graph_runtime_bundle",
+                return_value=sentinel_bundle,
+            ) as mocked_loader:
+                runtime_controller, runtime_metadata = _maybe_build_runtime_controller(graph, baseline)
+
+        mocked_loader.assert_called_once_with(model_dir)
+        self.assertIs(runtime_controller, sentinel_bundle)
+        self.assertIsNotNone(runtime_metadata)
+        assert runtime_metadata is not None
+        self.assertEqual(runtime_metadata["kind"], "relation_graph_critic_rerank")
+        self.assertFalse(runtime_metadata["use_commit"])
+
+    def test_controller_baseline_fails_closed_when_runtime_bundle_missing(self) -> None:
+        instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-graph",
+            io_mode="auto",
+        )
+        bad_metadata = dict(instance.metadata)
+        bad_metadata["runtime_controller_model_dir"] = str(Path(tempfile.gettempdir()) / "missing-graph-runtime-model-dir")
+        bad_instance = instance.__class__(
+            name=instance.name,
+            topic=instance.topic,
+            literature=list(instance.literature),
+            source_path=instance.source_path,
+            metadata=bad_metadata,
+        )
+
+        with self.assertRaises(RuntimeError) as context:
+            run_baseline_experiment(bad_instance, baseline_name="ours-eig-critic-graph")
+
+        self.assertIn("runtime controller", str(context.exception).lower())
+        self.assertIn("failed", str(context.exception).lower())
 
     def test_generation_prompts_discourage_noisy_fragment_copying(self) -> None:
         direct_prompt = _direct_system_prompt(BASELINE_SPECS["direct"])

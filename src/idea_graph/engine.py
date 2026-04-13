@@ -36,6 +36,7 @@ from .models import (
     Provenance,
     UtilityBreakdown,
 )
+from .relation_graph_runtime_critic import select_relation_graph_critic_candidate
 from .runtime_critic import select_text_critic_candidate
 from .schema import ROLE_NAMES, build_seed_template
 
@@ -1737,14 +1738,22 @@ def _record_runtime_controller_trace(
     *,
     round_name: str,
     role: str,
+    controller_kind: str,
     heuristic_candidate: dict[str, object],
     selected_candidate: dict[str, object],
     controller_decision: dict[str, object],
     scored_candidates: Sequence[Mapping[str, object]],
 ) -> None:
+    selected_fallback_ids = selected_candidate.get("controller_fallback_candidate_ids", ())
+    if isinstance(selected_fallback_ids, Sequence) and not isinstance(selected_fallback_ids, (str, bytes)):
+        normalized_fallback_ids = [str(item) for item in selected_fallback_ids]
+    else:
+        normalized_fallback_ids = []
+
     entry = {
         "round": round_name,
         "role": role,
+        "controller_kind": controller_kind,
         "heuristic_candidate_id": heuristic_candidate.get("candidate_id"),
         "heuristic_kind": heuristic_candidate.get("kind"),
         "heuristic_predicted_gain": heuristic_candidate.get("predicted_gain"),
@@ -1752,6 +1761,8 @@ def _record_runtime_controller_trace(
         "selected_candidate_id": selected_candidate.get("candidate_id"),
         "selected_kind": selected_candidate.get("kind"),
         "selected_source": controller_decision.get("selected_source"),
+        "selected_fallback_reason": selected_candidate.get("controller_fallback_reason"),
+        "selected_fallback_candidate_ids": normalized_fallback_ids,
         "override_margin": controller_decision.get("override_margin"),
         "used_heuristic_fallback": controller_decision.get("used_heuristic_fallback"),
         "top_scored_candidates": [
@@ -1760,6 +1771,7 @@ def _record_runtime_controller_trace(
                 "kind": candidate.get("kind"),
                 "critic_score": candidate.get("critic_score"),
                 "predicted_gain": candidate.get("predicted_gain"),
+                "controller_fallback_reason": candidate.get("controller_fallback_reason"),
             }
             for candidate in sorted(
                 (dict(item) for item in scored_candidates),
@@ -1884,6 +1896,7 @@ def _select_ranked_action(
     if runtime_controller is not None and runtime_controller_metadata is not None and valid_candidates:
         controller_config = runtime_controller_metadata.get("config")
         if controller_config is not None:
+            controller_kind = str(runtime_controller_metadata.get("kind", "")).strip() or "text_critic_rerank"
             round_index = (
                 int(round_name[5:])
                 if str(round_name).startswith("Round") and str(round_name)[5:].isdigit()
@@ -1896,43 +1909,72 @@ def _select_ranked_action(
                 "completeness": reference_snapshot.completeness,
                 "is_mature": reference_snapshot.is_mature,
             }
-            controller_decision = select_text_critic_candidate(
-                graph,
-                round_name=round_name,
-                role=role,
-                state_features=controller_state,
-                candidate_specs=valid_candidates,
-                heuristic_candidate_id=str(heuristic_selected_candidate.get("candidate_id", "")).strip(),
-                model=runtime_controller,
-                config=controller_config,
-            )
-            selected_candidate = next(
-                candidate
-                for candidate in valid_candidates
-                if str(candidate.get("candidate_id", "")).strip()
-                == controller_decision.policy_decision.selected_candidate_id
-            )
-            selected_candidate = {
-                **selected_candidate,
-                "critic_score": controller_decision.selected_spec.get("critic_score"),
-                "controller_selected_source": controller_decision.policy_decision.selected_source,
-                "controller_override_margin": controller_decision.policy_decision.override_margin,
-                "controller_used_heuristic_fallback": controller_decision.policy_decision.used_heuristic_fallback,
-            }
-            if record_trace:
-                _record_runtime_controller_trace(
+            heuristic_candidate_id = str(heuristic_selected_candidate.get("candidate_id", "")).strip()
+            if controller_kind == "text_critic_rerank":
+                controller_decision = select_text_critic_candidate(
                     graph,
                     round_name=round_name,
                     role=role,
-                    heuristic_candidate=heuristic_selected_candidate,
-                    selected_candidate=selected_candidate,
-                    controller_decision={
-                        "selected_source": controller_decision.policy_decision.selected_source,
-                        "override_margin": controller_decision.policy_decision.override_margin,
-                        "used_heuristic_fallback": controller_decision.policy_decision.used_heuristic_fallback,
-                    },
-                    scored_candidates=controller_decision.scored_candidates,
+                    state_features=controller_state,
+                    candidate_specs=valid_candidates,
+                    heuristic_candidate_id=heuristic_candidate_id,
+                    model=runtime_controller,
+                    config=controller_config,
                 )
+            elif controller_kind == "relation_graph_critic_rerank":
+                controller_decision = select_relation_graph_critic_candidate(
+                    graph,
+                    round_name=round_name,
+                    role=role,
+                    state_features=controller_state,
+                    candidate_specs=valid_candidates,
+                    heuristic_candidate_id=heuristic_candidate_id,
+                    runtime_bundle=runtime_controller,
+                    config=controller_config,
+                )
+            else:
+                controller_decision = None
+
+            if controller_decision is not None:
+                selected_candidate_id = str(controller_decision.policy_decision.selected_candidate_id)
+                selected_candidate_from_ranked = next(
+                    (
+                        candidate
+                        for candidate in valid_candidates
+                        if str(candidate.get("candidate_id", "")).strip() == selected_candidate_id
+                    ),
+                    heuristic_selected_candidate,
+                )
+                selected_candidate = {
+                    **selected_candidate_from_ranked,
+                    "critic_score": controller_decision.selected_spec.get("critic_score"),
+                    "controller_kind": controller_kind,
+                    "controller_selected_source": controller_decision.policy_decision.selected_source,
+                    "controller_override_margin": controller_decision.policy_decision.override_margin,
+                    "controller_used_heuristic_fallback": controller_decision.policy_decision.used_heuristic_fallback,
+                }
+                fallback_reason = controller_decision.selected_spec.get("controller_fallback_reason")
+                if fallback_reason is not None:
+                    selected_candidate["controller_fallback_reason"] = str(fallback_reason)
+                fallback_ids = controller_decision.selected_spec.get("controller_fallback_candidate_ids")
+                if isinstance(fallback_ids, Sequence) and not isinstance(fallback_ids, (str, bytes)):
+                    selected_candidate["controller_fallback_candidate_ids"] = tuple(str(item) for item in fallback_ids)
+
+                if record_trace:
+                    _record_runtime_controller_trace(
+                        graph,
+                        round_name=round_name,
+                        role=role,
+                        controller_kind=controller_kind,
+                        heuristic_candidate=heuristic_selected_candidate,
+                        selected_candidate=selected_candidate,
+                        controller_decision={
+                            "selected_source": controller_decision.policy_decision.selected_source,
+                            "override_margin": controller_decision.policy_decision.override_margin,
+                            "used_heuristic_fallback": controller_decision.policy_decision.used_heuristic_fallback,
+                        },
+                        scored_candidates=controller_decision.scored_candidates,
+                    )
 
     selected_action = make_action(
         graph,
