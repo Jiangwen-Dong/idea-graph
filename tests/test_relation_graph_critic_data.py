@@ -284,3 +284,26 @@ class RelationGraphCriticDataTests(unittest.TestCase):
 
         self.assertEqual(backend.encode_call_count, 1)
         self.assertTrue(np.isfinite(dataset.train_examples[0].state_text_embedding).all())
+
+    def test_build_relation_graph_dataset_handles_empty_node_snapshots(self) -> None:
+        empty_snapshot = {
+            "node_count": 0,
+            "edge_count": 0,
+            "contradiction_count": 0,
+            "support_edge_count": 0,
+            "nodes": {},
+            "edges": [],
+        }
+        write_text_file(
+            self.fixture.g1_dir / "state_snapshots" / "train-step-000.json",
+            json.dumps(empty_snapshot),
+        )
+
+        dataset = build_relation_graph_dataset(
+            candidate_dataset_dir=self.fixture.candidate_dir,
+            g1_dataset_dir=self.fixture.g1_dir,
+            partition_manifest_path=self.fixture.partition_manifest,
+            text_backend=HashTextEmbeddingBackend(dim=8),
+        )
+
+        self.assertEqual(dataset.train_examples[0].node_text_embeddings.shape, (0, 8))
