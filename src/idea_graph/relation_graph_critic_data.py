@@ -51,6 +51,34 @@ class HashTextEmbeddingBackend:
         return np.stack(rows, axis=0).astype(np.float32)
 
 
+class SentenceTransformerEmbeddingBackend:
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        self._model: Any | None = None
+        self.dim: int | None = None
+
+    def _get_model(self) -> Any:
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer
+
+            self._model = SentenceTransformer(self.model_name)
+            self.dim = int(self._model.get_sentence_embedding_dimension())
+        return self._model
+
+    def encode(self, texts: Sequence[str]) -> np.ndarray:
+        if not texts:
+            dim = int(self.dim or 0)
+            return np.zeros((0, dim), dtype=np.float32)
+        model = self._get_model()
+        encoded = model.encode(
+            list(texts),
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return np.asarray(encoded, dtype=np.float32)
+
+
 @dataclass(frozen=True)
 class RelationGraphCandidateExample:
     state_id: str
@@ -96,6 +124,7 @@ class RelationGraphBatch:
     target_mask: torch.Tensor
     neighbor_mask: torch.Tensor
     graph_mask: torch.Tensor
+    candidate_state_index: torch.Tensor
     labels: torch.Tensor
     is_commit: torch.Tensor
     node_type_vocab_size: int
@@ -122,6 +151,7 @@ class RelationGraphBatch:
             target_mask=self.target_mask.to(device),
             neighbor_mask=self.neighbor_mask.to(device),
             graph_mask=self.graph_mask.to(device),
+            candidate_state_index=self.candidate_state_index.to(device),
             labels=self.labels.to(device),
             is_commit=self.is_commit.to(device),
             node_type_vocab_size=self.node_type_vocab_size,
@@ -350,6 +380,7 @@ def collate_relation_graph_examples(
     target_mask = torch.zeros((batch_size, max_nodes), dtype=torch.bool)
     neighbor_mask = torch.zeros((batch_size, max_nodes), dtype=torch.bool)
     graph_mask = torch.zeros((batch_size, max_nodes), dtype=torch.bool)
+    candidate_state_index = torch.zeros((batch_size,), dtype=torch.long)
     labels = torch.zeros((batch_size,), dtype=torch.float32)
     is_commit = torch.zeros((batch_size,), dtype=torch.float32)
 
@@ -358,6 +389,7 @@ def collate_relation_graph_examples(
     edge_type_max = 0
     candidate_kind_max = 0
 
+    state_lookup: dict[str, int] = {}
     for batch_index, example in enumerate(examples):
         node_count = len(example.node_type_ids)
         edge_count = len(example.edge_index)
@@ -370,6 +402,7 @@ def collate_relation_graph_examples(
         node_scalars[batch_index, :node_count, 1] = torch.tensor(example.node_evidence_count, dtype=torch.float32)
         graph_mask[batch_index, :node_count] = True
         candidate_kind_ids[batch_index] = int(example.candidate_kind_id)
+        candidate_state_index[batch_index] = state_lookup.setdefault(example.state_id, len(state_lookup))
         labels[batch_index] = float(example.label)
         is_commit[batch_index] = float(example.is_commit)
         for target_index in example.target_node_indices:
@@ -403,6 +436,7 @@ def collate_relation_graph_examples(
         target_mask=target_mask,
         neighbor_mask=neighbor_mask,
         graph_mask=graph_mask,
+        candidate_state_index=candidate_state_index,
         labels=labels,
         is_commit=is_commit,
         node_type_vocab_size=node_type_max + 1,
