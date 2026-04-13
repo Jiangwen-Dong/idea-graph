@@ -619,6 +619,48 @@ Key reviewer-facing tests:
   prioritize trace diagnosis, development-pool expansion, and offline
   graph-critic comparison
 
+### Stage G5.2: Relation-Aware Offline Graph Critic
+
+- artifact:
+  `outputs/graph_critic_models/development_pool_v2_relation_graph_sanitized_v1`
+- frozen protocol:
+  - candidate slates:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+  - state snapshots:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g1`
+  - partition manifest:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g2_partitions/partition_manifest.jsonl`
+- representation note:
+  - relation-aware two-layer message passing over typed nodes and typed edges
+  - frozen sentence embeddings for node text, state text, and leakage-safe
+    candidate text
+  - state-local candidate ranking loss with edit-only and all-candidate
+    validation views
+- trusted metrics:
+  - all-candidate top-1: `0.8373`
+  - all-candidate MRR: `0.8951`
+  - edit-only top-1: `0.8550`
+  - edit-only MRR: `0.9089`
+- comparison:
+  - refreshed text scorer:
+    `outputs/graph_critic_models/development_pool_v2_text_warmstart_v1`
+    - top-1 `0.7081`
+    - MRR `0.8147`
+  - first graph-feature scorer:
+    `outputs/graph_critic_models/development_pool_v2_graph_feature_v1`
+    - top-1 `0.5024`
+    - MRR `0.6824`
+- cleanup note:
+  - discard `outputs/graph_critic_models/development_pool_v2_relation_graph_v1`
+    from decision-making because it was trained before the candidate-text
+    leakage cleanup and is therefore not trustworthy
+- decision:
+  - the relation-aware graph critic now clears the offline gate against the
+    frozen development split
+  - next step can move to a narrow controller gate with the learned graph
+    scorer, while keeping learned `commit` conservative and benchmark spending
+    small until end-to-end quality is revalidated
+
 ### Stage G7: Paper Experiments
 
 - rerun the main comparison only after the critic pilot is stable

@@ -15,6 +15,18 @@ from .fs_utils import read_text_file
 from .online_text_critic import build_partition_role_lookup, load_partition_manifest_rows
 
 
+def _strip_leaky_candidate_segments(candidate_text: str) -> str:
+    parts = [part.strip() for part in candidate_text.split("|")]
+    kept_parts = [
+        part
+        for part in parts
+        if part
+        and not part.lower().startswith("source=")
+        and not part.lower().startswith("rationale=")
+    ]
+    return "|".join(kept_parts)
+
+
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     text = read_text_file(path)
@@ -220,7 +232,7 @@ def build_relation_graph_dataset(
         snapshot = snapshot_lookup.get(str(row.get("state_id", "")).strip())
         if snapshot is None:
             continue
-        candidate_text = str(row.get("candidate_text", "")).strip()
+        candidate_text = _strip_leaky_candidate_segments(str(row.get("candidate_text", "")).strip())
         state_text = str(row.get("state_text", "")).strip()
         if candidate_text not in seen_texts:
             all_texts.append(candidate_text)
@@ -260,6 +272,7 @@ def build_relation_graph_dataset(
         snapshot = snapshot_lookup.get(state_id)
         if snapshot is None:
             raise ValueError(f"Missing snapshot for state_id '{state_id}'.")
+        clean_candidate_text = _strip_leaky_candidate_segments(str(row.get("candidate_text", "")).strip())
 
         nodes_payload = snapshot.get("nodes", {})
         if not isinstance(nodes_payload, Mapping):
@@ -322,7 +335,7 @@ def build_relation_graph_dataset(
             label=1 if bool(row.get("is_logged_selected", False)) else 0,
             is_commit=bool(row.get("is_commit", False)),
             candidate_kind_id=_intern_id(candidate_kind_vocab, row.get("candidate_kind", "unknown")),
-            candidate_text_embedding=embedding_cache[str(row.get("candidate_text", "")).strip()],
+            candidate_text_embedding=embedding_cache[clean_candidate_text],
             state_text_embedding=embedding_cache[str(row.get("state_text", "")).strip()],
             node_text_embeddings=(
                 np.stack(node_text_embeddings, axis=0).astype(np.float32)

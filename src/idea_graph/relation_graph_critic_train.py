@@ -207,10 +207,12 @@ def train_relation_graph_critic(
     model = RelationGraphCritic(
         text_dim=text_dim,
         hidden_dim=hidden_dim,
-        node_type_count=sample_batch.node_type_vocab_size,
-        role_count=sample_batch.role_vocab_size,
-        edge_type_count=sample_batch.edge_type_vocab_size,
-        candidate_kind_count=sample_batch.candidate_kind_vocab_size,
+        node_type_count=int(dataset.metadata.get("node_type_count", sample_batch.node_type_vocab_size)),
+        role_count=int(dataset.metadata.get("role_count", sample_batch.role_vocab_size)),
+        edge_type_count=int(dataset.metadata.get("edge_type_count", sample_batch.edge_type_vocab_size)),
+        candidate_kind_count=int(
+            dataset.metadata.get("candidate_kind_count", sample_batch.candidate_kind_vocab_size)
+        ),
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)

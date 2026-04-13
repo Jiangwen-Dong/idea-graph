@@ -29,6 +29,16 @@ class RelationGraphFixture:
     partition_manifest: Path
 
 
+class RecordingHashTextEmbeddingBackend(HashTextEmbeddingBackend):
+    def __init__(self, dim: int = 64) -> None:
+        super().__init__(dim=dim)
+        self.encoded_texts: list[str] = []
+
+    def encode(self, texts):  # type: ignore[no-untyped-def]
+        self.encoded_texts = [str(text) for text in texts]
+        return super().encode(texts)
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     write_text_file(path, "\n".join(json.dumps(row) for row in rows))
 
@@ -284,6 +294,34 @@ class RelationGraphCriticDataTests(unittest.TestCase):
 
         self.assertEqual(backend.encode_call_count, 1)
         self.assertTrue(np.isfinite(dataset.train_examples[0].state_text_embedding).all())
+
+    def test_build_relation_graph_dataset_strips_leaky_candidate_metadata_before_embedding(self) -> None:
+        candidate_rows = [
+            json.loads(line)
+            for line in (self.fixture.candidate_dir / "candidate_dataset.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        candidate_rows[0]["candidate_text"] = "kind=add_support_edge | targets=core-target"
+        candidate_rows[2]["candidate_text"] = (
+            "kind=add_support_edge | targets=core-target | "
+            "rationale=teacher-only hint | source=utility_add_support"
+        )
+        _write_jsonl(_windows_safe_path(self.fixture.candidate_dir / "candidate_dataset.jsonl"), candidate_rows)
+
+        backend = RecordingHashTextEmbeddingBackend(dim=8)
+        dataset = build_relation_graph_dataset(
+            candidate_dataset_dir=self.fixture.candidate_dir,
+            g1_dataset_dir=self.fixture.g1_dir,
+            partition_manifest_path=self.fixture.partition_manifest,
+            text_backend=backend,
+        )
+
+        np.testing.assert_allclose(
+            dataset.train_examples[0].candidate_text_embedding,
+            dataset.dev_examples[0].candidate_text_embedding,
+        )
+        self.assertTrue(all("source=" not in text for text in backend.encoded_texts))
+        self.assertTrue(all("rationale=" not in text for text in backend.encoded_texts))
 
     def test_build_relation_graph_dataset_handles_empty_node_snapshots(self) -> None:
         empty_snapshot = {

@@ -35,25 +35,38 @@ class RelationMessageLayer(nn.Module):
         node_mask: torch.Tensor,
     ) -> torch.Tensor:
         batch_size, node_count, hidden_dim = node_states.shape
+        if node_count == 0:
+            return node_states
+
         messages = torch.zeros_like(node_states)
         local_stats = torch.zeros((batch_size, node_count, 3), dtype=node_states.dtype, device=node_states.device)
 
-        for batch_index in range(batch_size):
-            valid_edge_positions = torch.nonzero(edge_mask[batch_index], as_tuple=False).flatten()
-            for edge_position in valid_edge_positions.tolist():
-                source_index = int(edge_index[batch_index, edge_position, 0].item())
-                target_index = int(edge_index[batch_index, edge_position, 1].item())
-                if not bool(node_mask[batch_index, source_index]) or not bool(node_mask[batch_index, target_index]):
-                    continue
-                relation_id = int(edge_type_ids[batch_index, edge_position].item())
-                relation_linear = self.edge_linears[relation_id]
-                resolved_scale = 1.0 + 0.1 * float(edge_resolved[batch_index, edge_position].item())
-                messages[batch_index, target_index] += (
-                    relation_linear(node_states[batch_index, source_index]) * resolved_scale
-                )
-                local_stats[batch_index, target_index, 0] += 1.0
-                local_stats[batch_index, target_index, 1] += float(edge_resolved[batch_index, edge_position].item())
-                local_stats[batch_index, source_index, 2] += 1.0
+        source_index = edge_index[..., 0].clamp(min=0, max=max(node_count - 1, 0))
+        target_index = edge_index[..., 1].clamp(min=0, max=max(node_count - 1, 0))
+        gather_index = source_index.unsqueeze(-1).expand(-1, -1, hidden_dim)
+        source_states = torch.gather(node_states, dim=1, index=gather_index)
+        edge_messages = torch.zeros_like(source_states)
+
+        for relation_id, relation_linear in enumerate(self.edge_linears):
+            relation_mask = edge_mask & (edge_type_ids == relation_id)
+            if relation_mask.any():
+                edge_messages[relation_mask] = relation_linear(source_states[relation_mask])
+
+        edge_weights = edge_mask.unsqueeze(-1).float() * (1.0 + 0.1 * edge_resolved.unsqueeze(-1))
+        edge_messages = edge_messages * edge_weights
+        messages.scatter_add_(
+            dim=1,
+            index=target_index.unsqueeze(-1).expand(-1, -1, hidden_dim),
+            src=edge_messages,
+        )
+        valid_edge_weight = edge_mask.float()
+        local_stats[..., 0].scatter_add_(dim=1, index=target_index, src=valid_edge_weight)
+        local_stats[..., 1].scatter_add_(
+            dim=1,
+            index=target_index,
+            src=edge_resolved * valid_edge_weight,
+        )
+        local_stats[..., 2].scatter_add_(dim=1, index=source_index, src=valid_edge_weight)
 
         updated = self.update(torch.cat([node_states, messages, local_stats], dim=-1))
         updated = self.norm(node_states + updated)
