@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict
 from itertools import product
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
 from .agent_backend import (
     ActionDecision,
@@ -36,6 +36,7 @@ from .models import (
     Provenance,
     UtilityBreakdown,
 )
+from .runtime_critic import select_text_critic_candidate
 from .schema import ROLE_NAMES, build_seed_template
 
 def normalize_text(text: str) -> str:
@@ -1731,12 +1732,55 @@ def _record_action_selection_trace(
         selection_log.append(entry)
 
 
+def _record_runtime_controller_trace(
+    graph: IdeaGraph,
+    *,
+    round_name: str,
+    role: str,
+    heuristic_candidate: dict[str, object],
+    selected_candidate: dict[str, object],
+    controller_decision: dict[str, object],
+    scored_candidates: Sequence[Mapping[str, object]],
+) -> None:
+    entry = {
+        "round": round_name,
+        "role": role,
+        "heuristic_candidate_id": heuristic_candidate.get("candidate_id"),
+        "heuristic_kind": heuristic_candidate.get("kind"),
+        "heuristic_predicted_gain": heuristic_candidate.get("predicted_gain"),
+        "heuristic_critic_score": heuristic_candidate.get("critic_score"),
+        "selected_candidate_id": selected_candidate.get("candidate_id"),
+        "selected_kind": selected_candidate.get("kind"),
+        "selected_source": controller_decision.get("selected_source"),
+        "override_margin": controller_decision.get("override_margin"),
+        "used_heuristic_fallback": controller_decision.get("used_heuristic_fallback"),
+        "top_scored_candidates": [
+            {
+                "candidate_id": candidate.get("candidate_id"),
+                "kind": candidate.get("kind"),
+                "critic_score": candidate.get("critic_score"),
+                "predicted_gain": candidate.get("predicted_gain"),
+            }
+            for candidate in sorted(
+                (dict(item) for item in scored_candidates),
+                key=lambda item: float(item.get("critic_score", float("-inf"))),
+                reverse=True,
+            )[:6]
+        ],
+    }
+    controller_log = graph.metadata.setdefault("runtime_controller_log", [])
+    if isinstance(controller_log, list):
+        controller_log.append(entry)
+
+
 def _select_ranked_action(
     graph: IdeaGraph,
     round_name: str,
     role: str,
     *,
     record_trace: bool,
+    runtime_controller: Any | None = None,
+    runtime_controller_metadata: dict[str, Any] | None = None,
 ) -> tuple[GraphAction, dict[str, object]]:
     baseline_action = _legacy_choose_round_action(deepcopy(graph), round_name, role)
     candidates = enumerate_candidate_specs(
@@ -1745,7 +1789,16 @@ def _select_ranked_action(
         role=role,
         baseline_action=baseline_action,
     )
-    candidates = [candidate for candidate in candidates if str(candidate.get("kind", "")).strip() != "commit"]
+    candidates = [
+        {
+            **candidate,
+            "candidate_id": f"{round_name}:{role}:{index:03d}",
+        }
+        for index, candidate in enumerate(candidates)
+    ]
+    edit_candidates = [
+        candidate for candidate in candidates if str(candidate.get("kind", "")).strip() != "commit"
+    ]
 
     reference_subgraph = _reference_subgraph(graph)
     reference_snapshot = _compute_maturity_snapshot(
@@ -1755,7 +1808,7 @@ def _select_ranked_action(
     )
 
     ranked_candidates: list[dict[str, object]] = []
-    for candidate in candidates:
+    for candidate in edit_candidates:
         ranked_candidates.append(
             {
                 **candidate,
@@ -1825,6 +1878,48 @@ def _select_ranked_action(
         )[0]
     else:
         selected_candidate = ranked_candidates[0]
+
+    heuristic_selected_candidate = dict(selected_candidate)
+
+    if runtime_controller is not None and runtime_controller_metadata is not None and valid_candidates:
+        controller_config = runtime_controller_metadata.get("config")
+        if controller_config is not None:
+            controller_decision = select_text_critic_candidate(
+                graph,
+                round_name=round_name,
+                role=role,
+                candidate_specs=valid_candidates,
+                heuristic_candidate_id=str(heuristic_selected_candidate.get("candidate_id", "")).strip(),
+                model=runtime_controller,
+                config=controller_config,
+            )
+            selected_candidate = next(
+                candidate
+                for candidate in valid_candidates
+                if str(candidate.get("candidate_id", "")).strip()
+                == controller_decision.policy_decision.selected_candidate_id
+            )
+            selected_candidate = {
+                **selected_candidate,
+                "critic_score": controller_decision.selected_spec.get("critic_score"),
+                "controller_selected_source": controller_decision.policy_decision.selected_source,
+                "controller_override_margin": controller_decision.policy_decision.override_margin,
+                "controller_used_heuristic_fallback": controller_decision.policy_decision.used_heuristic_fallback,
+            }
+            if record_trace:
+                _record_runtime_controller_trace(
+                    graph,
+                    round_name=round_name,
+                    role=role,
+                    heuristic_candidate=heuristic_selected_candidate,
+                    selected_candidate=selected_candidate,
+                    controller_decision={
+                        "selected_source": controller_decision.policy_decision.selected_source,
+                        "override_margin": controller_decision.policy_decision.override_margin,
+                        "used_heuristic_fallback": controller_decision.policy_decision.used_heuristic_fallback,
+                    },
+                    scored_candidates=controller_decision.scored_candidates,
+                )
 
     selected_action = make_action(
         graph,
@@ -2929,6 +3024,8 @@ def run_experiment(
     literature: list[str],
     metadata: dict[str, object] | None = None,
     collaboration_backend: CollaborationBackend | None = None,
+    runtime_controller: Any | None = None,
+    runtime_controller_metadata: dict[str, Any] | None = None,
     progress_callback: Callable[[str], None] | None = None,
     max_rounds: int = 3,
     stop_when_mature: bool = True,
@@ -2940,6 +3037,13 @@ def run_experiment(
     )
     graph.metadata["max_rounds_requested"] = max(1, int(max_rounds))
     graph.metadata["stop_when_mature"] = bool(stop_when_mature)
+    if runtime_controller_metadata is not None:
+        sanitized_runtime_controller = {
+            key: value
+            for key, value in runtime_controller_metadata.items()
+            if key != "config"
+        }
+        graph.metadata["runtime_controller"] = sanitized_runtime_controller
     backend_name = collaboration_backend.name if collaboration_backend is not None else "deterministic"
     emit_progress(
         graph,
@@ -3011,6 +3115,22 @@ def run_experiment(
         message=f"Seed merge complete: {len(graph.active_nodes())} active nodes, {len(graph.edges)} edges.",
         details={"active_nodes": len(graph.active_nodes()), "edges": len(graph.edges)},
     )
+    if runtime_controller_metadata is not None:
+        emit_progress(
+            graph,
+            progress_callback,
+            stage="runtime_controller",
+            message=(
+                f"Runtime controller active: {runtime_controller_metadata.get('kind', 'unknown')} "
+                f"with tau_override={runtime_controller_metadata.get('tau_override', 'n/a')}."
+            ),
+            details={
+                "kind": runtime_controller_metadata.get("kind"),
+                "model_path": runtime_controller_metadata.get("model_path"),
+                "use_commit": runtime_controller_metadata.get("use_commit"),
+                "tau_override": runtime_controller_metadata.get("tau_override"),
+            },
+        )
 
     for round_index in range(1, max(1, int(max_rounds)) + 1):
         round_name = build_round_name(round_index)
@@ -3032,13 +3152,17 @@ def run_experiment(
                     round_name,
                     role,
                     record_trace=True,
+                    runtime_controller=runtime_controller,
+                    runtime_controller_metadata=runtime_controller_metadata,
                 )
             else:
                 deterministic_ranked_action, deterministic_ranked_meta = _select_ranked_action(
                     graph,
                     round_name,
                     role,
-                    record_trace=False,
+                    record_trace=bool(runtime_controller is not None),
+                    runtime_controller=runtime_controller,
+                    runtime_controller_metadata=runtime_controller_metadata,
                 )
                 try:
                     decision = collaboration_backend.choose_action(graph, round_name, role)

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import pickle
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+from tempfile import mkdtemp
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,9 +15,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from idea_graph.online_text_critic import (
+    build_online_adaptation_examples,
     build_namespace_support,
+    build_partition_examples,
     build_warmstart_training_bundle,
     build_partition_role_lookup,
+    partition_rows_for_role,
+    train_online_text_critic_adaptation,
     train_warmstart_text_critic,
     validate_required_namespace_support,
 )
@@ -155,6 +164,34 @@ class OnlineTextCriticTests(unittest.TestCase):
                 "targets": {"weak_value_01": 0.9, "native_value_01": 0.9},
             },
         ]
+        self.online_rows = [
+            {
+                "state_id": "online-edit",
+                "candidate_id": "online-edit::0",
+                "group_id": "g-train",
+                "partition_role": "critic_train",
+                "source": "online",
+                "state_text": "online state best edit",
+                "candidate_text": "best action",
+                "is_logged_selected": True,
+                "is_commit": False,
+                "is_commit_positive_state": False,
+                "targets": {"weak_value_01": 0.72, "native_value_01": 0.83},
+            },
+            {
+                "state_id": "online-edit",
+                "candidate_id": "online-edit::1",
+                "group_id": "g-train",
+                "partition_role": "critic_train",
+                "source": "online",
+                "state_text": "online state best edit",
+                "candidate_text": "weak action",
+                "is_logged_selected": False,
+                "is_commit": True,
+                "is_commit_positive_state": False,
+                "targets": {"weak_value_01": 0.72, "native_value_01": 0.83},
+            },
+        ]
 
     def test_build_partition_role_lookup_rejects_duplicates(self) -> None:
         duplicate_rows = [self.partition_rows[0], dict(self.partition_rows[0])]
@@ -193,6 +230,96 @@ class OnlineTextCriticTests(unittest.TestCase):
         self.assertIn("mean_reciprocal_rank", metrics)
         self.assertEqual(bundle.namespace_support["critic_train"]["teacher_logged"]["positive_count"], 2)
         self.assertEqual(bundle.namespace_support["critic_dev"]["teacher_logged"]["positive_count"], 2)
+
+    def test_partition_rows_for_role_filters_candidate_rows_by_partition(self) -> None:
+        partition_lookup = build_partition_role_lookup(self.partition_rows)
+        train_rows = partition_rows_for_role(
+            self.candidate_rows,
+            partition_lookup,
+            partition_role="critic_train",
+        )
+        self.assertEqual(len(train_rows), 4)
+        self.assertEqual({row["group_id"] for row in train_rows}, {"g-train"})
+        self.assertEqual({row["partition_role"] for row in train_rows}, {"critic_train"})
+
+    def test_build_online_adaptation_examples_rejects_non_train_rows(self) -> None:
+        rows = [dict(self.online_rows[0]), dict(self.online_rows[1])]
+        rows[0]["partition_role"] = "critic_dev"
+        with self.assertRaisesRegex(ValueError, "critic_train"):
+            build_online_adaptation_examples(rows)
+
+    def test_train_online_text_critic_adaptation_reports_offline_and_online_counts(self) -> None:
+        _, result = train_online_text_critic_adaptation(
+            self.candidate_rows,
+            self.partition_rows,
+            self.online_rows,
+            offline_fraction=0.5,
+            max_train_examples=4,
+            random_seed=0,
+        )
+        self.assertEqual(result.metrics["validation_example_count"], 4)
+        self.assertGreater(result.metadata["offline_example_count"], 0)
+        self.assertGreater(result.metadata["online_example_count"], 0)
+        self.assertEqual(result.metadata["dev_example_count"], 4)
+
+    def test_run_online_text_critic_adaptation_cli_writes_artifacts(self) -> None:
+        tmp_dir = Path(mkdtemp())
+        try:
+            candidate_dir = tmp_dir / "candidate"
+            candidate_dir.mkdir(parents=True, exist_ok=True)
+            candidate_path = candidate_dir / "candidate_dataset.jsonl"
+            candidate_text = "".join(json.dumps(row) + "\n" for row in self.candidate_rows)
+            candidate_path.write_text(candidate_text, encoding="utf-8")
+
+            partition_path = tmp_dir / "partition_manifest.jsonl"
+            partition_text = "".join(json.dumps(row) + "\n" for row in self.partition_rows)
+            partition_path.write_text(partition_text, encoding="utf-8")
+
+            online_path = tmp_dir / "online_buffer.jsonl"
+            online_text = "".join(json.dumps(row) + "\n" for row in self.online_rows)
+            online_path.write_text(online_text, encoding="utf-8")
+
+            warmstart_dir = tmp_dir / "warmstart"
+            warmstart_dir.mkdir(parents=True, exist_ok=True)
+            model, _, _ = train_warmstart_text_critic(self.candidate_rows, self.partition_rows)
+            with (warmstart_dir / "model.pkl").open("wb") as handle:
+                pickle.dump(model, handle)
+
+            output_dir = tmp_dir / "adapted"
+            script_path = ROOT / "scripts" / "run_online_text_critic_adaptation.py"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--candidate-dataset-dir",
+                    str(candidate_dir),
+                    "--partition-manifest",
+                    str(partition_path),
+                    "--online-buffer",
+                    str(online_path),
+                    "--warmstart-model",
+                    str(warmstart_dir / "model.pkl"),
+                    "--output-dir",
+                    str(output_dir),
+                    "--offline-fraction",
+                    "0.5",
+                    "--max-train-examples",
+                    "4",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+            self.assertTrue((output_dir / "metrics.json").exists())
+            self.assertTrue((output_dir / "metadata.json").exists())
+            self.assertTrue((output_dir / "adaptation_config.json").exists())
+            self.assertTrue((output_dir / "model.pkl").exists())
+            metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertIn("baseline_metrics", metadata)
+            self.assertGreater(metadata["online_example_count"], 0)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

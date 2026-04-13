@@ -1245,3 +1245,355 @@ regeneration packet on the touched codepath:
   - define the replay buffer / safe critic policy layer
   - then start the first batched online adaptation pilot only after the replay
     and freeze rules are explicit
+
+### 2026-04-12: Task 3 Controller-Safety Layer
+
+- Wrote the focused Task 3 execution note:
+  - `docs/superpowers/plans/2026-04-12-task3-replay-and-safe-policy.md`
+- Implemented the first conservative online-controller layer:
+  - `src/idea_graph/critic_replay.py`
+  - `src/idea_graph/critic_policy.py`
+- Added the first dedicated Task 3 regression coverage:
+  - `tests/test_critic_replay.py`
+  - `tests/test_critic_policy.py`
+- Replay layer behavior now verified:
+  - replay accepts only `critic_train` episodes
+  - online episode rows are exported with explicit `source=online`
+  - offline/online row mixing respects the requested ratio and filters out
+    non-train partitions
+- Safe policy behavior now verified:
+  - `commit` is blocked before the minimum round gate
+  - heuristic fallback triggers when critic override margin is too small
+  - critic edit override triggers only when the critic margin is large enough
+  - `commit` is selected only when both margin and confidence pass the
+    configured thresholds
+- Verification completed for this slice:
+  - `python -m pytest tests/test_critic_replay.py tests/test_critic_policy.py -q`
+    passed with `7 passed`
+  - `python -m pytest tests/test_trajectory_dataset.py tests/test_critic_dataset.py tests/test_candidate_slate_dataset.py tests/test_critic_partitions.py tests/test_text_critic.py tests/test_online_text_critic.py tests/test_critic_replay.py tests/test_critic_policy.py -q`
+    passed with `53 passed`
+- Current interpretation:
+  - the learned-controller line now has a reviewer-safe control shell around
+    the offline warm-start scorer
+  - replay and policy logic remain fully split-safe and do not touch
+    `paper_eval`
+  - the next implementation target is no longer policy definition; it is the
+    first tiny batched online adaptation runner over `critic_train` only
+
+### 2026-04-12: Task 4 Tiny Online Adaptation Runner
+
+- Wrote the focused Task 4 execution note:
+  - `docs/superpowers/plans/2026-04-12-task4-online-adaptation-runner.md`
+- Refined the replay contract so online episodes now require
+  candidate-slate-shaped rows, not only a chosen-action summary:
+  - replay rows must include `state_text`, `candidate_text`,
+    `is_logged_selected`, `is_commit`, `is_commit_positive_state`, and
+    `targets`
+- Extended the online text-critic stack:
+  - `src/idea_graph/online_text_critic.py`
+    - `partition_rows_for_role(...)`
+    - `build_online_adaptation_examples(...)`
+    - `train_online_text_critic_adaptation(...)`
+  - `src/idea_graph/critic_replay.py`
+    - early replay-row validation at episode append time
+- Added the first tiny adaptation runner:
+  - `scripts/run_online_text_critic_adaptation.py`
+- Added regression coverage for this slice:
+  - `tests/test_critic_replay.py`
+  - `tests/test_online_text_critic.py`
+- New guarantees verified by tests:
+  - online adaptation rejects non-`critic_train` replay rows
+  - partitioned offline candidate rows are annotated and filtered correctly
+  - the runner writes:
+    - `metrics.json`
+    - `metadata.json`
+    - `adaptation_config.json`
+    - `model.pkl`
+  - runner metadata now includes baseline warm-start metrics for direct
+    `offline` vs `offline + online` comparison
+- Verification completed for this slice:
+  - `python -m pytest tests/test_critic_replay.py tests/test_online_text_critic.py tests/test_critic_policy.py -q`
+    passed with `17 passed`
+  - `python -m pytest tests/test_trajectory_dataset.py tests/test_critic_dataset.py tests/test_candidate_slate_dataset.py tests/test_critic_partitions.py tests/test_text_critic.py tests/test_online_text_critic.py tests/test_critic_replay.py tests/test_critic_policy.py -q`
+    passed with `59 passed`
+- Ran the first engineering smoke adaptation on the real full-pool dataset:
+  - online buffer:
+    `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g45_text_online_smoke_bootstrap/online_buffer_bootstrap.jsonl`
+  - adaptation output:
+    `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g45_text_online_smoke_bootstrap`
+  - framing:
+    this is a **bootstrap smoke only** run built from existing `critic_train`
+    candidate rows to verify plumbing; it is not paper evidence for online
+    learning effectiveness
+- Smoke adaptation result:
+  - baseline warm-start dev metrics:
+    - top-1 `0.7545`
+    - MRR `0.8597`
+  - bootstrap online smoke metrics:
+    - top-1 `0.5545`
+    - MRR `0.6901`
+  - mixed training counts:
+    - offline examples `203`
+    - online examples `53`
+- Interpretation:
+  - the tiny online adaptation runner is now working end to end
+  - however, naive replay reuse from existing offline candidate rows hurts dev
+    performance sharply
+  - this is an expected negative result rather than a failure: it shows the
+    pipeline is functioning, and it tells us the next step must use **new**
+    train-group online episodes rather than recycled offline rows
+  - therefore the next high-value step is real episode collection on
+    `critic_train`, followed by the same frozen `critic_dev` comparison
+
+### 2026-04-12: Split Registry And Untouched Paper-Eval Candidates
+
+- Wrote the split-design note:
+  - `docs/superpowers/specs/2026-04-12-critic-train-and-paper-eval-split-design.md`
+- Wrote the focused implementation plan:
+  - `docs/superpowers/plans/2026-04-12-split-registry-and-paper-eval-candidates.md`
+- Implemented the split-registry layer:
+  - `src/idea_graph/critic_split_registry.py`
+  - `scripts/build_critic_split_registry.py`
+  - `tests/test_critic_split_registry.py`
+- Built the first canonical registry artifact over the current graph-critic
+  partition dataset:
+  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry.jsonl`
+  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry_stats.json`
+- Current frozen development-pool registry summary:
+  - total rows: `11`
+  - pool name: `development_pool_v1`
+  - `critic_train`: `9`
+  - `critic_dev`: `2`
+  - `paper_eval`: `0`
+- Added human-readable pool guidance:
+  - `docs/critic_pools.md`
+- Defined the first untouched future final-evaluation candidate list:
+  - `outputs/graph_critic_datasets/paper_eval_candidate_pool_v1/candidate_instances.json`
+  - `outputs/graph_critic_datasets/paper_eval_candidate_pool_v1/README.md`
+- Candidate-pool composition:
+  - `AI_Idea_Bench_2025`: `6` proposed untouched instances
+  - `LiveIdeaBench`: `4` proposed untouched instances
+- Verification completed for this slice:
+  - `python -m pytest tests/test_critic_split_registry.py -q`
+    passed with `4 passed`
+  - `python -m pytest tests/test_critic_partitions.py tests/test_critic_split_registry.py tests/test_online_text_critic.py tests/test_critic_replay.py tests/test_critic_policy.py -q`
+    passed with `28 passed`
+- Interpretation:
+  - the current 11-group graph-critic pool is now explicitly frozen as
+    development-only, rather than ambiguously serving as both train/dev and
+    final paper evidence
+  - the repo now has a clean place to point to future untouched learned-
+    controller evaluation cases
+  - the next step should be real `critic_train` episode collection under the
+    frozen development split, not more repartitioning or bootstrap pseudo-
+    online reuse
+
+### 2026-04-12: Critic-Train Episode Collection Runner
+
+- Wrote the focused implementation note:
+  - `docs/superpowers/plans/2026-04-12-critic-train-episode-collection.md`
+- Implemented the thin collection layer:
+  - `src/idea_graph/critic_episode_collection.py`
+  - `scripts/collect_critic_train_episodes.py`
+  - `tests/test_critic_episode_collection.py`
+- Locked the collection rules in tests:
+  - only `development_pool_v1`
+  - only `partition_role=critic_train`
+  - only rows whose `allowed_usages` include `train_online_critic`
+  - benchmark selector parsing for both `AI_Idea_Bench_2025` and
+    `LiveIdeaBench`
+  - CLI dry-run artifact generation
+- Verification completed for this slice:
+  - `python -m pytest tests/test_critic_episode_collection.py -q`
+    passed with `4 passed`
+  - `python -m pytest tests/test_critic_split_registry.py tests/test_critic_replay.py tests/test_online_text_critic.py tests/test_critic_episode_collection.py -q`
+    passed with `21 passed`
+- Ran one real registry dry run on the frozen development pool:
+  - command:
+    `python scripts/collect_critic_train_episodes.py --split-registry outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry.jsonl --output-dir outputs/graph_critic_online_episodes --collection-name development_pool_v1_critic_train_manifest_smoke`
+  - artifact:
+    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_manifest_smoke`
+  - result:
+    - selected groups: `9`
+    - benchmark split: `6` `AI_Idea_Bench_2025`, `3` `liveideabench`
+- Ran one deterministic execute smoke to verify end-to-end collection plumbing
+  without consuming LLM API:
+  - command:
+    `python scripts/collect_critic_train_episodes.py --split-registry outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry.jsonl --output-dir outputs/graph_critic_online_episodes --collection-name development_pool_v1_critic_train_execute_smoke_det --limit 1 --execute --skip-existing --agent-backend deterministic`
+  - artifact:
+    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_execute_smoke_det`
+  - result:
+    - `1 / 1` run completed
+    - collected run:
+      `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_execute_smoke_det/runs/20260412-231548-ai-idea-bench-2025-13`
+    - profiled local result:
+      - final local overall `4.96`
+      - final local alignment `3.24`
+      - executed rounds `5`
+      - action count `25`
+- Important execution note:
+  - the current shell did not expose `DASHSCOPE_API_KEY`, so I did not launch
+    openai-compatible collection in this slice
+  - the collection helper itself is ready for real LLM-backed train-group
+    collection once the runtime API config is available
+- Interpretation:
+  - we now have a clean, split-safe bridge from the frozen registry to fresh
+    online episodes
+  - the artifact layout is clear enough for later replay export and overhead
+    accounting
+  - the next step is a true openai-compatible `critic_train` collection slice,
+    then export those runs into replay rows and rerun online adaptation against
+    frozen `critic_dev`
+
+### 2026-04-12: Real Critic-Train Collection And Online Adaptation
+
+- Confirmed the runtime API path before launching collection:
+  - command:
+    `python scripts/check_openai_compatible.py --llm-config configs/openai_compatible.example.json`
+  - result:
+    DashScope-compatible Qwen endpoint responded successfully under the runtime
+    `DASHSCOPE_API_KEY`
+- Launched the first real `critic_train` collection packet:
+  - command:
+    `python scripts/collect_critic_train_episodes.py --split-registry outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry.jsonl --output-dir outputs/graph_critic_online_episodes --collection-name development_pool_v1_critic_train_qwen_v1 --baseline ours-eig --max-rounds 5 --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json --execute --skip-existing`
+  - artifact:
+    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1`
+  - result:
+    - selected groups: `9`
+    - completed groups: `9 / 9`
+    - benchmark composition:
+      - `6` `AI_Idea_Bench_2025`
+      - `3` `liveideabench`
+    - traced tokens:
+      - `1,639,113`
+- Exported the collected runs into a fresh `G1` online-episode dataset:
+  - command:
+    `python scripts/export_graph_critic_dataset.py --input-root outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1/runs --output-dir outputs/graph_critic_datasets --dataset-name development_pool_v1_critic_train_qwen_v1_g1 --baseline ours-eig`
+  - artifact:
+    `outputs/graph_critic_datasets/development_pool_v1_critic_train_qwen_v1_g1`
+  - result:
+    - run count: `9`
+    - transition count: `195`
+- Built the replay-ready online buffer from those fresh runs using the existing
+  internal `G1 -> candidate-slate` logic while forcing all selected groups to
+  remain `critic_train`:
+  - artifact:
+    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1/online_replay_buffer.jsonl`
+  - stats:
+    - state count: `204`
+    - candidate row count: `1851`
+    - group count: `9`
+    - positive terminal commit states: `9`
+    - partition roles present: `critic_train` only
+- Reran online adaptation with the real online buffer:
+  - command:
+    `python scripts/run_online_text_critic_adaptation.py --candidate-dataset-dir outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g25_commit_enriched --partition-manifest outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/partition_manifest.jsonl --online-buffer outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1/online_replay_buffer.jsonl --warmstart-model outputs/graph_critic_models/current_benchmarked_ours_eig_full_g4_text_warmstart/model.pkl --output-dir outputs/graph_critic_models/current_benchmarked_ours_eig_full_g46_text_online_real_train_v1 --offline-fraction 0.85 --random-seed 0`
+  - artifact:
+    `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g46_text_online_real_train_v1`
+  - baseline warm-start dev metrics:
+    - top-1 `0.7545`
+    - MRR `0.8597`
+  - adapted dev metrics:
+    - top-1 `0.7727`
+    - MRR `0.8697`
+  - mixed training counts:
+    - offline examples `9067`
+    - online examples `1851`
+    - validation examples `1025`
+- Interpretation:
+  - the positive result here is materially stronger than the earlier
+    pseudo-online bootstrap smoke
+  - fresh real `critic_train` episodes improve frozen `critic_dev` ranking
+    quality for the lightweight text critic
+  - this is the first end-to-end signal that the online adaptation story is
+    not only implementable but also empirically useful under the current
+    low-data text-critic setting
+
+### 2026-04-13: Small Controller-In-The-Loop 4-Case AIIB Gate
+
+- Ran the first end-to-end controller gate on the frozen 4-case AIIB packet
+  using:
+  - `ours-eig`
+  - `ours-eig-critic-text`
+- Gate artifact:
+  `outputs/m2_aiib_g48_controller_gate_v1`
+- Paired summary artifact:
+  `outputs/m2_aiib_g48_controller_gate_v1/paired_summary.md`
+- Evaluation cases:
+  - `13`
+  - `3883`
+  - `7909`
+  - `9849`
+- Controller setting:
+  - learned text critic used only as a conservative edit reranker
+  - heuristic maturity / stopping kept fixed
+- Paired outcome means:
+  - local overall:
+    - `ours-eig = 5.27`
+    - `ours-eig-critic-text = 5.20`
+    - delta `-0.07`
+  - local benchmark alignment:
+    - `ours-eig = 3.46`
+    - `ours-eig-critic-text = 3.37`
+    - delta `-0.09`
+  - AIIB native average:
+    - `ours-eig = 7.93`
+    - `ours-eig-critic-text = 7.79`
+    - delta `-0.15`
+- Per-case readout:
+  - `13`:
+    - critic run slightly improved native score (`8.29 -> 8.57`)
+    - but local overall and alignment both dropped
+  - `3883`:
+    - critic run slightly improved local overall (`6.35 -> 6.38`) and
+      alignment (`5.11 -> 5.34`)
+    - but native score dropped sharply (`6.86 -> 5.71`)
+    - the key behavioral change is early heuristic stopping at `Round2`
+      instead of `Round4`
+  - `7909`:
+    - critic run slightly improved native score (`8.00 -> 8.29`)
+    - but local overall and alignment both dropped modestly
+  - `9849`:
+    - native score tied (`8.57`)
+    - local overall and alignment both dropped slightly
+- Main interpretation:
+  - the G4.8 adapted text critic is not yet a reliable replacement for the
+    heuristic EIG controller in end-to-end generation
+  - the main observed risk is indirect maturity distortion: a different edit
+    ranking can make the unchanged heuristic stop rule fire too early, even
+    without a learned commit action
+  - this matches the earlier concern that action ranking and maturity cannot
+    be treated as fully separable in the full loop
+- Important attribution caveat:
+  - these are one-run-per-case comparisons, so stochasticity remains a real
+    confound
+  - the saved gate packet predates trace persistence for LLM-backed controller
+    runs, so it supports coarse end-to-end gating but not fine-grained
+    attribution of which learned reranks helped or hurt
+- Recommendation before any larger controller batch:
+  - keep `ours-eig` as the main benchmarked controller for now
+  - do not promote `ours-eig-critic-text` into the main paper comparison yet
+  - use the patched trace-persistent controller path and tighten
+    maturity-sensitive safety, then rerun this same 4-case gate
+- End-of-day code cleanup after the gate:
+  - patched the LLM-backed controller path so future runtime-controller runs
+    persist `runtime_controller_log` entries
+  - added regression coverage:
+    `tests/test_engine.py::EngineTests::test_runtime_text_critic_trace_is_saved_with_llm_backend`
+  - targeted verification:
+    `python -m pytest tests/test_engine.py::EngineTests::test_runtime_text_critic_trace_is_saved_with_llm_backend tests/test_engine.py::EngineTests::test_run_experiment_accepts_runtime_text_critic_reranker -q`
+    passed with `2 passed`
+  - removed generated or superseded directories:
+    - `.pytest_cache`
+    - `.tmp-external-baseline-runs`
+    - `outputs/m2_aiib_g48_controller_smoke`
+    - `outputs/m2_aiib_g48_controller_smoke_pair`
+    - Python `__pycache__` directories under repo-local code, tests, scripts,
+      `.tmp-baselines`, and the isolated `.worktrees/g2-critic-dataset`
+- Next-session plan:
+  - add maturity-sensitive controller safety for the learned reranker, with
+    special attention to the `3883` early-stop failure mode
+  - rerun the same frozen 4-case AIIB gate with trace-persistent artifacts
+  - only if the rerun is neutral or positive, consider a larger controller
+    comparison; otherwise keep `ours-eig` as the main paper method and treat
+    the learned critic as a mechanism/pilot ablation

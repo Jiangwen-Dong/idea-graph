@@ -37,6 +37,7 @@ from idea_graph.engine import (
 )
 from idea_graph.models import FinalProposal, GraphAction, IdeaGraph, MaturitySnapshot
 from idea_graph.models import UtilityBreakdown
+from idea_graph.runtime_critic import TextCriticRuntimeConfig
 
 
 class InvalidActionBackend:
@@ -99,6 +100,19 @@ class MisalignedRepairBackend:
             significance="s",
             caveats="c",
         )
+
+
+class RuntimeCriticScoreStub:
+    def score(self, texts):
+        values = []
+        for text in texts:
+            if "kind=attach_evidence" in text:
+                values.append(0.75)
+            elif "kind=add_support_edge" in text:
+                values.append(0.62)
+            else:
+                values.append(0.40)
+        return values
 
 
 class EngineTests(unittest.TestCase):
@@ -224,6 +238,48 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(any("Round1 started" in message for message in messages))
         self.assertTrue(any("Run complete" in message for message in messages))
         self.assertIn("progress_log", graph.metadata)
+
+    def test_run_experiment_accepts_runtime_text_critic_reranker(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            runtime_controller=RuntimeCriticScoreStub(),
+            runtime_controller_metadata={
+                "kind": "text_critic_rerank",
+                "model_path": "memory://stub",
+                "use_commit": False,
+                "tau_override": 0.05,
+                "config": TextCriticRuntimeConfig(tau_override=0.05, use_commit=False),
+            },
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        self.assertIsNotNone(graph.final_proposal)
+        self.assertEqual(graph.metadata["runtime_controller"]["kind"], "text_critic_rerank")
+        self.assertTrue(graph.metadata.get("runtime_controller_log"))
+
+    def test_runtime_text_critic_trace_is_saved_with_llm_backend(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            collaboration_backend=MisalignedRepairBackend(),
+            runtime_controller=RuntimeCriticScoreStub(),
+            runtime_controller_metadata={
+                "kind": "text_critic_rerank",
+                "model_path": "memory://stub",
+                "use_commit": False,
+                "tau_override": 0.05,
+                "config": TextCriticRuntimeConfig(tau_override=0.05, use_commit=False),
+            },
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        self.assertIsNotNone(graph.final_proposal)
+        controller_log = graph.metadata.get("runtime_controller_log")
+        self.assertTrue(controller_log)
+        self.assertEqual(controller_log[0]["round"], "Round1")
 
     def test_progress_callback_uses_functional_role_display_names(self) -> None:
         messages: list[str] = []

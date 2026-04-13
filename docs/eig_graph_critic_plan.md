@@ -279,6 +279,34 @@ Key reviewer-facing tests:
   the text critic still remains a modest pilot, but the supervision gap that
   previously blocked commit-learning evidence is now materially reduced
 
+### Stage G3.7: Split Registry And Frozen Development Pool
+
+- freeze the current 11-group partition artifact as:
+  - `development_pool_v1`
+- generate a canonical split registry:
+  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry.jsonl`
+  - `outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g35_partitions/split_registry_stats.json`
+- current registry status:
+  - `11` rows
+  - pool name `development_pool_v1`
+  - `critic_train = 9`
+  - `critic_dev = 2`
+  - `paper_eval = 0`
+- practical conclusion:
+  the current graph-critic pool is now explicitly documented as development
+  data only, which makes future learned-controller evaluation easier to defend
+
+### Stage G3.8: First Untouched Paper-Eval Candidate Pool
+
+- define the first proposed untouched benchmark list:
+  - `outputs/graph_critic_datasets/paper_eval_candidate_pool_v1/candidate_instances.json`
+- current candidate composition:
+  - `AI_Idea_Bench_2025`: 6 proposed untouched instances
+  - `LiveIdeaBench`: 4 proposed untouched instances
+- practical conclusion:
+  the repo now distinguishes development-pool instances from future frozen
+  paper-eval instances, even before those held-out runs are launched
+
 ### Stage G4: Offline Warm-Start Text Critic
 
 - train the first partition-aware offline warm-start scorer over the refreshed
@@ -298,6 +326,124 @@ Key reviewer-facing tests:
   this is still a lightweight text scorer, but it is a stronger and cleaner
   offline controller baseline than the earlier plain `G3` pilot
 
+### Stage G4.5: Controller-Safety Layer
+
+- add a replay buffer that accepts only `critic_train` online episodes
+- add a conservative policy wrapper that:
+  - blocks early `commit`
+  - requires a positive commit margin and confidence threshold
+  - falls back to the heuristic when critic edit margins are small
+- current implementation state:
+  - `src/idea_graph/critic_replay.py`
+  - `src/idea_graph/critic_policy.py`
+  - verified by `tests/test_critic_replay.py` and
+    `tests/test_critic_policy.py`
+- practical conclusion:
+  the learned controller now has a safe decision shell, so the next step is a
+  tiny batched online adaptation pilot rather than more heuristic-policy work
+
+### Stage G4.6: Tiny Online Adaptation Runner
+
+- add a minimal runner that consumes:
+  - offline `critic_train` candidate rows
+  - `critic_train` replay rows in candidate-slate format
+  - frozen `critic_dev` evaluation rows
+- current implementation:
+  - `scripts/run_online_text_critic_adaptation.py`
+  - adaptation helpers in `src/idea_graph/online_text_critic.py`
+- important replay refinement:
+  online episodes must preserve candidate-slate rows, not only chosen actions,
+  because the next-action critic requires state-local negatives during online
+  retraining
+- first smoke status:
+  - bootstrap replay from recycled offline train rows runs successfully end to
+    end
+  - but it degrades dev performance relative to the offline warm-start
+- practical conclusion:
+  the runner plumbing is ready, but meaningful online adaptation now depends on
+  collecting **new** train-group episodes rather than reusing old offline
+  candidate rows as pseudo-online data
+
+### Stage G4.7: Critic-Train Episode Collection Runner
+
+- add a thin collection layer above the frozen split registry:
+  - `src/idea_graph/critic_episode_collection.py`
+  - `scripts/collect_critic_train_episodes.py`
+- keep the contract narrow:
+  - read `split_registry.jsonl`
+  - select only `development_pool_v1 / critic_train`
+  - require `train_online_critic` inside `allowed_usages`
+  - emit a human-auditable launch manifest before execution
+- current verified artifacts:
+  - dry-run manifest smoke:
+    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_manifest_smoke`
+  - deterministic execute smoke:
+    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_execute_smoke_det`
+- current smoke conclusions:
+  - dry run resolves the intended frozen train pool exactly:
+    - `9` groups total
+    - `6` `AI_Idea_Bench_2025`
+    - `3` `LiveIdeaBench`
+  - deterministic execute smoke completes end to end on one case, writing:
+    - `launch_manifest.jsonl`
+    - `collection_config.json`
+    - `collection_summary.json`
+    - `execution_results.jsonl`
+    - per-run stdout/stderr logs
+    - dedicated `runs/` artifacts
+  - successful execute rows are now profiled with:
+    - token counts when traces exist
+    - estimated cost when available
+    - final local score
+    - final native score when available
+- practical conclusion:
+  the repo now has a reviewer-safe bridge from the frozen development split to
+  fresh online episodes; the next step is a real openai-compatible
+  `critic_train` collection slice, then replay export and frozen `critic_dev`
+  comparison
+
+### Stage G4.8: Real Critic-Train Collection And Online Adaptation
+
+- launched the first real openai-compatible collection packet over the frozen
+  `development_pool_v1 / critic_train` groups:
+  - artifact:
+    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1`
+  - completed groups:
+    - `9 / 9`
+    - `6` `AI_Idea_Bench_2025`
+    - `3` `LiveIdeaBench`
+  - traced token total:
+    - `1,639,113`
+- converted the collected runs into a replay-ready candidate-slate online
+  buffer using the existing `G1` export plus forced-`critic_train`
+  reconstruction:
+  - `G1` export:
+    `outputs/graph_critic_datasets/development_pool_v1_critic_train_qwen_v1_g1`
+  - replay buffer:
+    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1/online_replay_buffer.jsonl`
+  - replay stats:
+    - `204` states
+    - `1851` candidate rows
+    - `9` positive terminal commit states
+    - all rows tagged `partition_role=critic_train`
+- reran online adaptation on frozen `critic_dev` using the real online buffer:
+  - output artifact:
+    `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g46_text_online_real_train_v1`
+  - adaptation config:
+    - `offline_fraction = 0.85`
+    - `random_seed = 0`
+  - baseline warm-start dev metrics:
+    - top-1 `0.7545`
+    - MRR `0.8597`
+  - adapted dev metrics:
+    - top-1 `0.7727`
+    - MRR `0.8697`
+- practical conclusion:
+  unlike the earlier pseudo-online bootstrap smoke, real `critic_train`
+  episodes improve frozen `critic_dev` ranking quality for the lightweight text
+  critic; this is the first positive end-to-end result for the online
+  adaptation line
+
 ### Stage G5: Graph Critic
 
 - implement the graph encoder and action scorer
@@ -307,6 +453,37 @@ Key reviewer-facing tests:
 
 - plug the critic into action selection and commit decisions
 - run the same 4-case AIIB gate before launching larger batches
+- first implemented variant:
+  - `ours-eig-critic-text`
+  - learned text critic used only as a conservative edit reranker
+  - heuristic stop / maturity kept unchanged
+- first gate artifact:
+  `outputs/m2_aiib_g48_controller_gate_v1`
+- first gate summary:
+  `outputs/m2_aiib_g48_controller_gate_v1/paired_summary.md`
+- first gate result:
+  - mean local overall:
+    - `ours-eig = 5.27`
+    - `ours-eig-critic-text = 5.20`
+  - mean local benchmark alignment:
+    - `ours-eig = 3.46`
+    - `ours-eig-critic-text = 3.37`
+  - mean AIIB native average:
+    - `ours-eig = 7.93`
+    - `ours-eig-critic-text = 7.79`
+- practical conclusion:
+  the learned reranker is a real end-to-end pilot now, but not yet a stable
+  win over heuristic EIG. The strongest warning sign is that on case `3883`
+  the altered edit ranking caused the unchanged heuristic maturity rule to stop
+  at `Round2` instead of `Round4`, slightly improving local scores while
+  hurting native score by `1.15`.
+- post-gate cleanup:
+  - future LLM-backed controller runs now persist `runtime_controller_log`
+    entries, with regression coverage in `tests/test_engine.py`
+- immediate next requirement before any larger controller comparison:
+  - use the patched runtime-controller trace path in future LLM-backed runs
+  - add stricter maturity-sensitive safety around reranked edits
+  - rerun the same frozen 4-case AIIB gate before any broader paper packet
 
 ### Stage G7: Paper Experiments
 

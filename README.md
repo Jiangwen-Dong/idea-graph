@@ -47,10 +47,11 @@ Start with:
 Most useful active docs:
 
 - `docs/paper_protocol.md`
+- `docs/eig_graph_critic_plan.md`
 - `docs/evaluation.md`
+- `docs/critic_pools.md`
 - `docs/paper_experiment_plan.md`
 - `docs/paper_experiment_tracker.md`
-- `docs/paper_experiment_map.md`
 - `docs/experiment_execution_log.md`
 
 Current experiment status:
@@ -58,8 +59,20 @@ Current experiment status:
 - `M0` is complete.
 - The current reference small-`M1` packet is:
   - `outputs/quality_batches/20260411-000159-refreshed-m1-mini-synthesis-cleanup-v2-native`
-- The next planned milestone is `M2`, starting with the larger
-  `AI_Idea_Bench_2025` slice.
+- The current graph-critic stack now includes:
+  - frozen `development_pool_v1` / `critic_train` / `critic_dev` splits
+  - a real `critic_train` episode collection packet
+  - a first adapted text critic:
+    `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g46_text_online_real_train_v1`
+- The first controller-in-the-loop 4-case AIIB gate is complete:
+  - `outputs/m2_aiib_g48_controller_gate_v1`
+  - paired summary:
+    `outputs/m2_aiib_g48_controller_gate_v1/paired_summary.md`
+- Current decision:
+  - keep `ours-eig` as the main benchmarked method for now
+  - treat the learned text critic as an active controller pilot
+  - next rerun the same frozen 4-case gate with trace-persistent artifacts and
+    stronger maturity-sensitive safety before any larger controller batch
 
 ## Layout
 

@@ -251,6 +251,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIn("ai-researcher", BASELINE_SPECS)
         self.assertIn("scipip", BASELINE_SPECS)
         self.assertIn("virsci", BASELINE_SPECS)
+        self.assertIn("ours-eig-critic-text", BASELINE_SPECS)
         self.assertEqual(BASELINE_SPECS["ai-researcher"].strategy, "external")
         self.assertIn("ai-researcher-proxy", BASELINE_SPECS)
         self.assertIn("scipip-proxy", BASELINE_SPECS)

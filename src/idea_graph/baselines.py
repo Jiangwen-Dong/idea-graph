@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+from pathlib import Path
 import re
 from typing import Any, Callable
 
@@ -10,6 +11,7 @@ from .benchmark_mode import apply_io_mode
 from .engine import emit_progress, run_experiment
 from .literature_grounding import build_literature_grounding
 from .models import FinalProposal, IdeaGraph
+from .runtime_critic import TextCriticRuntimeConfig, load_pickled_text_critic_model
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,17 @@ class BaselineSpec:
     proxy_target: str = ""
     prompt_style: str = ""
     candidate_count: int = 1
+    runtime_controller: str = ""
+
+
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_TEXT_CRITIC_MODEL_PATH = (
+    ROOT
+    / "outputs"
+    / "graph_critic_models"
+    / "current_benchmarked_ours_eig_full_g46_text_online_real_train_v1"
+    / "model.pkl"
+)
 
 
 BASELINE_ALIASES: dict[str, str] = {
@@ -45,6 +58,14 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         strategy="evolving_graph",
         description="Evolving Idea Graph multi-agent collaboration with maturity-based commitment.",
         prompt_style="ours",
+    ),
+    "ours-eig-critic-text": BaselineSpec(
+        name="ours-eig-critic-text",
+        display_name="Ours (EIG + Text Critic)",
+        strategy="evolving_graph",
+        description="Evolving Idea Graph multi-agent collaboration with the G4.8 adapted text critic as a conservative edit reranker.",
+        prompt_style="ours",
+        runtime_controller="text_critic_rerank",
     ),
     "direct": BaselineSpec(
         name="direct",
@@ -166,6 +187,13 @@ def attach_baseline_metadata(
     metadata["baseline_description"] = baseline.description
     metadata["baseline_proxy"] = baseline.is_proxy
     metadata["baseline_proxy_target"] = baseline.proxy_target
+    metadata["baseline_runtime_controller"] = baseline.runtime_controller
+    if baseline.runtime_controller == "text_critic_rerank":
+        metadata.setdefault("runtime_controller_enabled", True)
+        metadata.setdefault("runtime_controller_kind", "text_critic_rerank")
+        metadata.setdefault("runtime_controller_use_commit", False)
+        metadata.setdefault("runtime_controller_tau_override", 0.05)
+        metadata.setdefault("runtime_controller_model_path", str(DEFAULT_TEXT_CRITIC_MODEL_PATH.resolve()))
     return instance.__class__(
         name=instance.name,
         topic=instance.topic,
@@ -1530,6 +1558,38 @@ def _build_baseline_graph(
     return graph
 
 
+def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) -> tuple[Any | None, dict[str, Any] | None]:
+    if baseline.runtime_controller != "text_critic_rerank":
+        return None, None
+
+    model_path = Path(
+        str(
+            graph.metadata.get("runtime_controller_model_path")
+            or DEFAULT_TEXT_CRITIC_MODEL_PATH
+        )
+    )
+    if not model_path.exists():
+        graph.metadata["runtime_controller_error"] = f"Missing runtime controller model at {model_path}."
+        return None, None
+
+    model = load_pickled_text_critic_model(str(model_path))
+    config = TextCriticRuntimeConfig(
+        tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
+        tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
+        gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+        min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+        use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
+    )
+    controller_metadata = {
+        "kind": "text_critic_rerank",
+        "model_path": str(model_path.resolve()),
+        "use_commit": bool(config.use_commit),
+        "tau_override": float(config.tau_override),
+    }
+    graph.metadata["runtime_controller_loaded"] = controller_metadata
+    return model, {"config": config, **controller_metadata}
+
+
 def run_baseline_experiment(
     instance,
     *,
@@ -1548,14 +1608,24 @@ def run_baseline_experiment(
         instance = attach_baseline_metadata(instance, baseline_name=baseline_name, io_mode="auto")
 
     if baseline.strategy == "evolving_graph":
+        baseline_graph = _build_baseline_graph(instance, baseline=baseline)
+        runtime_controller = None
+        runtime_controller_metadata = None
+        if bool(baseline_graph.metadata.get("runtime_controller_enabled", False)):
+            runtime_controller, runtime_controller_metadata = _maybe_build_runtime_controller(
+                baseline_graph,
+                baseline,
+            )
         return run_experiment(
             topic=instance.topic,
             literature=list(instance.literature),
-            metadata=dict(instance.metadata),
+            metadata=dict(baseline_graph.metadata),
             collaboration_backend=collaboration_backend,
             progress_callback=progress_callback,
             max_rounds=max_rounds,
             stop_when_mature=stop_when_mature,
+            runtime_controller=runtime_controller,
+            runtime_controller_metadata=runtime_controller_metadata,
         )
 
     graph = _build_baseline_graph(instance, baseline=baseline)
