@@ -1935,3 +1935,47 @@ regeneration packet on the touched codepath:
     representation
   - then test either a hybrid text-plus-graph scorer or a richer graph encoder
     before any new controller batch
+
+## 2026-04-13: Relation-Aware Graph Critic Offline Gate
+
+- Frozen comparison roots:
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g1`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g2_partitions/partition_manifest.jsonl`
+- Safety cleanup before promotion:
+  - audited `candidate_text` and found teacher-only `rationale=` / `source=`
+    suffixes still present in the raw `G2.5` rows
+  - patched `src/idea_graph/relation_graph_critic_data.py` so the
+    relation-aware graph critic strips those suffixes before embedding
+  - added a regression test that records the exact strings passed into the
+    embedding backend and verifies they contain no `source=` or `rationale=`
+- Discarded leaky artifact:
+  - `outputs/graph_critic_models/development_pool_v2_relation_graph_v1`
+  - reason: pre-cleanup run likely benefited from teacher-token leakage and
+    should not be used as evidence
+- Sanity smoke artifact:
+  `outputs/graph_critic_models/development_pool_v2_relation_graph_sanitized_smoke`
+  - all-candidate top-1 / MRR: `0.6938 / 0.8019`
+  - edit-only top-1 / MRR: `0.6850 / 0.7992`
+- Trusted offline gate artifact:
+  `outputs/graph_critic_models/development_pool_v2_relation_graph_sanitized_v1`
+  - all-candidate validation states: `209`
+  - all-candidate top-1 accuracy: `0.8373`
+  - all-candidate mean reciprocal rank: `0.8951`
+  - edit-only validation states: `200`
+  - edit-only top-1 accuracy: `0.8550`
+  - edit-only mean reciprocal rank: `0.9089`
+- Frozen baseline comparison:
+  - vs refreshed text scorer
+    `outputs/graph_critic_models/development_pool_v2_text_warmstart_v1`
+    - top-1 delta: `+0.1292`
+    - MRR delta: `+0.0805`
+  - vs first graph-feature scorer
+    `outputs/graph_critic_models/development_pool_v2_graph_feature_v1`
+    - top-1 delta: `+0.3349`
+    - MRR delta: `+0.2128`
+- Decision:
+  - the leakage-safe relation-aware graph critic clears the frozen offline gate
+    and is now strong enough for a narrow controller-in-the-loop planning stage
+  - runtime promotion should still begin with a small frozen gate rather than a
+    large benchmark packet, because this remains development-pool evidence
