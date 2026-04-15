@@ -133,6 +133,12 @@ def get_liveideabench_record(
         filtered = [record for record in records if record.keyword.lower() == normalized]
         if not filtered:
             raise KeyError(f"No liveideabench rows found for keyword '{keyword}'.")
+        absolute_match = next(
+            (record for record in filtered if record.row_index == row_index),
+            None,
+        )
+        if absolute_match is not None:
+            return absolute_match
         if not (0 <= row_index < len(filtered)):
             raise KeyError(
                 f"Keyword '{keyword}' has {len(filtered)} matching rows; "

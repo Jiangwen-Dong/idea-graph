@@ -169,6 +169,102 @@ class CriticPolicyTests(unittest.TestCase):
         self.assertEqual(decision.selected_source, "critic")
         self.assertFalse(decision.used_heuristic_fallback)
 
+    def test_blocks_override_when_critic_candidate_undercuts_meaningful_heuristic_gain(self) -> None:
+        decision = choose_critic_action(
+            state={
+                "round_index": 3,
+                "support_coverage": 0.60,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            critic_candidates=[
+                self._candidate(
+                    "critic-low-gain",
+                    score=0.92,
+                    predicted_gain=0.0,
+                    support_gain=0.0,
+                    contradiction_gain=0.0,
+                    maturity_gain=0.0,
+                    after_is_mature=False,
+                ),
+            ],
+            heuristic_candidate=self._candidate(
+                "heuristic-high-gain",
+                score=0.40,
+                predicted_gain=0.80,
+                support_gain=0.20,
+                contradiction_gain=0.0,
+                maturity_gain=0.0,
+                after_is_mature=False,
+            ),
+            config=SafeCriticPolicyConfig(tau_override=0.05),
+        )
+
+        self.assertEqual(decision.selected_candidate_id, "heuristic-high-gain")
+        self.assertEqual(decision.selected_source, "heuristic")
+        self.assertTrue(decision.used_heuristic_fallback)
+
+    def test_allows_override_when_critic_candidate_is_close_to_heuristic_gain(self) -> None:
+        decision = choose_critic_action(
+            state={
+                "round_index": 3,
+                "support_coverage": 0.60,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            critic_candidates=[
+                self._candidate(
+                    "critic-close-gain",
+                    score=0.92,
+                    predicted_gain=0.38,
+                    support_gain=0.0,
+                    contradiction_gain=0.0,
+                    maturity_gain=0.0,
+                    after_is_mature=False,
+                ),
+            ],
+            heuristic_candidate=self._candidate(
+                "heuristic-reference",
+                score=0.40,
+                predicted_gain=0.50,
+                support_gain=0.20,
+                contradiction_gain=0.0,
+                maturity_gain=0.0,
+                after_is_mature=False,
+            ),
+            config=SafeCriticPolicyConfig(tau_override=0.05),
+        )
+
+        self.assertEqual(decision.selected_candidate_id, "critic-close-gain")
+        self.assertEqual(decision.selected_source, "critic")
+        self.assertFalse(decision.used_heuristic_fallback)
+
+    def test_blocks_override_when_heuristic_gain_is_small_but_still_meaningful(self) -> None:
+        decision = choose_critic_action(
+            state={
+                "round_index": 3,
+                "support_coverage": 0.60,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            critic_candidates=[
+                self._candidate(
+                    "critic-negative-gain",
+                    score=0.90,
+                    predicted_gain=-0.40,
+                    after_is_mature=False,
+                ),
+            ],
+            heuristic_candidate=self._candidate(
+                "heuristic-small-positive",
+                score=0.20,
+                predicted_gain=0.09,
+                after_is_mature=False,
+            ),
+            config=SafeCriticPolicyConfig(tau_override=0.05),
+        )
+
+        self.assertEqual(decision.selected_candidate_id, "heuristic-small-positive")
+        self.assertEqual(decision.selected_source, "heuristic")
+        self.assertTrue(decision.used_heuristic_fallback)
+
 
 if __name__ == "__main__":
     unittest.main()

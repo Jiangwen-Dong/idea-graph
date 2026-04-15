@@ -26,6 +26,9 @@ class SafeCriticPolicyConfig:
     guard_support_threshold: float = 0.66
     guard_support_gain_floor: float = 0.10
     guard_requires_contradiction_progress: bool = False
+    guard_predicted_gain_min_heuristic: float = 0.05
+    guard_predicted_gain_ratio: float = 0.70
+    guard_predicted_gain_slack: float = 0.10
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class CriticPolicyDecision:
     commit_requested: bool
     override_margin: float
     commit_margin: float | None
+    fallback_reason: str | None = None
 
 
 def _state_round_index(state: Mapping[str, object]) -> int:
@@ -79,6 +83,23 @@ def _is_fragile_maturity_override(
     return True
 
 
+def _is_predicted_gain_dominated(
+    *,
+    candidate: ScoredCandidate,
+    heuristic_candidate: ScoredCandidate,
+    config: SafeCriticPolicyConfig,
+) -> bool:
+    heuristic_gain = float(heuristic_candidate.predicted_gain)
+    if heuristic_gain < float(config.guard_predicted_gain_min_heuristic):
+        return False
+    candidate_gain = float(candidate.predicted_gain)
+    if candidate_gain + float(config.guard_predicted_gain_slack) >= heuristic_gain:
+        return False
+    if candidate_gain >= heuristic_gain * float(config.guard_predicted_gain_ratio):
+        return False
+    return True
+
+
 def choose_critic_action(
     *,
     state: Mapping[str, object],
@@ -115,11 +136,27 @@ def choose_critic_action(
                 commit_requested=True,
                 override_margin=float(best_commit.score - heuristic_candidate.score),
                 commit_margin=commit_margin,
+                fallback_reason=None,
             )
 
     if best_edit is not None:
         override_margin = float(best_edit.score - heuristic_candidate.score)
         if override_margin >= float(config.tau_override):
+            if _is_predicted_gain_dominated(
+                candidate=best_edit,
+                heuristic_candidate=heuristic_candidate,
+                config=config,
+            ):
+                return CriticPolicyDecision(
+                    selected_candidate_id=heuristic_candidate.candidate_id,
+                    selected_source="heuristic",
+                    used_heuristic_fallback=True,
+                    commit_allowed=commit_allowed,
+                    commit_requested=commit_requested,
+                    override_margin=override_margin,
+                    commit_margin=commit_margin,
+                    fallback_reason="predicted_gain_guard",
+                )
             if _is_fragile_maturity_override(
                 state=state,
                 candidate=best_edit,
@@ -133,6 +170,7 @@ def choose_critic_action(
                     commit_requested=commit_requested,
                     override_margin=override_margin,
                     commit_margin=commit_margin,
+                    fallback_reason="fragile_maturity_guard",
                 )
             return CriticPolicyDecision(
                 selected_candidate_id=best_edit.candidate_id,
@@ -142,6 +180,7 @@ def choose_critic_action(
                 commit_requested=commit_requested,
                 override_margin=override_margin,
                 commit_margin=commit_margin,
+                fallback_reason=None,
             )
     else:
         override_margin = float("-inf")
@@ -154,4 +193,5 @@ def choose_critic_action(
         commit_requested=commit_requested,
         override_margin=override_margin,
         commit_margin=commit_margin,
+        fallback_reason="override_margin_below_threshold" if best_edit is not None else "no_edit_candidates",
     )

@@ -1791,6 +1791,189 @@ regeneration packet on the touched codepath:
     development-pool expansion, rather than scaling the text-critic controller
     batch immediately
 
+## 2026-04-14: Stage A V3 Final Development-Pool Scale-Up
+
+- Shadow-commit observability status:
+  - ported the validated controller observability patch onto the active
+    Stage A branch
+  - targeted verification:
+    `python -m pytest tests/test_engine.py -q`
+    - `32 passed`
+- Final development-only v3 candidate pool:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_candidate_pool_v1`
+  - total groups: `36`
+  - `critic_train`: `27`
+  - `critic_dev`: `9`
+  - AIIB groups: `24`
+  - LiveIdeaBench groups: `12`
+- Completed v3 train/dev collections:
+  - train collection:
+    `outputs/graph_critic_online_episodes/development_pool_v3_critic_train_qwen_v1`
+    - completed groups: `27`
+    - traced tokens: `5,233,669`
+  - dev collection:
+    `outputs/graph_critic_online_episodes/development_pool_v3_critic_dev_qwen_v1`
+    - completed groups: `9`
+    - traced tokens: `1,709,912`
+  - combined traced tokens across new v3 collections: `6,943,581`
+- Exported v3 graph-critic datasets:
+  - expansion-only `G1`:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_expansion_only_g1`
+    - runs: `63`
+    - transitions: `1,425`
+    - terminal commit states: `63`
+  - combined `G1`:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
+    - runs: `159`
+    - transitions: `3,185`
+    - terminal commit states: `159`
+  - combined `G2`:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2`
+    - groups: `59`
+    - train groups: `47`
+    - validation groups: `12`
+    - transitions: `3,185`
+    - train transitions: `2,690`
+    - validation transitions: `495`
+  - combined `G2.5`:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+    - states: `3,344`
+    - candidate rows: `32,515`
+    - explicit commit candidates: `3,344`
+    - terminal commit-positive states: `159`
+- Readiness report:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_readiness/training_readiness_report.md`
+  - judgment:
+    the v3 active dataset is now readable through `G1`, `G2`, and `G2.5`, and
+    is ready for refreshed offline critic training plus frozen validation
+    diagnosis
+- Practical conclusion:
+  - Stage A scale-up is complete
+  - v3 supersedes the smaller v2 expansion as the active development-only
+    graph-critic pool
+  - the next step is Stage B: refreshed offline text-scorer and graph-critic
+    freeze-gate training/evaluation on the v3 roots before any broader
+    controller packet
+
+## 2026-04-14: Stage B V3 Offline Freeze Gate
+
+- Frozen comparison roots:
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2_partitions/partition_manifest.jsonl`
+- Trained refreshed text warm-start:
+  `outputs/graph_critic_models/development_pool_v3_text_warmstart_v1`
+  - validation states: `517`
+  - top-1 accuracy: `0.7195`
+  - mean reciprocal rank: `0.8255`
+  - train / validation candidate rows: `27,716 / 4,799`
+  - train / validation commit-positive states: `137 / 22`
+- Trained refreshed lightweight graph-feature baseline:
+  `outputs/graph_critic_models/development_pool_v3_graph_feature_v1`
+  - validation states: `517`
+  - top-1 accuracy: `0.5841`
+  - mean reciprocal rank: `0.7249`
+- Trained refreshed trusted relation-aware graph critic:
+  `outputs/graph_critic_models/development_pool_v3_relation_graph_sanitized_v1`
+  - all-candidate validation states: `517`
+  - all-candidate top-1 accuracy: `0.8665`
+  - all-candidate mean reciprocal rank: `0.9156`
+  - edit-only validation states: `495`
+  - edit-only top-1 accuracy: `0.8869`
+  - edit-only mean reciprocal rank: `0.9275`
+- Explicit comparison artifact:
+  `outputs/graph_critic_models/development_pool_v3_offline_compare_v1`
+- Offline gate deltas:
+  - graph-feature minus text:
+    - top-1: `-0.1354`
+    - MRR: `-0.1006`
+  - relation-aware graph critic minus text:
+    - top-1: `+0.1470`
+    - MRR: `+0.0900`
+  - relation-aware graph critic minus graph-feature:
+    - top-1: `+0.2824`
+    - MRR: `+0.1906`
+- Verification:
+  - targeted critic test slice:
+    `python -m pytest tests/test_graph_feature_critic.py tests/test_relation_graph_critic_model.py tests/test_relation_graph_critic_data.py tests/test_relation_graph_critic_train.py tests/test_train_relation_graph_critic.py -q`
+    - `16 passed`
+- Current conclusion:
+  - the v3 refreshed offline freeze gate is a clear `go` for the trusted
+    relation-aware graph critic
+  - the lightweight graph-feature baseline remains a useful ablation only
+  - the next high-value step is a controller-in-the-loop v3 packet using
+    `development_pool_v3_relation_graph_sanitized_v1`, starting with the
+    frozen AIIB sentinel cases before any broader learned-controller spend
+
+## 2026-04-14: Stage C V3 Frozen AIIB Controller Gate
+
+- Runtime default patch:
+  - `src/idea_graph/baselines.py` now points `ours-eig-critic-graph` at
+    `outputs/graph_critic_models/development_pool_v3_relation_graph_sanitized_v1`
+  - updated the baseline-resolution tests in
+    `tests/test_benchmark_mode_and_baselines.py`
+- Runtime verification:
+  - `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_relation_graph_runtime_critic.py tests/test_engine.py -q`
+  - `69 passed`
+- Frozen controller gate artifact:
+  `outputs/m2_aiib_g6_graph_controller_gate_v2`
+- Paired summary:
+  `outputs/m2_aiib_g6_graph_controller_gate_v2/paired_summary.md`
+- Baselines:
+  - `ours-eig`
+  - `ours-eig-critic-graph`
+- Frozen cases:
+  - `13`
+  - `3883`
+  - `7909`
+  - `9849`
+- Mean result:
+  - mean AIIB native:
+    - `ours-eig = 8.08`
+    - `ours-eig-critic-graph = 7.64`
+    - delta: `-0.43`
+  - mean local overall:
+    - `ours-eig = 5.20`
+    - `ours-eig-critic-graph = 5.24`
+    - delta: `+0.04`
+  - mean local benchmark alignment:
+    - `ours-eig = 3.37`
+    - `ours-eig-critic-graph = 3.35`
+    - delta: `-0.02`
+- Per-case native deltas (`graph critic - ours-eig`):
+  - `13`: `-0.86`
+  - `3883`: `-1.15`
+  - `7909`: `+0.00`
+  - `9849`: `+0.28`
+- Controller trace readout from saved `graph.json` metadata:
+  - total controller decisions: `95`
+  - selection sources:
+    - critic-selected: `51`
+    - heuristic-selected: `44`
+  - selected action kinds:
+    - `attach_evidence`: `40`
+    - `add_support_edge`: `27`
+    - `propose_repair`: `12`
+    - `freeze_branch`: `6`
+    - `request_evidence`: `4`
+    - `mark_overlap`: `3`
+    - `add_contradiction_edge`: `2`
+    - `add_dependency_edge`: `1`
+  - learned `commit` remained disabled, so commit count is `0` by design
+  - `selected_fallback_reason` is still empty on heuristic selections
+- Interpretation:
+  - the v3 graph critic is definitely active online, so this is not a silent
+    fallback run
+  - however, the strong offline v3 win did **not** transfer to the frozen
+    4-case AIIB controller gate
+  - the old `3883 -> Round2` pathology improved to `Round4`, but the gate still
+    lost native score badly on `3883` and also introduced a new strong native
+    regression on `13`
+- Current conclusion:
+  - `no-go` for larger learned-controller benchmark scaling
+  - next work should focus on controller materialization diagnosis and
+    score-to-action policy refinement, not on immediate packet expansion
+
 ## 2026-04-13: V2 Trace Diagnosis And Expanded Graph-Critic Dataset Build
 
 - Trace diagnosis artifact:
@@ -2035,3 +2218,637 @@ regeneration packet on the touched codepath:
   - `no-go` for broader controller-in-the-loop scaling
   - next step should be targeted trace diagnosis on the hard cases, then a
     robustness-data or policy-adjustment pass before any larger packet
+
+## 2026-04-13: Next Fast-Track Controller Validation Plan
+
+- plan:
+  `docs/superpowers/plans/2026-04-13-graph-critic-dev-packet-and-shadow-commit.md`
+- reason:
+  - the 4-case graph-controller gate is informative but underpowered
+  - we should not declare the graph critic useful or useless from that packet
+  - the next step should increase sample count while preserving strict
+    development-only data hygiene
+- next packet shape:
+  - sentinel regression set:
+    - `AI_Idea_Bench_2025`: `13`, `3883`, `7909`, `9849`
+  - medium development packet from
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_candidate_pool_v1/candidate_instances.json`
+    - `AI_Idea_Bench_2025`: `25`, `30`, `36`, `82`, `87`, `95`, `110`, `125`
+    - `liveideabench`: `hurricanes-118`, `phycology-140`, `galaxies-163`,
+      `global positioning system-191`
+- observability additions required before launch:
+  - controller materialization logging
+  - maturity-term breakdown logging
+  - shadow-commit logging without enabling live commit yet
+- target artifact root:
+  `outputs/m2_graph_critic_dev_packet_v1`
+- promotion rule summary:
+  - sentinel packet must avoid another `3883`-style premature stop
+  - development packet must be at least near-neutral on benchmark-native score
+  - controller materialization must improve materially from the current pilot
+
+## 2026-04-14: Graph-Controller Guard Patch v2
+
+- code refinement:
+  - lowered the predicted-gain dominance floor in
+    `src/idea_graph/critic_policy.py` from `0.10` to `0.05`
+  - added a new low-signal kind-swap guard in
+    `src/idea_graph/relation_graph_runtime_critic.py`
+  - intent:
+    - block critic overrides that replace a weak-but-still-meaningful
+      heuristic action with a much worse candidate
+    - block low-signal cross-kind swaps when both candidates sit near zero
+      predicted gain
+- targeted TDD / regression:
+  - added the new failing tests first in
+    `tests/test_critic_policy.py` and
+    `tests/test_relation_graph_runtime_critic.py`
+  - narrow red-green verification:
+    `python -m pytest tests/test_critic_policy.py tests/test_relation_graph_runtime_critic.py -q`
+    - `23 passed`
+  - broader regression:
+    `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_engine.py tests/test_relation_graph_runtime_critic.py tests/test_critic_policy.py -q`
+    - `80 passed`
+
+## 2026-04-14: Guard-Patch Spot Check v2
+
+- artifact:
+  `outputs/m2_aiib_g6_graph_controller_guard_patch_spotcheck_v2`
+- cases:
+  - `13`
+  - `3883`
+- native results:
+  - `13`: `8.57`
+  - `3883`: `7.14`
+- controller trace change versus the first guard-patch spot check:
+  - `13`
+    - selected source changed from `19 heuristic / 6 critic` to
+      `24 heuristic / 1 critic`
+    - fallback reasons now include
+      `predicted_gain_guard = 12`,
+      `low_signal_kind_swap_guard = 6`,
+      `override_margin_below_threshold = 6`
+    - harmful lower-gain critic overrides dropped from `4` to `0`
+  - `3883`
+    - selected source changed from `11 heuristic / 4 critic` to
+      `14 heuristic / 1 critic`
+    - fallback reasons now include
+      `predicted_gain_guard = 4`,
+      `low_signal_kind_swap_guard = 3`,
+      `override_margin_below_threshold = 7`
+    - harmful lower-gain critic overrides dropped from `0 or 1 residual`
+      to `0`
+- interpretation:
+  - the second guard patch successfully removed the previously observed
+    low-signal cross-kind override pattern
+  - the controller became much more conservative
+  - `3883` still remained sensitive, so a full frozen rerun was still needed
+
+## 2026-04-14: Refreshed Frozen 4-Case Graph-Controller Gate v3
+
+- artifact:
+  `outputs/m2_aiib_g6_graph_controller_gate_v3`
+- paired summary:
+  `outputs/m2_aiib_g6_graph_controller_gate_v3/paired_summary.md`
+- baselines:
+  - `ours-eig`
+  - `ours-eig-critic-graph`
+- frozen cases:
+  - `13`
+  - `3883`
+  - `7909`
+  - `9849`
+- per-case AIIB native deltas (`graph critic - ours-eig`):
+  - `13`: `+0.00`
+  - `3883`: `-1.15`
+  - `7909`: `-0.28`
+  - `9849`: `+0.29`
+- mean result:
+  - mean AIIB native:
+    - `ours-eig = 8.07`
+    - `ours-eig-critic-graph = 7.79`
+    - delta: `-0.29`
+  - mean local overall:
+    - `ours-eig = 5.29`
+    - `ours-eig-critic-graph = 5.21`
+  - mean local benchmark alignment:
+    - `ours-eig = 3.51`
+    - `ours-eig-critic-graph = 3.29`
+- runtime-controller trace readout:
+  - total graph-controller decisions: `90`
+  - selected sources:
+    - `heuristic = 79`
+    - `critic = 11`
+  - fallback reasons:
+    - `predicted_gain_guard = 22`
+    - `low_signal_kind_swap_guard = 15`
+    - `override_margin_below_threshold = 42`
+  - compared with `g6_graph_controller_gate_v2`:
+    - graph-controller mean native improved from `7.64` to `7.79`
+    - critic-selected actions dropped from `51 / 95` to `11 / 90`
+    - harmful lower-gain critic overrides dropped from `32` to `3`
+    - low-signal cross-kind swaps dropped from `10` to `0`
+- remaining failure diagnosis:
+  - `3883` is still the blocker
+  - it still stops at `mature_at_Round3`
+  - the surviving critic override on `3883` is no longer a low-gain
+    cross-kind swap; it is a same-kind `propose_repair` tie at `Round3`
+  - this means the next bottleneck is likely candidate materialization and/or
+    maturity interaction, not the earlier unsafe override pattern alone
+- decision:
+  - the new safety guards are a real improvement and should be kept
+  - the graph controller is still not ready for broader main-table promotion
+  - the next debugging pass should target:
+    - richer logging for selected-vs-heuristic candidate payloads
+    - the maturity trigger on hard cases like `3883`
+    - repeated hard-case diagnosis to separate controller effects from run
+      variance
+
+## 2026-04-14: Richer Controller Payload Logging
+
+- implemented a narrow observability patch in
+  `src/idea_graph/engine.py`
+- `runtime_controller_log` now stores compact snapshots for:
+  - `heuristic_candidate`
+  - `selected_candidate`
+  - `top_scored_candidates`
+- each snapshot now includes:
+  - `candidate_id`
+  - `kind`
+  - `target_ids`
+  - `payload`
+  - `rationale`
+  - `candidate_source`
+  - `predicted_gain`
+  - `critic_score`
+  - `controller_fallback_reason`
+- targeted regression:
+  `python -m pytest tests/test_engine.py -q`
+  - `32 passed`
+- broader regression:
+  `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_engine.py tests/test_relation_graph_runtime_critic.py tests/test_critic_policy.py -q`
+  - `81 passed`
+
+## 2026-04-14: Repeated AIIB-3883 Hard-Case Diagnosis
+
+- artifact root:
+  `outputs/m2_aiib_g6_3883_repeat_diagnosis_v1`
+- run summary:
+  `outputs/m2_aiib_g6_3883_repeat_diagnosis_v1/summary.md`
+- setup:
+  - benchmark instance: `3883`
+  - repeats per baseline: `4`
+  - baselines:
+    - `ours-eig`
+    - `ours-eig-critic-graph`
+- repeated native-score summary:
+  - `ours-eig`
+    - scores: `6.86, 6.86, 6.57, 6.86`
+    - mean: `6.79`
+    - stop pattern:
+      - `mature_at_Round4 = 1`
+      - `mature_at_Round5 = 1`
+      - `max_rounds_reached = 2`
+  - `ours-eig-critic-graph`
+    - scores: `5.71, 7.14, 5.43, 5.43`
+    - mean: `5.93`
+    - stop pattern:
+      - `mature_at_Round3 = 2`
+      - `mature_at_Round4 = 2`
+- key diagnosis:
+  - `3883` is not just a single singular bad draw
+  - the graph-controller variant remains materially below `ours-eig` on the
+    repeated packet
+  - the graph-controller variant also stops earlier on average
+- newly visible stable controller pattern:
+  - all four graph-controller runs contain the same surviving critic override:
+    - `Round3 / MechanismProposer / propose_repair`
+    - same action kind and same target
+    - only the `repair_text` changes
+  - this supports the earlier conclusion that the remaining bottleneck is no
+    longer unsafe cross-kind swapping
+- newly visible variable pattern:
+  - the best graph-controller run (`7.14`) also changed the
+    `Round1 / NoveltyExaminer / mark_overlap` paper from `paper-001` to
+    `paper-002` (`Amex`)
+  - this suggests there is still real run-to-run variance, but not enough to
+    explain away the mean gap
+- next patch direction:
+  - inspect maturity-stop interaction on hard cases
+  - consider constraining same-kind text-only overrides when they mostly rewrite
+    wording instead of changing structure
+  - keep the new payload logging because it makes this diagnosis much easier
+
+## 2026-04-14: Online Graph Critic Evaluation Scale-Up Plan
+
+- decision:
+  - the frozen 4-case AIIB gate is now treated as `Tier C0` regression
+    tracking only
+  - it is no longer enough to judge the learned controller by itself
+- current trusted offline status remains strong:
+  - artifact:
+    `outputs/graph_critic_models/development_pool_v3_offline_compare_v1/README.md`
+  - frozen validation groups: `12`
+  - validation states: `517`
+  - validation candidate rows: `4799`
+  - relation-aware graph critic beats the text warm-start by:
+    - top-1: `+0.1470`
+    - MRR: `+0.0900`
+- concrete online packet protocol is now frozen in the new plan:
+  - plan:
+    `docs/superpowers/plans/2026-04-14-online-graph-critic-evaluation-scaleup.md`
+  - `Tier C0`:
+    - fixed AIIB sentinel cases `13`, `3883`, `7909`, `9849`
+  - `Tier C1`:
+    - `12` frozen `critic_dev` groups from
+      `development_pool_v3_combined_g2_partitions`
+    - benchmark mix:
+      - `6` `AI_Idea_Bench_2025`
+      - `6` `LiveIdeaBench`
+  - `Tier C2`:
+    - all `36` groups from
+      `development_pool_v3_candidate_pool_v1`
+    - benchmark mix:
+      - `24` `AI_Idea_Bench_2025`
+      - `12` `LiveIdeaBench`
+    - stratified reporting:
+      - `critic_train = 27`
+      - `critic_dev = 9`
+- naming clarification recorded for future packet summaries:
+  - paper label:
+    `ours-eig-graph-critic`
+  - runtime baseline name:
+    `ours-eig-critic-graph`
+- stability decision:
+  - because budget is not the main bottleneck, the variance slice should rerun
+    the full `Tier C1` packet (`12` cases) `3x` per compared system instead of
+    cherry-picking a smaller subset
+- current final-eval limitation remains:
+  - untouched paper-eval candidate pool is still too small:
+    - `6` `AI_Idea_Bench_2025`
+    - `4` `LiveIdeaBench`
+  - therefore `Stage E0` must expand and freeze the untouched `paper_eval`
+    pool before any learned-controller main-table launch
+- immediate next execution order:
+  1. materialize frozen `Tier C0 / C1 / C2` packet manifests
+  2. run paired `ours-eig` versus `ours-eig-critic-graph` on `Tier C0`
+     and `Tier C1`
+  3. run full-`Tier C1` stability reruns and the `Tier C2` robustness packet
+  4. write the freeze-or-no-go memo before any untouched `paper_eval` spend
+
+## 2026-04-14: Revised Broad-Gate Launch Decision
+
+- strategy revision:
+  - do not spend the next stage on separate `Tier C0` and `Tier C1` runs
+  - keep those smaller packets only as archived diagnosis history
+  - replace them with one broader frozen development-only online gate
+- reason:
+  - `Tier C0` already completed its regression-diagnosis role
+  - standalone `Tier C1` is still too small to be persuasive by itself
+  - the fastest credible next move is one broader gate with a clean held-out
+    readout inside it
+- new broad-gate source:
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2_partitions/partition_manifest.jsonl`
+- broad-gate composition:
+  - total groups: `59`
+  - `critic_train`: `47`
+  - `critic_dev`: `12`
+  - `AI_Idea_Bench_2025`: `39`
+  - `LiveIdeaBench`: `20`
+- readout rule:
+  - one run packet, three summaries:
+    - held-out `critic_dev` (`12`) as the primary promotion signal
+    - pooled `59` as robustness evidence
+    - `critic_train` (`47`) as diagnostic context
+- updated active plan:
+  - `docs/superpowers/plans/2026-04-14-online-graph-critic-evaluation-scaleup.md`
+- immediate next execution order:
+  1. materialize the single broad-gate manifest
+  2. run paired `ours-eig` versus `ours-eig-critic-graph` on all `59`
+     development groups
+  3. write the freeze-or-no-go memo from the three readouts
+  4. if `go`, expand and freeze `paper_eval_candidate_pool_v2`
+  5. then move directly to the learned-controller paper-eval batch
+
+## 2026-04-14: Broad-Gate Concrete Execution Freeze
+
+- tightened the active written plan so it now reflects the real execution
+  frontier instead of the earlier smaller-packet ladder
+- canonical plan:
+  - `docs/superpowers/plans/2026-04-14-online-graph-critic-evaluation-scaleup.md`
+- canonical freeze-builder spec:
+  - `docs/superpowers/specs/2026-04-14-paper-eval-freeze-pool-design.md`
+- canonical freeze-builder implementation plan:
+  - `docs/superpowers/plans/2026-04-14-paper-eval-freeze-pool.md`
+- broad-gate packet-builder slice is now landed on the current workspace:
+  - `src/idea_graph/controller_eval_packets.py`
+  - `scripts/build_controller_eval_packets.py`
+  - `tests/test_controller_eval_packets.py`
+  - verified by:
+    - `python -m pytest tests/test_controller_eval_packets.py -q`
+- verified broad-gate packet counts remain:
+  - total groups: `59`
+  - `critic_train`: `47`
+  - `critic_dev`: `12`
+  - `AI_Idea_Bench_2025`: `39`
+  - `LiveIdeaBench`: `20`
+- active next implementation frontier is now explicitly:
+  - `src/idea_graph/controller_eval_runtime.py`
+  - `scripts/run_controller_eval_packet.py`
+  - `scripts/summarize_controller_eval_packet.py`
+  - `tests/test_controller_eval_runner.py`
+  - `src/idea_graph/paper_eval_pool.py`
+  - `scripts/build_paper_eval_freeze_pool.py`
+- paper-eval freeze defaults were clarified to block the full current
+  development-only history rather than only older partial sources
+- current next-step order is therefore:
+  1. finish the controller-eval runtime stack and keep the runner tests green
+  2. launch paired `ours-eig` versus `ours-eig-critic-graph` on all `59`
+     development groups
+  3. write the freeze-or-no-go memo from:
+     - held-out `critic_dev`
+     - pooled `59`
+     - `critic_train`
+  4. only if the memo says `go`, materialize
+     `paper_eval_candidate_pool_v2`
+  5. then launch the main learned-controller paper-eval batch
+
+## 2026-04-14: Broad-Gate Runtime Stack And Dry Run
+
+- implemented the remaining broad-gate execution scripts:
+  - `scripts/run_controller_eval_packet.py`
+  - `scripts/summarize_controller_eval_packet.py`
+- implemented and integrated the shared runtime helper:
+  - `src/idea_graph/controller_eval_runtime.py`
+- integrated the paper-eval freeze-pool builder from the subagent handoff:
+  - `src/idea_graph/paper_eval_pool.py`
+  - `scripts/build_paper_eval_freeze_pool.py`
+  - `tests/test_paper_eval_freeze_pool.py`
+- tightened freeze-pool defaults so `paper_eval_candidate_pool_v2` blocks:
+  - `development_pool_v1`
+  - `development_pool_v2_candidate_pool_v1`
+  - `development_pool_v3_candidate_pool_v1`
+  - `development_pool_v3_combined_g2_partitions`
+  - `paper_eval_candidate_pool_v1`
+- TDD verification:
+  - `python -m pytest tests/test_controller_eval_runner.py -q`
+    - `5 passed`
+  - `python -m pytest tests/test_paper_eval_freeze_pool.py -q`
+    - `4 passed`
+  - `python -m pytest tests/test_controller_eval_packets.py tests/test_controller_eval_runner.py tests/test_paper_eval_freeze_pool.py -q`
+    - `12 passed`
+- no-API real-manifest dry run:
+  - packet builder:
+    `python scripts/build_controller_eval_packets.py --output-root outputs/controller_eval_packets/graph_critic_scaleup_v2`
+    - wrote `59` groups
+  - runner dry run:
+    `python scripts/run_controller_eval_packet.py --packet-manifest outputs/controller_eval_packets/graph_critic_scaleup_v2/broad_dev_gate_59.jsonl --baselines ours-eig ours-eig-critic-graph --output-root outputs/m2_graph_critic_online_scaleup_v2_dryrun --max-rounds 5 --dry-run`
+    - wrote `118` planned run-manifest rows
+- active next step:
+  - launch the real paired broad-gate run under
+    `outputs/m2_graph_critic_online_scaleup_v2`
+  - then summarize it with
+    `scripts/summarize_controller_eval_packet.py`
+  - then write `freeze_decision.md`
+
+## 2026-04-14: Broad-Gate Real Launch Started
+
+- OpenAI-compatible preflight:
+  - command:
+    `python scripts/check_openai_compatible.py --llm-config configs/openai_compatible.example.json`
+  - first attempt failed because the shell environment did not yet provide the
+    required API key
+  - reran with a transient process environment variable only
+  - result:
+    - endpoint: DashScope compatible mode
+    - model: `qwen3-8b`
+    - response status: `ok`
+- launched the real paired broad-gate controller packet as a background
+  process under:
+  - `outputs/m2_graph_critic_online_scaleup_v2`
+- launch command shape:
+  - `python scripts/run_controller_eval_packet.py --packet-manifest outputs/controller_eval_packets/graph_critic_scaleup_v2/broad_dev_gate_59.jsonl --baselines ours-eig ours-eig-critic-graph --llm-config configs/openai_compatible.example.json --output-root outputs/m2_graph_critic_online_scaleup_v2 --max-rounds 5 --native-eval`
+- launch bookkeeping:
+  - PID file:
+    `outputs/m2_graph_critic_online_scaleup_v2/_run_pid.txt`
+  - stdout log:
+    `outputs/m2_graph_critic_online_scaleup_v2/_run_stdout.log`
+  - stderr log:
+    `outputs/m2_graph_critic_online_scaleup_v2/_run_stderr.log`
+- immediate post-launch observation:
+  - process is alive and consuming CPU
+  - the first completed run has not yet been written, so
+    `run_manifest.jsonl` is not present yet
+  - this is still consistent with the runner writing manifest rows only after
+    each completed run
+- next monitoring step:
+  - wait for the first completed run directory or the first
+    `run_manifest.jsonl` row
+  - then later summarize the full packet with
+    `scripts/summarize_controller_eval_packet.py`
+
+## 2026-04-14: Broad-Gate First Pair Sanity Check
+
+- first completed paired case:
+  - role: `critic_dev`
+  - benchmark: `AI_Idea_Bench_2025`
+  - instance: `ai-idea-bench-2025-110`
+- native scores:
+  - `ours-eig`: `8.29`
+  - `ours-eig-graph-critic`: `8.86`
+  - paired delta: `+0.57`
+- stop behavior:
+  - both runs reached `max_rounds_reached`
+  - both executed `5` rounds
+- interpretation:
+  - this is only a plumbing and first-pair sanity check
+  - it is not enough to infer graph-critic quality
+  - the full broad-gate packet is still running in the background and should
+    be judged only after the held-out `critic_dev`, pooled `59`, and
+    diagnostic `critic_train` summaries are written
+
+## 2026-04-15: Broad-Gate Crash Diagnosis And Resume
+
+- stopped broad-gate root:
+  - `outputs/m2_graph_critic_online_scaleup_v2`
+- stopped process state:
+  - original PID `8004` is no longer running
+  - completed run-manifest rows at stop time: `80`
+  - completed paired groups at stop time: `40`
+  - pairing integrity:
+    - `40` complete paired groups
+    - `0` incomplete groups
+- partial packet composition at stop time:
+  - baseline rows:
+    - `ours-eig = 40`
+    - `ours-eig-graph-critic = 40`
+  - benchmark mix:
+    - `AI_Idea_Bench_2025 = 78` rows (`39` groups)
+    - `LiveIdeaBench = 2` rows (`1` group)
+  - interpretation:
+    - the partial packet is heavily AIIB-skewed and should not be treated as
+      the final broad-gate evidence
+- root cause from `_run_stderr.log`:
+  - the job crashed on the next `LiveIdeaBench` row
+  - failing instance:
+    - `liveideabench-endocrinology-900`
+  - direct exception:
+    - `KeyError: "Keyword 'endocrinology' has 81 matching rows; requested row offset 900 is out of range."`
+  - diagnosis:
+    - packet rows store `row_index` as the absolute CSV row id taken from the
+      `instance_name`
+    - `get_liveideabench_record(...)` interpreted `row_index` as a
+      keyword-local offset whenever `keyword` was supplied
+- code fix:
+  - patched:
+    - `src/idea_graph/benchmarks/liveideabench.py`
+  - new regression coverage:
+    - `tests/test_liveideabench.py`
+  - behavior change:
+    - when `keyword` is supplied, the loader now first checks for an exact
+      absolute `row_index` match inside the keyword-filtered rows
+    - it falls back to the old within-keyword offset behavior only if no
+      absolute row match exists
+- verification:
+  - `python -m pytest tests/test_liveideabench.py -q`
+    - `2 passed`
+  - `python -m pytest tests/test_liveideabench.py tests/test_controller_eval_runner.py tests/test_controller_eval_packets.py tests/test_benchmark_mode_and_baselines.py -q`
+    - `36 passed`
+- remaining packet materialization:
+  - wrote resume manifest:
+    `outputs/controller_eval_packets/graph_critic_scaleup_v2/broad_dev_gate_remaining_after80.jsonl`
+  - remaining groups: `19`
+  - all `19` remaining rows now load cleanly through
+    `load_benchmark_instance(...)`
+- partial backup evaluation snapshot:
+  - snapshot root:
+    `outputs/m2_graph_critic_online_scaleup_v2_partial80_snapshot`
+  - snapshot summary:
+    - held-out `critic_dev` (`6` groups):
+      - `ours-eig = 8.2867`
+      - `ours-eig-graph-critic = 8.4283`
+      - mean delta `+0.1417`
+      - bootstrap CI `[-0.0967, 0.3350]`
+    - pooled (`40` groups):
+      - `ours-eig = 8.2500`
+      - `ours-eig-graph-critic = 8.0640`
+      - mean delta `-0.1860`
+      - bootstrap CI `[-0.3645, -0.0070]`
+    - diagnostic `critic_train` (`34` groups):
+      - `ours-eig = 8.2435`
+      - `ours-eig-graph-critic = 7.9997`
+      - mean delta `-0.2438`
+      - bootstrap CI `[-0.4371, -0.0506]`
+  - caution:
+    - these `80` rows are a backup readout only
+    - they omit `19` remaining LiveIdeaBench groups and should not be used as
+      the final broad-gate decision if resume completes
+- resumed remaining packet:
+  - new root:
+    `outputs/m2_graph_critic_online_scaleup_v2_resume1`
+  - resumed process PID:
+    `512`
+  - target:
+    `19` remaining groups x `2` baselines = `38` runs
+  - launch shape:
+    - packet:
+      `broad_dev_gate_remaining_after80.jsonl`
+    - baselines:
+      `ours-eig`, `ours-eig-critic-graph`
+    - native evaluation enabled
+  - immediate post-launch status:
+    - process is alive and consuming CPU
+    - stderr is empty so far
+    - first resumed run has not yet completed at the time of this log entry
+
+## 2026-04-15: Broad-Gate Final Merged Evaluation
+
+- merged final root:
+  `outputs/m2_graph_critic_online_scaleup_v2_merged118`
+- merged sources:
+  - `outputs/m2_graph_critic_online_scaleup_v2/run_manifest.jsonl`
+  - `outputs/m2_graph_critic_online_scaleup_v2_resume1/run_manifest.jsonl`
+- merged packet integrity:
+  - total runs: `118`
+  - total paired groups: `59`
+  - incomplete groups: `0`
+- final broad-gate summary:
+  - held-out `critic_dev` (`12` groups):
+    - `ours-eig = 7.8750`
+    - `ours-eig-graph-critic = 7.8942`
+    - mean delta `+0.0192`
+    - bootstrap CI `[-0.1875, 0.2425]`
+  - pooled (`59` groups):
+    - `ours-eig = 7.9897`
+    - `ours-eig-graph-critic = 7.8741`
+    - mean delta `-0.1156`
+    - bootstrap CI `[-0.2603, 0.0286]`
+  - diagnostic `critic_train` (`47` groups):
+    - `ours-eig = 8.0189`
+    - `ours-eig-graph-critic = 7.8689`
+    - mean delta `-0.1500`
+    - bootstrap CI `[-0.3140, 0.0077]`
+- benchmark-stratified held-out view:
+  - `AI_Idea_Bench_2025` `critic_dev` (`6` groups):
+    - delta `+0.1417`
+  - `LiveIdeaBench` `critic_dev` (`6` groups):
+    - delta `-0.1033`
+- controller trace summary:
+  - graph-controller decisions: `1310`
+  - critic-selected actions: `190`
+  - heuristic-selected actions: `1120`
+  - override rate: `0.1450`
+  - heuristic fallback rate: `0.8550`
+- stop-pattern diagnosis:
+  - on `AI_Idea_Bench_2025`, both baselines mostly run to `max_rounds`
+  - on `LiveIdeaBench`, the graph-critic run always stops by maturity and
+    does so more often at `Round3`
+- final broad-gate decision:
+  - `NO-GO` for paper-eval freeze of `ours-eig-graph-critic` right now
+  - the held-out readout is near-neutral, but pooled and diagnostic results
+    remain negative
+  - the main remaining risk is LiveIdeaBench transfer and early maturity
+    behavior
+- freeze memo artifact:
+  `outputs/m2_graph_critic_online_scaleup_v2_merged118/freeze_decision.md`
+
+## 2026-04-15: Repo Freeze Pass And LiveIdeaBench Transfer Diagnosis
+
+- updated canonical docs and dataset READMEs so the active graph-critic state
+  points to the v3 dataset and the completed merged broad gate:
+  - `docs/eig_graph_critic_plan.md`
+  - `docs/critic_pools.md`
+  - `docs/paper_experiment_plan.md`
+  - `outputs/graph_critic_datasets/README.md`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/README.md`
+- added the next transfer/calibration design note:
+  `docs/superpowers/specs/2026-04-15-liveideabench-transfer-and-calibration-design.md`
+- detailed `LiveIdeaBench` readout from the merged broad gate:
+  - all `20` `LiveIdeaBench` groups:
+    - `ours-eig = 7.4530`
+    - `ours-eig-graph-critic = 7.4840`
+    - mean delta `+0.0310`
+  - held-out `LiveIdeaBench critic_dev` (`6` groups):
+    - `ours-eig = 7.4633`
+    - `ours-eig-graph-critic = 7.3600`
+    - mean delta `-0.1033`
+- stop-pattern detail:
+  - `ours-eig` on all `LiveIdeaBench` groups:
+    - `mature_at_Round3 = 10`
+    - `mature_at_Round4 = 8`
+    - `mature_at_Round5 = 1`
+    - `max_rounds_reached = 1`
+  - `ours-eig-graph-critic` on all `LiveIdeaBench` groups:
+    - `mature_at_Round3 = 13`
+    - `mature_at_Round4 = 5`
+    - `mature_at_Round5 = 2`
+- important runtime clarification:
+  - current `ours-eig-graph-critic` keeps live learned `commit` disabled
+  - therefore the next calibration target should be weak-context edit override
+    and maturity interaction, not immediate live learned commit
+- recommended next implementation:
+  - keep live `commit` disabled
+  - add weak-context controller calibration / maturity hardening after
+    critic-selected overrides
+  - rerun a `LiveIdeaBench` transfer packet before another full 59-group
+    broad gate

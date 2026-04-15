@@ -277,7 +277,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(instance.metadata["runtime_controller_kind"], "relation_graph_critic_rerank")
         self.assertFalse(instance.metadata["runtime_controller_use_commit"])
         self.assertIn(
-            "development_pool_v2_relation_graph_sanitized_v1",
+            "development_pool_v3_relation_graph_sanitized_v1",
             instance.metadata["runtime_controller_model_dir"],
         )
 
@@ -318,7 +318,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
                 repo_root
                 / "outputs"
                 / "graph_critic_models"
-                / "development_pool_v2_relation_graph_sanitized_v1"
+                / "development_pool_v3_relation_graph_sanitized_v1"
             )
             expected_dir.mkdir(parents=True, exist_ok=True)
             worktree_root.mkdir(parents=True, exist_ok=True)
@@ -342,7 +342,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             nested_repo_root
             / "outputs"
             / "graph_critic_models"
-            / "development_pool_v2_relation_graph_sanitized_v1"
+            / "development_pool_v3_relation_graph_sanitized_v1"
         ).resolve()
         self.assertEqual(resolved, expected)
 

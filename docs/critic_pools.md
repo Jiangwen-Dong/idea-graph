@@ -39,16 +39,16 @@ Not allowed:
 
 Pool name:
 
-- `development_pool_v2_candidate_pool_v1`
+- `development_pool_v3_candidate_pool_v1`
 
 Source artifacts:
 
 - candidate list:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_candidate_pool_v1/candidate_instances.json`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_candidate_pool_v1/candidate_instances.json`
 - partition manifest:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_candidate_pool_v1/partition_manifest.jsonl`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_candidate_pool_v1/partition_manifest.jsonl`
 - split registry:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_candidate_pool_v1/split_registry.jsonl`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_candidate_pool_v1/split_registry.jsonl`
 
 Status:
 
@@ -57,13 +57,20 @@ Status:
 - API-backed train/dev episode collections completed
 - expanded G1/G2/G2.5 artifacts materialized
 - explicit split overrides written so `development_pool_v1` assignments stay
-  frozen while new v2 `critic_train` / `critic_dev` rows map to
+  frozen while new v3 `critic_train` / `critic_dev` rows map to
   train / validation
+- this v3 pool supersedes the smaller `development_pool_v2_candidate_pool_v1`
+  as the active development-only expansion pool
 
 Role counts:
 
-- `critic_train`: `8`
-- `critic_dev`: `4`
+- `critic_train`: `27`
+- `critic_dev`: `9`
+
+Benchmark mix:
+
+- `AI_Idea_Bench_2025`: `24`
+- `LiveIdeaBench`: `12`
 
 Allowed use:
 
@@ -110,6 +117,9 @@ used as final frozen paper evidence for the learned-controller line.
 If a benchmark instance is listed inside `development_pool_v2_candidate_pool_v1`,
 it must also remain development-only.
 
+If a benchmark instance is listed inside `development_pool_v3_candidate_pool_v1`,
+it must also remain development-only.
+
 If a benchmark instance is listed inside `paper_eval_candidate_pool_v1`, it
 must remain untouched until the critic is frozen.
 
@@ -127,18 +137,18 @@ Current verified artifact roots:
   `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_execute_smoke_det`
 - first real openai-compatible train-group collection:
   `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1`
-- development-pool v2 train collection:
-  `outputs/graph_critic_online_episodes/development_pool_v2_critic_train_qwen_v1`
-- development-pool v2 dev collection:
-  `outputs/graph_critic_online_episodes/development_pool_v2_critic_dev_qwen_v1`
+- active development-pool v3 train collection:
+  `outputs/graph_critic_online_episodes/development_pool_v3_critic_train_qwen_v1`
+- active development-pool v3 dev collection:
+  `outputs/graph_critic_online_episodes/development_pool_v3_critic_dev_qwen_v1`
 - expanded combined G1:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g1`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
 - expanded combined G2:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g2`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2`
 - expanded combined G2.5:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
 - expanded readiness report:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_readiness/training_readiness_report.md`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_readiness/training_readiness_report.md`
 
 Practical rule:
 
@@ -155,12 +165,64 @@ Practical rule:
 Verified expansion collection roots:
 
 - train collection:
-  `outputs/graph_critic_online_episodes/development_pool_v2_critic_train_qwen_v1`
-  - selected groups: `8`
-  - completed groups: `8`
-  - traced tokens: `1,623,590`
+  `outputs/graph_critic_online_episodes/development_pool_v3_critic_train_qwen_v1`
+  - selected groups: `27`
+  - completed groups: `27`
+  - traced tokens: `5,233,669`
 - dev collection:
-  `outputs/graph_critic_online_episodes/development_pool_v2_critic_dev_qwen_v1`
-  - selected groups: `4`
-  - completed groups: `4`
-  - traced tokens: `777,552`
+  `outputs/graph_critic_online_episodes/development_pool_v3_critic_dev_qwen_v1`
+  - selected groups: `9`
+  - completed groups: `9`
+  - traced tokens: `1,709,912`
+
+Current active derived dataset counts:
+
+- combined `G1`:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
+  - runs: `159`
+  - transitions: `3,185`
+- combined `G2`:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2`
+  - groups: `59`
+  - `critic_train`: `47`
+  - `critic_dev`: `12`
+  - transitions: `3,185`
+- combined `G2.5`:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+  - states: `3,344`
+  - candidate rows: `32,515`
+  - commit-positive states: `159`
+
+## Current Broad Controller Gate
+
+Canonical merged root:
+
+- `outputs/m2_graph_critic_online_scaleup_v2_merged118`
+
+Source roots:
+
+- original partial root:
+  `outputs/m2_graph_critic_online_scaleup_v2`
+- resumed root:
+  `outputs/m2_graph_critic_online_scaleup_v2_resume1`
+- partial backup snapshot:
+  `outputs/m2_graph_critic_online_scaleup_v2_partial80_snapshot`
+
+Status:
+
+- total runs: `118`
+- paired groups: `59`
+- incomplete groups: `0`
+- held-out `critic_dev` delta for `ours-eig-graph-critic` vs `ours-eig`:
+  `+0.0192`
+- pooled delta:
+  `-0.1156`
+- freeze decision:
+  `NO-GO` for paper-eval promotion right now
+
+Interpretation:
+
+- the graph critic is competitive but not yet robust enough for the main
+  learned-controller paper table
+- `LiveIdeaBench` transfer and early maturity behavior are the next active
+  diagnosis targets

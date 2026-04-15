@@ -20,6 +20,7 @@ from idea_graph.models import Branch, Edge, IdeaGraph, Node
 from idea_graph.relation_graph_critic_model import RelationGraphCritic
 from idea_graph.relation_graph_critic_data import (  # type: ignore[attr-defined]
     HashTextEmbeddingBackend,
+    RelationGraphVocabularies,
     build_relation_graph_runtime_batch,
     build_relation_graph_vocabularies,
 )
@@ -706,6 +707,90 @@ class RelationGraphRuntimeSelectorTests(unittest.TestCase):
 
         self.assertEqual(decision.policy_decision.selected_candidate_id, "heuristic")
         self.assertTrue(all(str(row.get("kind", "")) != "commit" for row in decision.scored_candidates))
+
+    def test_select_relation_graph_critic_candidate_records_predicted_gain_guard_fallback(self) -> None:
+        graph = _build_runtime_graph()
+        decision = select_relation_graph_critic_candidate(
+            graph,
+            round_name="Round3",
+            role="MechanismProposer",
+            state_features={
+                "round_index": 3,
+                "support_coverage": 0.60,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            candidate_specs=[
+                {
+                    "candidate_id": "heuristic",
+                    "kind": "add_support_edge",
+                    "target_ids": ["N001", "N002"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.80,
+                },
+                {
+                    "candidate_id": "critic-low-gain",
+                    "kind": "add_support_edge",
+                    "target_ids": ["N002", "N001"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.0,
+                },
+            ],
+            heuristic_candidate_id="heuristic",
+            runtime_bundle=_StubRuntimeBundle(scores=[0.10, 0.90], vocabularies=self.vocabularies),
+            config=RelationGraphRuntimeConfig(tau_override=0.05, use_commit=False),
+        )
+
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "heuristic")
+        self.assertEqual(decision.policy_decision.selected_source, "heuristic")
+        self.assertTrue(decision.policy_decision.used_heuristic_fallback)
+        self.assertEqual(decision.selected_spec["controller_fallback_reason"], "predicted_gain_guard")
+
+    def test_select_relation_graph_critic_candidate_blocks_low_signal_kind_swap(self) -> None:
+        graph = _build_runtime_graph()
+        vocabularies = RelationGraphVocabularies(
+            node_type_to_id=dict(self.vocabularies.node_type_to_id),
+            role_to_id=dict(self.vocabularies.role_to_id),
+            edge_type_to_id=dict(self.vocabularies.edge_type_to_id),
+            candidate_kind_to_id={
+                "request_evidence": 0,
+                "add_support_edge": 1,
+                "unknown": 2,
+            },
+        )
+        decision = select_relation_graph_critic_candidate(
+            graph,
+            round_name="Round3",
+            role="MechanismProposer",
+            state_features={
+                "round_index": 3,
+                "support_coverage": 0.60,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            candidate_specs=[
+                {
+                    "candidate_id": "heuristic",
+                    "kind": "request_evidence",
+                    "target_ids": ["N001"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.0,
+                },
+                {
+                    "candidate_id": "critic-low-signal",
+                    "kind": "add_support_edge",
+                    "target_ids": ["N002", "N001"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.0,
+                },
+            ],
+            heuristic_candidate_id="heuristic",
+            runtime_bundle=_StubRuntimeBundle(scores=[0.10, 0.90], vocabularies=vocabularies),
+            config=RelationGraphRuntimeConfig(tau_override=0.05, use_commit=False),
+        )
+
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "heuristic")
+        self.assertEqual(decision.policy_decision.selected_source, "heuristic")
+        self.assertTrue(decision.policy_decision.used_heuristic_fallback)
+        self.assertEqual(decision.selected_spec["controller_fallback_reason"], "low_signal_kind_swap_guard")
 
 
 if __name__ == "__main__":

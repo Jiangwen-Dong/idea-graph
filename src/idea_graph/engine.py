@@ -1744,6 +1744,26 @@ def _record_runtime_controller_trace(
     controller_decision: dict[str, object],
     scored_candidates: Sequence[Mapping[str, object]],
 ) -> None:
+    def _snapshot(candidate: Mapping[str, object]) -> dict[str, object]:
+        target_ids = candidate.get("target_ids", ())
+        if isinstance(target_ids, Sequence) and not isinstance(target_ids, (str, bytes)):
+            normalized_target_ids = [str(item) for item in target_ids]
+        else:
+            normalized_target_ids = []
+        payload = candidate.get("payload", {})
+        normalized_payload = dict(payload) if isinstance(payload, Mapping) else {}
+        return {
+            "candidate_id": candidate.get("candidate_id"),
+            "kind": candidate.get("kind"),
+            "target_ids": normalized_target_ids,
+            "payload": normalized_payload,
+            "rationale": candidate.get("rationale"),
+            "candidate_source": candidate.get("candidate_source"),
+            "predicted_gain": candidate.get("predicted_gain"),
+            "critic_score": candidate.get("critic_score"),
+            "controller_fallback_reason": candidate.get("controller_fallback_reason"),
+        }
+
     selected_fallback_ids = selected_candidate.get("controller_fallback_candidate_ids", ())
     if isinstance(selected_fallback_ids, Sequence) and not isinstance(selected_fallback_ids, (str, bytes)):
         normalized_fallback_ids = [str(item) for item in selected_fallback_ids]
@@ -1765,14 +1785,10 @@ def _record_runtime_controller_trace(
         "selected_fallback_candidate_ids": normalized_fallback_ids,
         "override_margin": controller_decision.get("override_margin"),
         "used_heuristic_fallback": controller_decision.get("used_heuristic_fallback"),
+        "heuristic_candidate": _snapshot(heuristic_candidate),
+        "selected_candidate": _snapshot(selected_candidate),
         "top_scored_candidates": [
-            {
-                "candidate_id": candidate.get("candidate_id"),
-                "kind": candidate.get("kind"),
-                "critic_score": candidate.get("critic_score"),
-                "predicted_gain": candidate.get("predicted_gain"),
-                "controller_fallback_reason": candidate.get("controller_fallback_reason"),
-            }
+            _snapshot(candidate)
             for candidate in sorted(
                 (dict(item) for item in scored_candidates),
                 key=lambda item: float(item.get("critic_score", float("-inf"))),

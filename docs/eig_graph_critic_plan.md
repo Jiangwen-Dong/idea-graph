@@ -9,6 +9,33 @@ Current local dataset layout guide:
 
 - `docs/graph_critic_dataset_layout.md`
 
+## Current Status Snapshot
+
+As of 2026-04-15, the relation-aware graph critic has cleared the offline
+ranking gate on the active v3 development pool, but the broad controller gate
+did **not** clear the paper-eval freeze gate.
+
+Canonical artifacts:
+
+- active candidate-slate dataset:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+- trusted offline comparison:
+  `outputs/graph_critic_models/development_pool_v3_offline_compare_v1`
+- merged broad online gate:
+  `outputs/m2_graph_critic_online_scaleup_v2_merged118`
+- freeze memo:
+  `outputs/m2_graph_critic_online_scaleup_v2_merged118/freeze_decision.md`
+
+Current decision:
+
+- keep `ours-eig` as the stable reference system
+- keep `ours-eig-graph-critic` as a competitive development method, but do not
+  freeze it for paper-eval yet
+- focus the next patch on weak-context / `LiveIdeaBench` transfer and maturity
+  interaction
+- keep live learned `commit` disabled until shadow calibration demonstrates a
+  safer stop policy than the current heuristic maturity stop
+
 ## Purpose
 
 The paper studies scientific ideation as a structured, multi-step process. The
@@ -227,9 +254,13 @@ Key reviewer-facing tests:
 - current full derived dataset:
   `outputs/graph_critic_datasets/03_archive/current_benchmarked_ours_eig_full_g25`
   with `910` states and `9456` candidates
-- expanded development-pool dataset:
+- first expanded development-pool dataset:
   `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
   with `1267` states, `13004` candidates, and `72` commit-positive
+  terminal states
+- current active development-pool dataset:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+  with `3344` states, `32515` candidates, and `159` commit-positive
   terminal states
 
 ### Stage G3: Text Critic Pilot
@@ -509,10 +540,52 @@ Key reviewer-facing tests:
   scorer comparison against the text scorer, but it remains development-only
   and should not yet support final learned-controller benchmark claims
 
+### Stage G4.95: Final Development-Pool Scale-Up (V3)
+
+- status:
+  - shadow-commit observability landed on the active execution branch
+  - final Stage A v3 development-only train/dev collections completed
+  - refreshed combined `G1 / G2 / G2.5` artifacts materialized
+- active expansion pool:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_candidate_pool_v1`
+  - `36` groups total
+  - `27` `critic_train`
+  - `9` `critic_dev`
+  - `24` AIIB groups
+  - `12` LiveIdeaBench groups
+- active collection roots:
+  - `outputs/graph_critic_online_episodes/development_pool_v3_critic_train_qwen_v1`
+    - `27` completed groups
+    - `5,233,669` traced tokens
+  - `outputs/graph_critic_online_episodes/development_pool_v3_critic_dev_qwen_v1`
+    - `9` completed groups
+    - `1,709,912` traced tokens
+- active derived datasets:
+  - `G1`:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
+    - `159` runs
+    - `3,185` transitions
+  - `G2`:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2`
+    - `59` groups
+    - `47` train groups
+    - `12` validation groups
+    - `3,185` transitions
+  - `G2.5`:
+    `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+    - `3,344` states
+    - `32,515` candidate rows
+    - `159` commit-positive states
+- readiness report:
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_readiness/training_readiness_report.md`
+- practical conclusion:
+  the v3 dataset is now the current active development-only pool and is ready
+  for the refreshed frozen offline gate before any broader controller packet
+
 ### Stage G5: Graph Critic
 
 - implement a first graph-feature action scorer on the frozen
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25` split
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25` split
 - compare against the refreshed text scorer on held-out development groups
 - keep learned `commit` out of runtime until edit-action ranking is stable
 - only promote graph critic into controller-in-the-loop generation after it
@@ -556,6 +629,11 @@ Key reviewer-facing tests:
   - keep the long-term controller framing intact: the graph critic still aims
     to rank full next-action candidates, including `commit`, but the current
     offline result shows that the first structured baseline is not yet ready
+- next active freeze gate:
+  rerun the same offline comparison on the stronger v3 roots:
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2_partitions/partition_manifest.jsonl`
 
 ### Stage G6: Controlled Generation Pilot
 
@@ -660,6 +738,49 @@ Key reviewer-facing tests:
   - next step can move to a narrow controller gate with the learned graph
     scorer, while keeping learned `commit` conservative and benchmark spending
     small until end-to-end quality is revalidated
+- next active freeze gate:
+  before any new controller packet, rerun the refreshed text scorer and the
+  relation-aware graph critic on the larger v3 split:
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2_partitions/partition_manifest.jsonl`
+
+### Stage G5.3: Refreshed V3 Offline Freeze Gate
+
+- frozen comparison roots:
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
+  - `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2_partitions/partition_manifest.jsonl`
+- refreshed text scorer artifact:
+  `outputs/graph_critic_models/development_pool_v3_text_warmstart_v1`
+  - validation states: `517`
+  - top-1: `0.7195`
+  - MRR: `0.8255`
+- refreshed graph-feature baseline:
+  `outputs/graph_critic_models/development_pool_v3_graph_feature_v1`
+  - validation states: `517`
+  - top-1: `0.5841`
+  - MRR: `0.7249`
+- trusted relation-aware graph critic:
+  `outputs/graph_critic_models/development_pool_v3_relation_graph_sanitized_v1`
+  - all-candidate top-1: `0.8665`
+  - all-candidate MRR: `0.9156`
+  - edit-only top-1: `0.8869`
+  - edit-only MRR: `0.9275`
+- explicit comparison artifact:
+  `outputs/graph_critic_models/development_pool_v3_offline_compare_v1`
+- frozen split support:
+  - validation groups: `12`
+  - train / validation candidate rows: `27,716 / 4,799`
+  - train / validation commit-positive states: `137 / 22`
+- decision:
+  - the relation-aware graph critic clears the refreshed v3 offline gate by a
+    large margin over the text warm-start
+  - the lightweight graph-feature baseline remains below the text warm-start
+    and should not be used for runtime promotion
+  - the next controller-facing packet should use the trusted
+    `development_pool_v3_relation_graph_sanitized_v1` line as the learned
+    graph-controller candidate
 
 ### Stage G6.1: Graph-Critic Controller Gate
 
@@ -709,10 +830,164 @@ Key reviewer-facing tests:
     safer near-maturity override policy, or a controller observability cleanup
     before any new benchmark spend
 
+### Stage G6.2: Development Packet With Shadow Commit
+
+- plan:
+  `docs/superpowers/plans/2026-04-13-graph-critic-dev-packet-and-shadow-commit.md`
+- purpose:
+  - move beyond the underpowered 4-case graph-controller gate
+  - keep the next learned-controller judgment development-only
+  - separate ranking quality, controller materialization, and stopping quality
+- execution shape:
+  - preserve the current 4-case AIIB gate as a sentinel regression set
+  - add a 12-instance development packet from
+    `development_pool_v3_candidate_pool_v1`
+  - add observability-only shadow-commit logging before any live learned commit
+- status update:
+  - shadow-commit logging is now landed for future learned-controller runs
+  - the next decision should be based on the refreshed v3 offline freeze gate,
+    not on the older v2 scale alone
+- decision intent:
+  - if the graph critic becomes safe on the sentinel set and at least neutral
+    on the medium development packet, it can earn another broader development
+    packet
+  - otherwise, the new logs should tell us whether the next patch belongs to
+    maturity, controller materialization, or robustness data expansion
+
+### Stage G6.3: Refreshed V3 Frozen Controller Gate
+
+- runtime default switch:
+  - `ours-eig-critic-graph` now defaults to
+    `outputs/graph_critic_models/development_pool_v3_relation_graph_sanitized_v1`
+  - targeted runtime verification:
+    `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_relation_graph_runtime_critic.py tests/test_engine.py -q`
+    - `69 passed`
+- artifact:
+  `outputs/m2_aiib_g6_graph_controller_gate_v2`
+- paired summary:
+  `outputs/m2_aiib_g6_graph_controller_gate_v2/paired_summary.md`
+- frozen cases:
+  - `13`
+  - `3883`
+  - `7909`
+  - `9849`
+- mean result:
+  - `ours-eig` mean AIIB native:
+    - `8.08`
+  - `ours-eig-critic-graph` mean AIIB native:
+    - `7.64`
+  - mean native delta:
+    - `-0.43`
+  - `ours-eig` mean local overall / alignment:
+    - `5.20 / 3.37`
+  - `ours-eig-critic-graph` mean local overall / alignment:
+    - `5.24 / 3.35`
+- key case-level interpretation:
+  - `3883` is still a failure case by native score (`6.86 -> 5.71`), but the
+    earlier extreme early-stop symptom improved from `Round2` in the first gate
+    to `Round4` here
+  - a new strong native regression appears on `13` (`8.86 -> 8.00`)
+  - `7909` is neutral by native score
+  - `9849` improves modestly by native score (`8.29 -> 8.57`)
+- controller materialization:
+  - runtime controller is definitely active, with `95` logged decisions
+  - selection sources:
+    - critic-selected: `51`
+    - heuristic-selected: `44`
+  - selected action kinds:
+    - `attach_evidence`: `40`
+    - `add_support_edge`: `27`
+    - `propose_repair`: `12`
+    - others: `16`
+- decision:
+  - `no-go` for broader controller scaling right now
+  - the main bottleneck is no longer offline ranking quality; it is the online
+    controller/materialization policy that turns scores into edits
+  - the next patch should focus on controller diagnosis and safer
+    score-to-action promotion, not on immediate larger benchmark expansion
+
 ### Stage G7: Paper Experiments
 
 - rerun the main comparison only after the critic pilot is stable
 - include critic ablations and calibration analysis
+
+### Stage G6.4: Guarded Runtime Policy v2
+
+- implemented:
+  - lowered the predicted-gain dominance floor from `0.10` to `0.05`
+  - added a low-signal kind-swap fallback in the relation-graph runtime
+    selector
+- verification:
+  - `python -m pytest tests/test_critic_policy.py tests/test_relation_graph_runtime_critic.py -q`
+    - `23 passed`
+  - `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_engine.py tests/test_relation_graph_runtime_critic.py tests/test_critic_policy.py -q`
+    - `80 passed`
+- frozen spot-check artifact:
+  `outputs/m2_aiib_g6_graph_controller_guard_patch_spotcheck_v2`
+  - `13` improved to `8.57` native
+  - `3883` improved to `7.14` native
+  - low-signal cross-kind swaps were removed in both traces
+- refreshed frozen gate artifact:
+  `outputs/m2_aiib_g6_graph_controller_gate_v3`
+  - paired summary:
+    `outputs/m2_aiib_g6_graph_controller_gate_v3/paired_summary.md`
+  - mean AIIB native:
+    - `ours-eig = 8.07`
+    - `ours-eig-critic-graph = 7.79`
+    - delta: `-0.29`
+  - controller behavior versus `gate_v2`:
+    - critic-selected actions dropped from `51 / 95` to `11 / 90`
+    - harmful lower-gain overrides dropped from `32` to `3`
+    - low-signal cross-kind swaps dropped from `10` to `0`
+- conclusion:
+  - the safety patch worked
+  - the controller is now much safer, but the frozen gate still fails on
+    `3883`
+  - the next bottleneck is no longer the earlier unsafe override pattern; it
+    is likely candidate materialization and/or maturity interaction on hard
+    cases
+- next concrete step:
+  - log the full selected-vs-heuristic candidate payloads for controller
+    overrides
+  - rerun repeated hard-case diagnosis on `3883`
+  - patch maturity/materialization only after that evidence is visible
+
+### Stage G6.5: Payload-Level 3883 Diagnosis
+
+- observability patch:
+  - `runtime_controller_log` now records compact payload snapshots for
+    heuristic, selected, and top-scored candidates
+  - verification:
+    - `python -m pytest tests/test_engine.py -q`
+      - `32 passed`
+    - `python -m pytest tests/test_benchmark_mode_and_baselines.py tests/test_engine.py tests/test_relation_graph_runtime_critic.py tests/test_critic_policy.py -q`
+      - `81 passed`
+- repeated hard-case artifact:
+  `outputs/m2_aiib_g6_3883_repeat_diagnosis_v1`
+  - summary:
+    `outputs/m2_aiib_g6_3883_repeat_diagnosis_v1/summary.md`
+- repeated `3883` result:
+  - `ours-eig` native scores:
+    - `6.86, 6.86, 6.57, 6.86`
+    - mean: `6.79`
+  - `ours-eig-critic-graph` native scores:
+    - `5.71, 7.14, 5.43, 5.43`
+    - mean: `5.93`
+- interpretation:
+  - the `3883` regression is stable enough that we should treat it as a real
+    controller problem, not just a one-off sample
+  - the graph-controller variant also stops earlier on average
+  - the stable surviving critic override is now visible:
+    - `Round3 / MechanismProposer / propose_repair`
+    - same action kind, same target, different `repair_text`
+  - the best graph-controller run also changed the novelty-overlap paper from
+    `paper-001` to `paper-002` (`Amex`), so there is some useful variance, but
+    not enough to erase the mean gap
+- updated next step:
+  - inspect maturity-stop interaction directly
+  - decide whether same-kind text-only overrides need an extra guard or a
+    stronger materialization criterion
+  - only then rerun another frozen packet
 
 ## Open Risks
 

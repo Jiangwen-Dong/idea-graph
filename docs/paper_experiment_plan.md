@@ -248,21 +248,90 @@
 
 ## Graph Critic Pilot Status
 
-The graph-critic line has reached a supporting `G3-text-pilot` milestone on
-the cleaned candidate-slate dataset
-`outputs/graph_critic_datasets/current_benchmarked_ours_eig_full_g25`.
-The `G2.5` layer contains `910` graph states and `9456` feasible candidates,
-including one explicit `commit` candidate per state.
+The active learned-controller dataset is now:
 
-The current `G3` model is a text-only logged-edit scorer trained on
-`state_text [SEP] candidate_text`, with artifacts saved at
-`outputs/graph_critic_models/current_benchmarked_ours_eig_full_g3_text_pilot`.
-It is useful as a low-data sanity check for action-selection signal, but it is
-not yet main-paper evidence for a learned graph controller. In particular, the
-current split has zero positive `commit` labels even though each slate includes
-an explicit `commit` candidate, so learned commit control is still blocked by
-label availability in the present cleaned stack and remains a future
-`G4/G5` objective.
+- `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
+
+Current active scale:
+
+- graph states: `3344`
+- candidate rows: `32515`
+- commit-positive terminal states: `159`
+
+The current trusted offline freeze gate is:
+
+- `outputs/graph_critic_models/development_pool_v3_offline_compare_v1`
+
+That offline gate is already strong enough to support the graph-critic method
+track:
+
+- frozen validation groups: `12`
+- validation states: `517`
+- validation candidate rows: `4799`
+- relation-aware graph critic:
+  - all-candidate top-1: `0.8665`
+  - all-candidate MRR: `0.9156`
+- text warm-start:
+  - top-1: `0.7195`
+  - MRR: `0.8255`
+
+Interpretation:
+
+- the graph critic is no longer just a text-pilot idea
+- the main remaining weakness is online controller transfer, not offline
+  ranking quality
+- the current 4-case and 12-case online packets are useful history, but are
+  too small to serve as the next main controller decision by themselves
+
+Paper/runtime naming bridge:
+
+- paper label: `ours-eig-graph-critic`
+- runtime baseline name: `ours-eig-critic-graph`
+
+Current untouched paper-eval reality:
+
+- `outputs/graph_critic_datasets/02_active_graph_critic/paper_eval_candidate_pool_v1/candidate_instances.json`
+- current proposed size:
+  - `6` `AI_Idea_Bench_2025`
+  - `4` `LiveIdeaBench`
+
+The broad online development gate is now complete:
+
+- merged result root:
+  `outputs/m2_graph_critic_online_scaleup_v2_merged118`
+- total paired groups:
+  `59`
+- held-out `critic_dev` delta for `ours-eig-graph-critic` vs `ours-eig`:
+  `+0.0192`
+- pooled delta:
+  `-0.1156`
+- freeze decision:
+  `NO-GO` for promoting the learned graph controller to paper-eval right now
+
+This means the learned-controller line is competitive and worth continuing,
+but it is not yet ready for a final paper table. The immediate gap is online
+transfer, especially weak-context `LiveIdeaBench` maturity behavior.
+
+## Current Learned-Controller Priority
+
+The broad development gate has finished and rejected immediate paper-eval
+promotion. The current priority is therefore a focused transfer repair, not
+another large run launched blindly.
+
+Execution order:
+
+1. Keep `ours-eig` as the stable reference and nearest ablation.
+2. Treat `ours-eig-graph-critic` as a competitive learned-controller candidate
+   that needs one more controller-transfer patch.
+3. Diagnose weak-context `LiveIdeaBench` behavior from:
+   - all `20` broad-gate `LiveIdeaBench` groups
+   - the held-out `6` `critic_dev` `LiveIdeaBench` groups
+4. Patch only the score-to-action / maturity interaction that is justified by
+   the transfer diagnosis.
+5. Keep live learned `commit` disabled for the next patch unless a separate
+   shadow-commit calibration gate clears.
+6. Rerun a transfer-focused development packet before any untouched
+   `paper_eval` launch.
 
 ## Must-Run vs Nice-to-Have
 
@@ -333,43 +402,36 @@ label availability in the present cleaned stack and remains a future
 
 ## Immediate Next Step
 
-Launch `M2` in a staged order instead of as one monolithic cross-benchmark batch.
+Run one focused `LiveIdeaBench` transfer-improvement cycle before another
+paper-facing freeze attempt.
 
-1. `M2-AIIB`:
-   - run the benchmark-native core automatic slice on `AI_Idea_Bench_2025` first
-   - keep the main comparison set:
-     - `direct`
-     - `self-refine`
-     - `ai-researcher`
-     - `ours-eig`
-   - use this slice as the primary paper-facing automatic result because it is
-     the most benchmark-faithful setting and the current strongest regime for
-     `ours-eig`
-2. Weak-context decision gate:
-   - decide whether to accept the current weak-context stability on
-     `LiveIdeaBench`
-   - only do one more narrow `ours-eig` stabilization pass if meteorology-like
-     rows are still judged too noisy for the larger slice
-3. `M2-Live`:
-   - launch the benchmark-native `LiveIdeaBench` core automatic slice once the
-     weak-context decision is made
-   - keep the same shared output contract and baseline set
-4. `M5-core`:
-   - after the larger automatic results are stable, run the core EIG ablations
-     on utility ranking, maturity stopping, and flat synthesis
-5. `M4`:
-   - prepare the human blind-review packet only after the final proposal format
-     is stable across both benchmarks
+1. Use the broad-gate merged root as the diagnosis source:
+   `outputs/m2_graph_critic_online_scaleup_v2_merged118`.
+2. Design one weak-context controller patch that targets earlier maturity and
+   low-confidence score-to-action promotion.
+3. Treat online calibration as development-only policy calibration:
+   - calibrate edit override thresholds and maturity guards first
+   - keep live learned `commit` disabled until shadow-commit diagnostics are
+     separately reliable
+4. Rerun a `LiveIdeaBench` transfer packet and the held-out `critic_dev` slice.
+5. Only if transfer becomes neutral-to-positive without a pooled negative
+   trend, rerun the full `59`-group broad gate.
 
 ## First Concrete Run Queue
 
-1. Freeze the current small-`M1` packet as the reference development batch.
-2. Launch the `AI_Idea_Bench_2025` `M2` slice.
-3. Review the saved `AI_Idea_Bench_2025` native results before spending on the
-   full `LiveIdeaBench` slice.
-4. If needed, run one narrow weak-context `ours-eig` stabilization pass on
-   meteorology-like `LiveIdeaBench` rows.
-5. Launch the `LiveIdeaBench` `M2` slice.
+1. Finish the repo freeze pass for the completed broad gate.
+2. Implement the smallest justified `LiveIdeaBench` transfer patch.
+3. Rerun:
+   - all `20` broad-gate `LiveIdeaBench` groups, if budget allows
+   - at minimum, the `6` held-out `critic_dev` `LiveIdeaBench` groups plus the
+     worst negative train-side rows
+4. Compare:
+   - `ours-eig`
+   - current `ours-eig-graph-critic`
+   - patched `ours-eig-graph-critic`
+5. Decide whether to rerun the full `59`-group broad gate or keep the graph
+   critic as an ablation while moving main paper experiments forward with
+   `ours-eig`.
 
 ## Final Checklist
 

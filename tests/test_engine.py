@@ -388,6 +388,72 @@ class EngineTests(unittest.TestCase):
             [controller_log[0]["selected_candidate_id"]],
         )
 
+    def test_runtime_controller_trace_records_candidate_snapshots(self) -> None:
+        def _mock_relation_graph_selector(*args, **kwargs):  # type: ignore[no-untyped-def]
+            valid_candidates = [dict(candidate) for candidate in kwargs["candidate_specs"]]
+            heuristic_id = str(kwargs["heuristic_candidate_id"])
+            selected = next(
+                candidate
+                for candidate in valid_candidates
+                if str(candidate.get("candidate_id")) != heuristic_id
+            )
+            return SimpleNamespace(
+                selected_spec={
+                    **selected,
+                    "critic_score": 0.91,
+                    "predicted_gain": 0.42,
+                },
+                policy_decision=SimpleNamespace(
+                    selected_candidate_id=str(selected["candidate_id"]),
+                    selected_source="critic",
+                    override_margin=0.12,
+                    used_heuristic_fallback=False,
+                ),
+                scored_candidates=tuple(
+                    {
+                        **candidate,
+                        "critic_score": 0.80 - (index * 0.1),
+                        "predicted_gain": 0.30 - (index * 0.05),
+                    }
+                    for index, candidate in enumerate(valid_candidates)
+                ),
+            )
+
+        with patch(
+            "idea_graph.engine.select_relation_graph_critic_candidate",
+            side_effect=_mock_relation_graph_selector,
+        ):
+            graph = run_experiment(
+                topic="graph-based scientific ideation",
+                literature=["paper a", "paper b", "paper c", "paper d"],
+                runtime_controller=object(),
+                runtime_controller_metadata={
+                    "kind": "relation_graph_critic_rerank",
+                    "model_dir": "memory://stub-bundle",
+                    "use_commit": False,
+                    "tau_override": 0.05,
+                    "config": RelationGraphRuntimeConfig(tau_override=0.05, use_commit=False),
+                },
+                max_rounds=1,
+                stop_when_mature=False,
+            )
+
+        controller_log = graph.metadata.get("runtime_controller_log")
+        self.assertTrue(controller_log)
+        first = controller_log[0]
+        self.assertIn("heuristic_candidate", first)
+        self.assertIn("selected_candidate", first)
+        self.assertIn("target_ids", first["heuristic_candidate"])
+        self.assertIn("payload", first["heuristic_candidate"])
+        self.assertIn("candidate_source", first["heuristic_candidate"])
+        self.assertIn("target_ids", first["selected_candidate"])
+        self.assertIn("payload", first["selected_candidate"])
+        self.assertIn("candidate_source", first["selected_candidate"])
+        self.assertTrue(first["top_scored_candidates"])
+        self.assertIn("target_ids", first["top_scored_candidates"][0])
+        self.assertIn("payload", first["top_scored_candidates"][0])
+        self.assertIn("candidate_source", first["top_scored_candidates"][0])
+
     def test_progress_callback_uses_functional_role_display_names(self) -> None:
         messages: list[str] = []
         graph = run_experiment(

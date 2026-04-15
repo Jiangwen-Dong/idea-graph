@@ -583,6 +583,44 @@ def _scored_row_from_score(spec: Mapping[str, Any], score: float) -> dict[str, o
     }
 
 
+def _maybe_apply_low_signal_kind_swap_guard(
+    *,
+    policy_decision: CriticPolicyDecision,
+    heuristic_row: Mapping[str, Any],
+    selected_row_lookup: Mapping[str, Mapping[str, Any]],
+    low_signal_threshold: float,
+) -> CriticPolicyDecision:
+    if policy_decision.selected_source != "critic":
+        return policy_decision
+    if policy_decision.selected_candidate_id == str(heuristic_row["candidate_id"]):
+        return policy_decision
+
+    selected_row = selected_row_lookup.get(policy_decision.selected_candidate_id)
+    if selected_row is None:
+        return policy_decision
+
+    heuristic_kind = str(heuristic_row.get("kind", "")).strip()
+    selected_kind = str(selected_row.get("kind", "")).strip()
+    if not heuristic_kind or not selected_kind or heuristic_kind == selected_kind:
+        return policy_decision
+
+    heuristic_gain = _candidate_float(heuristic_row, "predicted_gain")
+    selected_gain = _candidate_float(selected_row, "predicted_gain")
+    if heuristic_gain > low_signal_threshold or selected_gain > low_signal_threshold:
+        return policy_decision
+
+    return CriticPolicyDecision(
+        selected_candidate_id=str(heuristic_row["candidate_id"]),
+        selected_source="heuristic",
+        used_heuristic_fallback=True,
+        commit_allowed=policy_decision.commit_allowed,
+        commit_requested=policy_decision.commit_requested,
+        override_margin=policy_decision.override_margin,
+        commit_margin=policy_decision.commit_margin,
+        fallback_reason="low_signal_kind_swap_guard",
+    )
+
+
 def select_relation_graph_critic_candidate(
     graph: IdeaGraph,
     *,
@@ -726,6 +764,17 @@ def select_relation_graph_critic_candidate(
     if heuristic_scored is None:
         raise ValueError(f"heuristic_candidate_id '{heuristic_candidate_id}' is not present in safe candidates.")
 
+    policy_config = SafeCriticPolicyConfig(
+        min_commit_round=int(config.min_commit_round),
+        tau_override=float(config.tau_override),
+        tau_commit=float(config.tau_commit),
+        gamma_commit=float(config.gamma_commit),
+        guard_support_threshold=float(config.guard_support_threshold),
+        guard_support_gain_floor=float(config.guard_support_gain_floor),
+        guard_requires_contradiction_progress=bool(
+            config.guard_requires_contradiction_progress
+        ),
+    )
     policy_decision = choose_critic_action(
         state={
             "round_index": _parse_round_index(round_name),
@@ -733,21 +782,19 @@ def select_relation_graph_critic_candidate(
         },
         critic_candidates=policy_candidates,
         heuristic_candidate=_policy_candidate_from_scored_spec(heuristic_scored),
-        config=SafeCriticPolicyConfig(
-            min_commit_round=int(config.min_commit_round),
-            tau_override=float(config.tau_override),
-            tau_commit=float(config.tau_commit),
-            gamma_commit=float(config.gamma_commit),
-            guard_support_threshold=float(config.guard_support_threshold),
-            guard_support_gain_floor=float(config.guard_support_gain_floor),
-            guard_requires_contradiction_progress=bool(
-                config.guard_requires_contradiction_progress
-            ),
-        ),
+        config=policy_config,
     )
 
     selected_row_lookup = {str(row["candidate_id"]): row for row in scored_candidates}
+    policy_decision = _maybe_apply_low_signal_kind_swap_guard(
+        policy_decision=policy_decision,
+        heuristic_row=heuristic_scored,
+        selected_row_lookup=selected_row_lookup,
+        low_signal_threshold=float(policy_config.guard_predicted_gain_min_heuristic),
+    )
     selected_spec = dict(selected_row_lookup[policy_decision.selected_candidate_id])
+    if policy_decision.fallback_reason and "controller_fallback_reason" not in selected_spec:
+        selected_spec["controller_fallback_reason"] = policy_decision.fallback_reason
     return RelationGraphRuntimeDecision(
         selected_spec=selected_spec,
         policy_decision=policy_decision,

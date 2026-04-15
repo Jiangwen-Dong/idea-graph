@@ -4,6 +4,28 @@
 **Scope:** final development-only graph-critic expansion, controller diagnosis,
 freeze criteria, and main benchmark launch plan
 
+## Status Update: 2026-04-15
+
+Stage C broad-gate execution is complete. The canonical merged result root is:
+
+- `outputs/m2_graph_critic_online_scaleup_v2_merged118`
+
+Decision:
+
+- `NO-GO` for freezing `ours-eig-graph-critic` as the paper-eval main method
+  right now
+
+Reason:
+
+- held-out `critic_dev` is near-neutral (`+0.0192`)
+- pooled `59` groups still trend negative (`-0.1156`)
+- `LiveIdeaBench` transfer and early maturity behavior remain the clearest
+  online-controller risks
+
+Next design note:
+
+- `docs/superpowers/specs/2026-04-15-liveideabench-transfer-and-calibration-design.md`
+
 ## Purpose
 
 This spec turns the current graph-critic work into a concrete paper-facing
@@ -351,23 +373,99 @@ Recommended primary offline metrics:
 Test whether the stronger graph critic actually improves end-to-end generation
 quality, not only offline ranking.
 
-### Packet Size
+### Single Broad Development Online Gate
 
-Recommended primary diagnosis packet:
+Stage C should now use one broader development-only online packet instead of
+separate `Tier C0` and `Tier C1` stages.
 
-- `24` AIIB cases
+Reason:
 
-Optional secondary diagnosis packet:
+- the 4-case sentinel packet already served its diagnosis purpose
+- the standalone 12-case gate is still too small to be persuasive on its own
+- the fastest credible next step is one larger frozen development packet with
+  clean held-out reporting inside it
 
-- `8` to `12` LiveIdeaBench cases
+Historical note:
 
-These packets are still development-only and must come from development pools,
-not future paper-eval pools.
+- earlier sentinel and small-gate runs remain useful archived diagnosis
+  artifacts
+- they are no longer the active promotion stages
+
+### Broad Gate Source
+
+- `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2_partitions/partition_manifest.jsonl`
+
+### Broad Gate Membership
+
+Use all current frozen development groups in the combined `G2` partition layer:
+
+- total groups: `59`
+- benchmark mix:
+  - `39` `AI_Idea_Bench_2025`
+  - `20` `LiveIdeaBench`
+- partition-role mix:
+  - `47` `critic_train`
+  - `12` `critic_dev`
+
+Benchmark-role breakdown:
+
+- `AI_Idea_Bench_2025`
+  - `33` `critic_train`
+  - `6` `critic_dev`
+- `LiveIdeaBench`
+  - `14` `critic_train`
+  - `6` `critic_dev`
+
+### Readout Rule
+
+Run one broad packet, but report three views from the same saved run set.
+
+Primary readout:
+
+- all `12` held-out `critic_dev` groups
+
+Secondary readout:
+
+- pooled result over all `59` development groups
+
+Diagnostic readout:
+
+- all `47` `critic_train` groups
+
+Interpretation rule:
+
+- the held-out `critic_dev` readout is the main promotion signal inside the
+  broad gate
+- the pooled `59`-group result is supporting robustness evidence
+- the `critic_train` result is diagnostic only and must not be presented as the
+  clean validation score
 
 ### Compared Systems
 
 - `ours-eig`
 - `ours-eig-graph-critic`
+- optional supporting ablation:
+  - `ours-eig-critic-text`
+
+### Primary Online Metrics
+
+For the broad gate, report instance-level paired comparisons for each of the
+three readouts above:
+
+- mean benchmark-native score
+- median benchmark-native score
+- paired mean delta against `ours-eig`
+- win rate against `ours-eig`
+- bootstrap confidence interval over instances
+
+Benchmark-specific reporting:
+
+- `AI_Idea_Bench_2025`
+  - mean native profile
+  - per-metric averages where useful
+- `LiveIdeaBench`
+  - mean native average
+  - per-dimension averages where useful
 
 ### Required Runtime Analysis
 
@@ -383,12 +481,40 @@ For every run, record and later summarize:
 - stop reason
 - total rounds without commit
 
+### Optional Ambiguity-Resolution Stability Slice
+
+To keep progress fast, repeated reruns are no longer mandatory before
+promotion.
+
+Run an ambiguity-resolution rerun only if the main held-out `critic_dev`
+readout is borderline or internally inconsistent.
+
+Trigger examples:
+
+- paired mean delta is close to zero but the win rate is unstable
+- stop behavior differs strongly while score deltas remain ambiguous
+- AIIB and LiveIdeaBench move in opposite directions
+
+If triggered:
+
+- rerun all `12` held-out `critic_dev` groups `3` times per compared system
+- report:
+  - score spread
+  - stop-round spread
+  - action-distribution stability
+
 ### Stage C Success Criteria
 
-- no obvious `3883`-style pathological regression
-- mean native score is at least near-neutral and preferably positive
-- controller materially affects execution rather than silently falling back
-- action traces are interpretable enough for paper analysis
+- primary held-out `critic_dev` readout:
+  - mean native score is at least near-neutral and preferably positive
+  - no systematic earlier-stop pathology relative to `ours-eig`
+  - controller materially affects execution rather than silently falling back
+- pooled `59`-group readout:
+  - no clear negative trend on the broader development packet
+- stratified readout:
+  - `critic_train` versus `critic_dev` reporting does not reveal a severe
+    collapse outside the clean held-out slice
+- action traces remain interpretable enough for paper analysis
 
 ## Stage D: Final Controller Freeze
 
@@ -411,6 +537,42 @@ After this freeze:
 - no more tuning on development packets should affect the paper-eval method
 
 ## Stage E: Main Benchmark Experiments
+
+### Precondition
+
+The current untouched paper-eval candidate pool is still too small for the
+main paper table:
+
+- `outputs/graph_critic_datasets/02_active_graph_critic/paper_eval_candidate_pool_v1/candidate_instances.json`
+- current size:
+  - `6` `AI_Idea_Bench_2025`
+  - `4` `LiveIdeaBench`
+
+Therefore Stage E must begin with a paper-eval pool expansion and freeze step.
+
+### Stage E0: Frozen Paper-Eval Pool Expansion
+
+Before launching the main table:
+
+- enlarge the untouched `paper_eval` candidate pool to the target scale
+- freeze the final membership before any learned-controller run is launched
+- keep zero overlap with:
+  - `development_pool_v1`
+  - `development_pool_v2_candidate_pool_v1`
+  - `development_pool_v3_candidate_pool_v1`
+
+Recommended target:
+
+- preferred:
+  - `96` `AI_Idea_Bench_2025`
+  - `64` `LiveIdeaBench`
+- minimum acceptable:
+  - `64` `AI_Idea_Bench_2025`
+  - `48` `LiveIdeaBench`
+
+If the full preferred size is not immediately available, freeze the largest
+feasible untouched stratified packet in advance and report its exact size
+clearly.
 
 ### Main Automatic Evaluation
 
@@ -507,10 +669,12 @@ Mitigation:
 
 ## Immediate Next Step
 
-Begin **Stage A**:
+Begin the `LiveIdeaBench` transfer repair cycle described in:
 
-- define the new development-only expansion pool
-- freeze train/dev group assignments
-- collect the new traced runs
-- export the expanded `G1`/`G2`/`G2.5` artifacts
-- write a new readiness report before any further controller promotion
+- `docs/superpowers/specs/2026-04-15-liveideabench-transfer-and-calibration-design.md`
+
+The next behavioral patch should focus on:
+
+- weak-context score-to-action calibration
+- maturity-stop hardening after critic overrides
+- shadow-commit diagnostics without enabling live learned `commit` yet

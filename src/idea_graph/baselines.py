@@ -41,7 +41,7 @@ TEXT_CRITIC_MODEL_RELATIVE_PATH = (
 RELATION_GRAPH_CRITIC_MODEL_RELATIVE_DIR = (
     Path("outputs")
     / "graph_critic_models"
-    / "development_pool_v2_relation_graph_sanitized_v1"
+    / "development_pool_v3_relation_graph_sanitized_v1"
 )
 
 

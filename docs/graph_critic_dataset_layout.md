@@ -28,6 +28,12 @@ Use this folder when the task is:
 
 Active artifacts for the current graph-critic and dataset-expansion line:
 
+- `development_pool_v3_candidate_pool_v1`
+- `development_pool_v3_combined_g1`
+- `development_pool_v3_combined_g2`
+- `development_pool_v3_combined_g2_partitions`
+- `development_pool_v3_combined_g25`
+- `development_pool_v3_combined_readiness`
 - `development_pool_v2_candidate_pool_v1`
 - `development_pool_v2_combined_g1`
 - `development_pool_v2_combined_g2`
@@ -39,10 +45,14 @@ Active artifacts for the current graph-critic and dataset-expansion line:
 Use this folder when the task is:
 
 - graph-critic offline training
-- development-pool v2 analysis
+- development-pool v3 analysis
 - leakage-safe split inspection
 - readiness reporting
 - future paper-eval planning
+
+The v2 roots are retained for provenance and older comparisons. New graph
+critic work should start from v3 unless a task explicitly asks to reproduce an
+older v2 result.
 
 ### `outputs/graph_critic_datasets/03_archive`
 
@@ -81,10 +91,12 @@ If you are starting new critic training now:
 - Text-critic partition manifest:
   `outputs/graph_critic_datasets/01_active_text_critic/current_benchmarked_ours_eig_full_g35_partitions/partition_manifest.jsonl`
 - Graph-critic candidate dataset:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g25`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g25`
 - Graph-critic partition manifest:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g2_partitions/partition_manifest.jsonl`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g2_partitions/partition_manifest.jsonl`
 - Graph-critic snapshot root:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_g1`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_g1`
 - Graph-critic readiness report:
-  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v2_combined_readiness/training_readiness_report.md`
+  `outputs/graph_critic_datasets/02_active_graph_critic/development_pool_v3_combined_readiness/training_readiness_report.md`
+- Latest broad online graph-controller gate:
+  `outputs/m2_graph_critic_online_scaleup_v2_merged118`

@@ -206,9 +206,11 @@ def select_text_critic_candidate(
             ),
         ),
     )
-    selected_spec = scored_lookup[policy_decision.selected_candidate_id]
+    selected_spec = dict(scored_lookup[policy_decision.selected_candidate_id])
+    if policy_decision.fallback_reason and "controller_fallback_reason" not in selected_spec:
+        selected_spec["controller_fallback_reason"] = policy_decision.fallback_reason
     return TextCriticRuntimeDecision(
-        selected_spec=dict(selected_spec),
+        selected_spec=selected_spec,
         policy_decision=policy_decision,
         scored_candidates=tuple(scored_candidates),
     )
