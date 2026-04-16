@@ -815,17 +815,16 @@ Copy the exact model, calibration artifact, split registry, dataset stats, and e
   - Because the collection artifacts retain round counts, action counts, stop reasons, and protocol stamps, later filtering and reweighting can preferentially keep higher-quality supervision rows without changing the replay schema.
 
 - Collection status:
-  - Full background heuristic collection launched for:
-    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/train`
-    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/dev`
+  - Foreground execution is verified for both:
+    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1_smoke_exec/train`
+    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1_smoke_exec/dev`
   - Runtime settings:
     - baseline `ours-eig`
     - backend `openai-compatible`
     - runtime protocol `parallel_graph_v2`
-    - `--skip-existing` enabled so resumed launches can continue safely
-  - Launcher logs:
-    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/train_launcher.log`
-    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/dev_launcher.log`
+  - Important operational note:
+    - direct foreground execution inherits `DASHSCOPE_API_KEY` correctly and completes;
+    - the ad hoc background launcher attempt from this session dropped the API-key environment in child processes, so full unattended collection should be relaunched only after using a launcher pattern that preserves the environment end-to-end.
 
 ## Plan Self-Review
 
