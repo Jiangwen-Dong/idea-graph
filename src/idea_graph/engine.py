@@ -3230,15 +3230,37 @@ def run_experiment(
                 runtime_controller_metadata=runtime_controller_metadata,
                 progress_callback=progress_callback,
             )
+            selected_action_payloads = [
+                {
+                    "id": action.id,
+                    "role": action.role,
+                    "kind": action.kind,
+                    "target_ids": list(action.target_ids),
+                    "payload": dict(action.payload),
+                    "source": action.source,
+                }
+                for action in result.selected_actions
+            ]
             append_parallel_round_trace(
                 graph.metadata,
                 {
                     "round": result.round_name,
                     "active_roles": list(result.active_roles),
                     "inactive_roles": [role for role in ROLE_NAMES if role not in result.active_roles],
-                    "selected_actions": [action.id for action in result.selected_actions],
+                    "selected_actions": selected_action_payloads,
                     "skipped_roles": list(result.skipped_roles),
                     "termination_reason": result.termination_reason,
+                    "graph_delta": {
+                        "node_count_before": result.node_count_before,
+                        "node_count_after": result.node_count_after,
+                        "node_delta": result.node_count_after - result.node_count_before,
+                        "edge_count_before": result.edge_count_before,
+                        "edge_count_after": result.edge_count_after,
+                        "edge_delta": result.edge_count_after - result.edge_count_before,
+                        "action_count_before": result.action_count_before,
+                        "action_count_after": result.action_count_after,
+                        "action_delta": result.action_count_after - result.action_count_before,
+                    },
                 },
             )
             snapshot = maturity_snapshot(graph)

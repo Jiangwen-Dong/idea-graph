@@ -28,6 +28,9 @@ def execute_parallel_role_round(
     progress_callback,
 ):
     del runtime_controller, runtime_controller_metadata, progress_callback
+    node_count_before = len(graph.nodes)
+    edge_count_before = len(graph.edges)
+    action_count_before = len(graph.actions)
     roles = active_roles_for_round(graph, round_name)
     if collaboration_backend is None:
         snapshot = deepcopy(graph)
@@ -38,6 +41,7 @@ def execute_parallel_role_round(
             )
             for role in roles
         ]
+        action_source = "parallel_deterministic"
     else:
         raw_decisions = collect_parallel_role_decisions(
             graph,
@@ -45,6 +49,7 @@ def execute_parallel_role_round(
             collaboration_backend,
             roles,
         )
+        action_source = "parallel_llm"
     selected_actions = []
     skipped_roles = []
     for role, decision in sorted(raw_decisions, key=lambda item: item[0]):
@@ -57,7 +62,7 @@ def execute_parallel_role_round(
             role=role,
             decision=decision,
         )
-        action.source = "parallel_llm"
+        action.source = action_source
         apply_action(graph, action)
         selected_actions.append(action)
     return ParallelRoleRoundResult(
@@ -66,6 +71,12 @@ def execute_parallel_role_round(
         skipped_roles=tuple(skipped_roles),
         selected_actions=tuple(selected_actions),
         termination_reason="continue",
+        node_count_before=node_count_before,
+        node_count_after=len(graph.nodes),
+        edge_count_before=edge_count_before,
+        edge_count_after=len(graph.edges),
+        action_count_before=action_count_before,
+        action_count_after=len(graph.actions),
     )
 
 

@@ -628,6 +628,11 @@ class EngineTests(unittest.TestCase):
         traces = graph.metadata.get("parallel_round_traces")
         self.assertTrue(traces)
         self.assertEqual(traces[0]["round"], "Round1")
+        self.assertIn("graph_delta", traces[0])
+        self.assertIn("node_count_before", traces[0]["graph_delta"])
+        self.assertIn("node_count_after", traces[0]["graph_delta"])
+        self.assertIn("selected_actions", traces[0])
+        self.assertIsInstance(traces[0]["selected_actions"], list)
 
     def test_run_experiment_records_default_runtime_protocol(self) -> None:
         graph = run_experiment(

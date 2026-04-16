@@ -112,6 +112,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of collaboration rounds to execute.",
     )
     parser.add_argument(
+        "--runtime-protocol",
+        choices=["sequential_v1", "parallel_graph_v2"],
+        default="sequential_v1",
+        help="Internal runtime protocol. Keeps the external I/O contract the same while changing round execution semantics.",
+    )
+    parser.add_argument(
         "--disable-maturity-stop",
         action="store_true",
         help="Keep running until --max-rounds even if the maturity metric is reached earlier.",
@@ -288,6 +294,7 @@ def main() -> None:
     experiment_metadata["agent_backend"] = args.agent_backend
     experiment_metadata["max_rounds_requested"] = max(1, args.max_rounds)
     experiment_metadata["stop_when_mature"] = not args.disable_maturity_stop
+    experiment_metadata["runtime_protocol"] = args.runtime_protocol
     if collaboration_backend is not None:
         experiment_metadata["openai_compatible"] = collaboration_backend.settings.sanitized_dict()
     if args.native_eval and llm_settings is not None:
@@ -350,6 +357,7 @@ def main() -> None:
     print("== Baseline ==")
     print(args.baseline)
     print(f"I/O mode: {instance.metadata.get('io_mode', args.io_mode)}")
+    print(f"Runtime protocol: {instance.metadata.get('runtime_protocol', args.runtime_protocol)}")
     if args.external_baseline_config:
         print(f"External config: {args.external_baseline_config}")
     print()

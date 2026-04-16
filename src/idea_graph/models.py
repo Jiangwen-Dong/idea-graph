@@ -74,6 +74,12 @@ class ParallelRoleRoundResult:
     skipped_roles: tuple[str, ...]
     selected_actions: tuple[GraphAction, ...]
     termination_reason: str
+    node_count_before: int = 0
+    node_count_after: int = 0
+    edge_count_before: int = 0
+    edge_count_after: int = 0
+    action_count_before: int = 0
+    action_count_after: int = 0
 
 
 @dataclass
