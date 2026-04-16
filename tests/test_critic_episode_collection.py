@@ -173,6 +173,40 @@ class CriticEpisodeCollectionTests(unittest.TestCase):
             "ours-eig",
         )
 
+    def test_build_episode_launch_manifest_passes_parallel_runtime_protocol(self) -> None:
+        manifest = build_episode_launch_manifest(
+            [self.registry_rows[0]],
+            baseline_name="ours-eig",
+            max_rounds=5,
+            native_eval=False,
+            runs_dir=self.tmp_dir / "runs",
+            runtime_protocol="parallel_graph_v2",
+        )
+        self.assertEqual(len(manifest), 1)
+        row = manifest[0]
+        self.assertEqual(row["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(
+            row["command"],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_pipeline.py"),
+                "--benchmark",
+                "ai_idea_bench_2025",
+                "--benchmark-index",
+                "13",
+                "--baseline",
+                "ours-eig",
+                "--agent-backend",
+                "openai-compatible",
+                "--max-rounds",
+                "5",
+                "--output-dir",
+                str((self.tmp_dir / "runs").resolve()),
+                "--runtime-protocol",
+                "parallel_graph_v2",
+            ],
+        )
+
     def test_cli_dry_run_writes_collection_artifacts(self) -> None:
         output_root = self.tmp_dir / "collections"
         script_path = ROOT / "scripts" / "collect_critic_train_episodes.py"

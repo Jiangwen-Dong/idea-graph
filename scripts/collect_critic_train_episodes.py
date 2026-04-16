@@ -108,6 +108,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Benchmark cache root passed through to run_pipeline.py.",
     )
     parser.add_argument(
+        "--runtime-protocol",
+        choices=["sequential_v1", "parallel_graph_v2"],
+        default="parallel_graph_v2",
+        help="Runtime protocol passed through to run_pipeline.py.",
+    )
+    parser.add_argument(
+        "--disable-maturity-stop",
+        action="store_true",
+        help="Disable maturity stop behavior in run_pipeline.py.",
+    )
+    parser.add_argument(
         "--execute",
         action="store_true",
         help="Actually launch the runs. Without this flag the script performs a dry run only.",
@@ -151,6 +162,8 @@ def main() -> None:
         llm_config_path=args.llm_config,
         benchmark_root=args.benchmark_root,
         agent_backend=args.agent_backend,
+        runtime_protocol=args.runtime_protocol,
+        disable_maturity_stop=bool(args.disable_maturity_stop),
     )
 
     collection_config = {
@@ -167,6 +180,8 @@ def main() -> None:
         "agent_backend": args.agent_backend,
         "llm_config": str(args.llm_config.resolve()) if args.llm_config is not None else None,
         "benchmark_root": str(args.benchmark_root.resolve()),
+        "runtime_protocol": args.runtime_protocol,
+        "disable_maturity_stop": bool(args.disable_maturity_stop),
         "execute": bool(args.execute),
         "skip_existing": bool(args.skip_existing),
     }
