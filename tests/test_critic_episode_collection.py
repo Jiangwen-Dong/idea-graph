@@ -173,6 +173,53 @@ class CriticEpisodeCollectionTests(unittest.TestCase):
             "ours-eig",
         )
 
+    def test_build_episode_launch_manifest_passes_parallel_runtime_protocol(self) -> None:
+        manifest = build_episode_launch_manifest(
+            [self.registry_rows[0]],
+            baseline_name="ours-eig",
+            max_rounds=5,
+            native_eval=False,
+            runs_dir=self.tmp_dir / "runs",
+            runtime_protocol="parallel_graph_v2",
+        )
+        self.assertEqual(len(manifest), 1)
+        row = manifest[0]
+        self.assertEqual(row["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(
+            row["command"],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_pipeline.py"),
+                "--benchmark",
+                "ai_idea_bench_2025",
+                "--benchmark-index",
+                "13",
+                "--baseline",
+                "ours-eig",
+                "--agent-backend",
+                "openai-compatible",
+                "--max-rounds",
+                "5",
+                "--output-dir",
+                str((self.tmp_dir / "runs").resolve()),
+                "--runtime-protocol",
+                "parallel_graph_v2",
+            ],
+        )
+
+    def test_build_episode_launch_manifest_can_disable_maturity_stop(self) -> None:
+        manifest = build_episode_launch_manifest(
+            [self.registry_rows[0]],
+            baseline_name="ours-eig",
+            max_rounds=5,
+            native_eval=False,
+            runs_dir=self.tmp_dir / "runs",
+            disable_maturity_stop=True,
+        )
+        self.assertEqual(len(manifest), 1)
+        row = manifest[0]
+        self.assertIn("--disable-maturity-stop", row["command"])
+
     def test_cli_dry_run_writes_collection_artifacts(self) -> None:
         output_root = self.tmp_dir / "collections"
         script_path = ROOT / "scripts" / "collect_critic_train_episodes.py"
@@ -202,6 +249,42 @@ class CriticEpisodeCollectionTests(unittest.TestCase):
         summary = json.loads((collection_dir / "collection_summary.json").read_text(encoding="utf-8"))
         self.assertEqual(summary["selected_group_count"], 1)
         self.assertEqual(summary["mode"], "dry_run")
+
+    def test_cli_dry_run_persists_runtime_protocol_and_disable_maturity_stop(self) -> None:
+        output_root = self.tmp_dir / "collections"
+        script_path = ROOT / "scripts" / "collect_critic_train_episodes.py"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script_path),
+                "--split-registry",
+                str(self.registry_path),
+                "--output-dir",
+                str(output_root),
+                "--collection-name",
+                "parallel_protocol_collection",
+                "--limit",
+                "1",
+                "--runtime-protocol",
+                "parallel_graph_v2",
+                "--disable-maturity-stop",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+
+        collection_dir = output_root / "parallel_protocol_collection"
+        collection_config = json.loads((collection_dir / "collection_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(collection_config["runtime_protocol"], "parallel_graph_v2")
+        self.assertTrue(collection_config["disable_maturity_stop"])
+
+        manifest_lines = (collection_dir / "launch_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(manifest_lines), 1)
+        manifest_row = json.loads(manifest_lines[0])
+        self.assertEqual(manifest_row["runtime_protocol"], "parallel_graph_v2")
+        self.assertIn("--disable-maturity-stop", manifest_row["command"])
 
 
 if __name__ == "__main__":

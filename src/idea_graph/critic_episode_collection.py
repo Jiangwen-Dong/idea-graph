@@ -142,6 +142,8 @@ def build_run_pipeline_command(
     llm_config_path: Path | None = None,
     benchmark_root: Path | None = None,
     agent_backend: str = "openai-compatible",
+    runtime_protocol: str = "parallel_graph_v2",
+    disable_maturity_stop: bool = False,
 ) -> list[str]:
     command = [
         python_executable or sys.executable,
@@ -158,11 +160,15 @@ def build_run_pipeline_command(
         str(manifest_row["max_rounds"]),
         "--output-dir",
         str(Path(runs_dir).resolve()),
+        "--runtime-protocol",
+        str(runtime_protocol),
     ]
     if benchmark_root is not None:
         command.extend(["--benchmark-root", str(Path(benchmark_root).resolve())])
     if llm_config_path is not None:
         command.extend(["--llm-config", str(Path(llm_config_path).resolve())])
+    if disable_maturity_stop:
+        command.append("--disable-maturity-stop")
     if bool(manifest_row.get("native_eval", False)):
         command.append("--native-eval")
     return command
@@ -174,6 +180,8 @@ def build_episode_launch_manifest(
     baseline_name: str,
     max_rounds: int,
     native_eval: bool,
+    runtime_protocol: str = "parallel_graph_v2",
+    disable_maturity_stop: bool = False,
     runs_dir: Path | None = None,
     llm_config_path: Path | None = None,
     benchmark_root: Path | None = None,
@@ -191,6 +199,7 @@ def build_episode_launch_manifest(
         manifest_row["baseline_name"] = str(baseline_name).strip()
         manifest_row["max_rounds"] = int(max_rounds)
         manifest_row["native_eval"] = bool(native_eval)
+        manifest_row["runtime_protocol"] = str(runtime_protocol).strip()
         if runs_dir is not None:
             command = build_run_pipeline_command(
                 manifest_row,
@@ -199,6 +208,8 @@ def build_episode_launch_manifest(
                 llm_config_path=llm_config_path,
                 benchmark_root=benchmark_root,
                 agent_backend=agent_backend,
+                runtime_protocol=runtime_protocol,
+                disable_maturity_stop=disable_maturity_stop,
             )
             manifest_row["command"] = command
             manifest_row["command_text"] = subprocess.list2cmdline(command)
