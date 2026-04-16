@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .action_candidates import enumerate_candidate_specs, flatten_candidate_text
-from .critic_dataset import _as_object_dict, make_group_id, package_labels_from_manifest_row
+from .critic_dataset import (
+    _as_object_dict,
+    assign_group_splits,
+    build_group_manifest,
+    make_group_id,
+    package_labels_from_manifest_row,
+)
 from .fs_utils import read_text_file, write_text_file
 from .models import Branch, Edge, GraphAction, IdeaGraph, Node, Provenance
 
@@ -543,6 +549,8 @@ def build_candidate_schema() -> dict[str, str]:
         "weak_local": "object",
         "native": "object",
         "label_availability": "object",
+        "runtime_protocol": "str",
+        "label_source": "str",
     }
 
 
@@ -601,6 +609,203 @@ class CandidateSlateDatasetBuildResult:
     dataset_dir: Path
     state_count: int
     candidate_count: int
+
+
+def _group_parallel_rows_by_state(
+    parallel_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in parallel_rows:
+        state_id = str(row.get("state_id", "")).strip()
+        if not state_id:
+            raise ValueError("Parallel edit row is missing required state_id.")
+        grouped.setdefault(state_id, []).append(dict(row))
+    return grouped
+
+
+def _validate_parallel_candidate_state_rows(
+    state_id: str,
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    ordered_rows = sorted(
+        (dict(row) for row in rows),
+        key=lambda row: (
+            _safe_int(row.get("candidate_index")),
+            str(row.get("candidate_id", "")).strip(),
+        ),
+    )
+    if not ordered_rows:
+        raise ValueError(f"Parallel state '{state_id}' is empty.")
+
+    selected_count = sum(1 for row in ordered_rows if bool(row.get("is_logged_selected", False)))
+    if selected_count != 1:
+        raise ValueError(
+            f"Parallel state '{state_id}' must have exactly one logged-selected candidate; found {selected_count}."
+        )
+
+    candidate_count = _safe_int(ordered_rows[0].get("candidate_count"))
+    if candidate_count != len(ordered_rows):
+        raise ValueError(
+            f"Parallel state '{state_id}' candidate_count={candidate_count} does not match actual rows={len(ordered_rows)}."
+        )
+
+    selected_candidate_id = str(ordered_rows[0].get("selected_candidate_id", "")).strip()
+    shared_fields = {
+        "group_id": make_group_id(ordered_rows[0]),
+        "benchmark": str(ordered_rows[0].get("benchmark", "unknown")).strip() or "unknown",
+        "instance_name": str(ordered_rows[0].get("instance_name", "unknown")).strip() or "unknown",
+        "run_dir": str(ordered_rows[0].get("run_dir", "")).strip(),
+        "step_index": _safe_int(ordered_rows[0].get("parallel_state_index")),
+        "round_name": str(ordered_rows[0].get("round_name", "")).strip(),
+        "role": str(ordered_rows[0].get("role", "")).strip(),
+        "state_kind": str(ordered_rows[0].get("state_kind", "parallel_pre_action")).strip() or "parallel_pre_action",
+        "state_text": str(ordered_rows[0].get("state_text", "")).strip(),
+        "candidate_count": candidate_count,
+        "runtime_protocol": str(ordered_rows[0].get("runtime_protocol", "")).strip(),
+        "label_source": str(ordered_rows[0].get("label_source", "")).strip(),
+        "selected_candidate_id": selected_candidate_id,
+    }
+    for row in ordered_rows[1:]:
+        if str(row.get("selected_candidate_id", "")).strip() != selected_candidate_id:
+            raise ValueError(f"Parallel state '{state_id}' has inconsistent selected_candidate_id values.")
+        if _safe_int(row.get("candidate_count")) != candidate_count:
+            raise ValueError(f"Parallel state '{state_id}' has inconsistent candidate_count values.")
+        if str(row.get("run_dir", "")).strip() != shared_fields["run_dir"]:
+            raise ValueError(f"Parallel state '{state_id}' mixes multiple run_dir values.")
+
+    return ordered_rows, shared_fields
+
+
+def build_parallel_candidate_dataset_rows(
+    *,
+    g1_dataset_dir: Path,
+    parallel_rows: Sequence[Mapping[str, Any]],
+    manifest_rows: Sequence[Mapping[str, Any]],
+    split_rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    manifest_by_run_dir = {
+        str(row.get("run_dir", "")).strip(): row
+        for row in manifest_rows
+        if str(row.get("run_dir", "")).strip()
+    }
+    split_by_group = _split_lookup(split_rows)
+    candidate_rows: list[dict[str, Any]] = []
+    state_manifest: list[dict[str, Any]] = []
+
+    grouped = _group_parallel_rows_by_state(parallel_rows)
+    for state_id in sorted(grouped):
+        state_rows, shared = _validate_parallel_candidate_state_rows(state_id, grouped[state_id])
+        run_dir = str(shared["run_dir"])
+        manifest_row = manifest_by_run_dir.get(run_dir)
+        if manifest_row is None:
+            raise ValueError(f"Parallel state '{state_id}' references run_dir '{run_dir}' missing from run manifest.")
+        group_id = make_group_id(manifest_row)
+        split = split_by_group.get(group_id)
+        if split is None:
+            raise ValueError(f"Missing split assignment for parallel state group_id '{group_id}'.")
+        label_package = package_labels_from_manifest_row(manifest_row)
+
+        for row in state_rows:
+            candidate_rows.append(
+                {
+                    "state_id": state_id,
+                    "candidate_id": str(row.get("candidate_id", "")).strip(),
+                    "group_id": group_id,
+                    "split": split,
+                    "benchmark": shared["benchmark"],
+                    "instance_name": shared["instance_name"],
+                    "run_dir": run_dir,
+                    "step_index": shared["step_index"],
+                    "round_name": shared["round_name"],
+                    "role": shared["role"],
+                    "state_kind": shared["state_kind"],
+                    "state_text": shared["state_text"],
+                    "candidate_index": _safe_int(row.get("candidate_index")),
+                    "candidate_count": shared["candidate_count"],
+                    "candidate_kind": str(row.get("candidate_kind", "")).strip(),
+                    "candidate_target_ids": [str(item).strip() for item in row.get("candidate_target_ids", []) if str(item).strip()],
+                    "candidate_payload": _as_object_dict(row.get("candidate_payload")),
+                    "candidate_source": str(row.get("candidate_source", "")).strip(),
+                    "candidate_text": str(row.get("candidate_text", "")).strip(),
+                    "is_commit": False,
+                    "is_logged_selected": bool(row.get("is_logged_selected", False)),
+                    "is_commit_positive_state": False,
+                    "commit_supervision": {},
+                    "targets": label_package["targets"],
+                    "weak_local": label_package["weak_local"],
+                    "native": label_package["native"],
+                    "label_availability": label_package["label_availability"],
+                    "runtime_protocol": shared["runtime_protocol"],
+                    "label_source": shared["label_source"],
+                }
+            )
+
+        state_manifest.append(
+            {
+                "state_id": state_id,
+                "group_id": group_id,
+                "split": split,
+                "benchmark": shared["benchmark"],
+                "instance_name": shared["instance_name"],
+                "run_dir": run_dir,
+                "step_index": shared["step_index"],
+                "round_name": shared["round_name"],
+                "role": shared["role"],
+                "state_kind": shared["state_kind"],
+                "candidate_count": shared["candidate_count"],
+                "runtime_protocol": shared["runtime_protocol"],
+                "label_source": shared["label_source"],
+            }
+        )
+
+    return candidate_rows, state_manifest
+
+
+def build_parallel_candidate_dataset_from_export(
+    *,
+    g1_dataset_dir: Path,
+    output_dir: Path,
+    dataset_name: str,
+    validation_fraction: float = 0.2,
+    split_overrides_path: Path | None = None,
+) -> CandidateSlateDatasetBuildResult:
+    manifest_rows = _load_optional_jsonl(Path(g1_dataset_dir) / "run_manifest.jsonl")
+    parallel_rows = _load_optional_jsonl(Path(g1_dataset_dir) / "parallel_edit_examples.jsonl")
+    split_override_rows = _load_optional_jsonl(Path(split_overrides_path)) if split_overrides_path else []
+    group_rows = build_group_manifest(manifest_rows, parallel_rows)
+    split_rows = assign_group_splits(
+        group_rows,
+        validation_fraction=validation_fraction,
+        split_override_rows=split_override_rows,
+    )
+    candidate_rows, state_manifest = build_parallel_candidate_dataset_rows(
+        g1_dataset_dir=g1_dataset_dir,
+        parallel_rows=parallel_rows,
+        manifest_rows=manifest_rows,
+        split_rows=split_rows,
+    )
+    candidate_schema = build_candidate_schema()
+    dataset_stats = build_candidate_dataset_stats(candidate_rows, state_manifest)
+
+    dataset_dir = Path(output_dir) / dataset_name
+    write_text_file(dataset_dir / "candidate_dataset.jsonl", _jsonl_lines(candidate_rows))
+    write_text_file(dataset_dir / "state_manifest.jsonl", _jsonl_lines(state_manifest))
+    write_text_file(dataset_dir / "split_manifest.jsonl", _jsonl_lines(split_rows))
+    write_text_file(
+        dataset_dir / "candidate_schema.json",
+        json.dumps(candidate_schema, indent=2, ensure_ascii=False, default=str),
+    )
+    write_text_file(
+        dataset_dir / "dataset_stats.json",
+        json.dumps(dataset_stats, indent=2, ensure_ascii=False, default=str),
+    )
+    write_text_file(dataset_dir / "README.md", _readme_text(dataset_name))
+
+    return CandidateSlateDatasetBuildResult(
+        dataset_dir=dataset_dir,
+        state_count=len(state_manifest),
+        candidate_count=len(candidate_rows),
+    )
 
 
 def build_graph_critic_candidate_dataset(

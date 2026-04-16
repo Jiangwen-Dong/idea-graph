@@ -345,3 +345,80 @@ class RelationGraphCriticDataTests(unittest.TestCase):
         )
 
         self.assertEqual(dataset.train_examples[0].node_text_embeddings.shape, (0, 8))
+
+    def test_build_relation_graph_dataset_reads_parallel_state_snapshots(self) -> None:
+        candidate_rows = [
+            json.loads(line)
+            for line in (self.fixture.candidate_dir / "candidate_dataset.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        for row in candidate_rows:
+            state_id = str(row["state_id"])
+            if "::Terminal::" in state_id:
+                continue
+            run_dir = str(row["run_dir"])
+            row["state_id"] = f"{run_dir}::parallel::Round1::{row['role']}"
+            row["before_state_snapshot"] = "parallel_state_snapshots/train-parallel-000.json"
+            if "dev-case" in str(row["group_id"]):
+                row["state_id"] = f"{run_dir}::parallel::Round1::{row['role']}"
+                row["before_state_snapshot"] = "parallel_state_snapshots/dev-parallel-000.json"
+        _write_jsonl(_windows_safe_path(self.fixture.candidate_dir / "candidate_dataset.jsonl"), candidate_rows)
+
+        parallel_rows = [
+            {
+                "run_dir": "C:/tmp/run-train",
+                "state_id": "C:/tmp/run-train::parallel::Round1::MechanismProposer",
+                "round_name": "Round1",
+                "role": "MechanismProposer",
+                "before_state_snapshot": "parallel_state_snapshots/train-parallel-000.json",
+            },
+            {
+                "run_dir": "C:/tmp/run-dev",
+                "state_id": "C:/tmp/run-dev::parallel::Round1::MechanismProposer",
+                "round_name": "Round1",
+                "role": "MechanismProposer",
+                "before_state_snapshot": "parallel_state_snapshots/dev-parallel-000.json",
+            },
+        ]
+        (self.fixture.g1_dir / "parallel_state_snapshots").mkdir(parents=True, exist_ok=True)
+        _write_jsonl(_windows_safe_path(self.fixture.g1_dir / "parallel_edit_examples.jsonl"), parallel_rows)
+        write_text_file(self.fixture.g1_dir / "parallel_state_snapshots" / "train-parallel-000.json", json.dumps({
+            "node_count": 3,
+            "edge_count": 2,
+            "contradiction_count": 0,
+            "support_edge_count": 1,
+            "nodes": {
+                "N001": {"id": "N001", "type": "Hypothesis", "text": "shared evidence anchor", "role": "MechanismProposer", "branch_id": "B001", "confidence": 0.8, "evidence": [], "status": "active"},
+                "N002": {"id": "N002", "type": "Method", "text": "shared evidence anchor", "role": "MechanismProposer", "branch_id": "B001", "confidence": 0.7, "evidence": [], "status": "active"},
+                "N003": {"id": "N003", "type": "EvalPlan", "text": "shared evidence anchor", "role": "EvaluationDesigner", "branch_id": "B002", "confidence": 0.6, "evidence": [], "status": "active"},
+            },
+            "edges": [
+                {"id": "E001", "source_id": "N001", "target_id": "N002", "relation": "depends_on", "resolved": True},
+                {"id": "E002", "source_id": "N002", "target_id": "N003", "relation": "supports", "resolved": False},
+            ],
+        }))
+        write_text_file(self.fixture.g1_dir / "parallel_state_snapshots" / "dev-parallel-000.json", json.dumps({
+            "node_count": 3,
+            "edge_count": 2,
+            "contradiction_count": 0,
+            "support_edge_count": 1,
+            "nodes": {
+                "N001": {"id": "N001", "type": "Hypothesis", "text": "shared evidence anchor", "role": "MechanismProposer", "branch_id": "B001", "confidence": 0.8, "evidence": [], "status": "active"},
+                "N002": {"id": "N002", "type": "Method", "text": "shared evidence anchor", "role": "MechanismProposer", "branch_id": "B001", "confidence": 0.7, "evidence": [], "status": "active"},
+                "N003": {"id": "N003", "type": "EvalPlan", "text": "shared evidence anchor", "role": "EvaluationDesigner", "branch_id": "B002", "confidence": 0.6, "evidence": [], "status": "active"},
+            },
+            "edges": [
+                {"id": "E001", "source_id": "N001", "target_id": "N002", "relation": "depends_on", "resolved": True},
+                {"id": "E002", "source_id": "N002", "target_id": "N003", "relation": "supports", "resolved": False},
+            ],
+        }))
+
+        dataset = build_relation_graph_dataset(
+            candidate_dataset_dir=self.fixture.candidate_dir,
+            g1_dataset_dir=self.fixture.g1_dir,
+            partition_manifest_path=self.fixture.partition_manifest,
+            text_backend=HashTextEmbeddingBackend(dim=8),
+        )
+
+        self.assertEqual(len(dataset.train_examples), 2)
+        self.assertEqual(len(dataset.dev_examples), 2)
