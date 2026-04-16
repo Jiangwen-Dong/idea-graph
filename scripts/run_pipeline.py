@@ -29,6 +29,7 @@ from idea_graph.benchmark_scoring import evaluate_benchmark_native
 from idea_graph.evaluation import evaluate_graph
 from idea_graph.io import load_instance, write_run_artifacts
 from idea_graph.instances import ExperimentInstance
+from idea_graph.repo_paths import default_benchmark_root
 from idea_graph.external_baselines import load_external_baseline_config
 from idea_graph.settings import OpenAICompatibleSettings
 
@@ -63,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--benchmark-root",
         type=Path,
-        default=ROOT / "data" / "benchmarks",
+        default=default_benchmark_root(ROOT),
         help="Base cache directory for benchmark files.",
     )
     parser.add_argument(

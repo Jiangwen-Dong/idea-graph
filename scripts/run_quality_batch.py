@@ -34,6 +34,7 @@ from idea_graph.experiment_plans import (
 from idea_graph.external_baselines import load_external_baseline_config
 from idea_graph.io import write_run_artifacts
 from idea_graph.instances import ExperimentInstance
+from idea_graph.repo_paths import default_ai_benchmark_root, default_live_benchmark_root
 from idea_graph.settings import OpenAICompatibleSettings
 
 
@@ -138,13 +139,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ai-benchmark-root",
         type=Path,
-        default=ROOT / "data" / "benchmarks" / "ai_idea_bench_2025",
+        default=default_ai_benchmark_root(ROOT),
         help="Root directory for AI Idea Bench 2025 files.",
     )
     parser.add_argument(
         "--live-benchmark-root",
         type=Path,
-        default=ROOT / "data" / "benchmarks" / "liveideabench",
+        default=default_live_benchmark_root(ROOT),
         help="Root directory for LiveIdeaBench files.",
     )
     parser.add_argument(

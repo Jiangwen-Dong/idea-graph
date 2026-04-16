@@ -779,6 +779,54 @@ Report:
 
 Copy the exact model, calibration artifact, split registry, dataset stats, and evaluation summary into the final paper artifact directory.
 
+## Progress Checkpoint (2026-04-16 Evening)
+
+- Completed:
+  - Fixed worktree-aware benchmark-root defaults for `run_pipeline.py`, `collect_critic_train_episodes.py`, `run_quality_batch.py`, and `run_controller_eval_packet.py`.
+  - Added regression coverage in `tests/test_script_default_paths.py`; focused parser/benchmark-facing suite passed with `38 passed`.
+  - Fixed Windows long-path artifact writing in `write_run_artifacts(...)` via shared filesystem helper usage.
+  - Added regression coverage in `tests/test_io.py`; focused suite passed with `7 passed` across `test_run_quality_batch.py`, `test_script_default_paths.py`, and `test_io.py`.
+  - Regenerated dry-run train/dev collection manifests under `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/`; commands now resolve `--benchmark-root` to the shared repo cache rather than the worktree path.
+  - Verified real OpenAI-compatible `parallel_graph_v2` execution with `scripts/run_pipeline.py` on AI Idea Bench 2025 index `13`.
+  - Verified real collection-wrapper execution with `scripts/collect_critic_train_episodes.py --execute --limit 1` for both `critic_train` and `critic_dev`.
+
+- Current quality checkpoint:
+  - Fresh small comparison batch:
+    - `outputs/quality_batches/20260416-165345-p2v2-qwen-2x2/`
+  - Combined 2x2 aggregate:
+    - `ours-eig` (`parallel_graph_v2`): overall `5.88`, alignment `4.30`, expert `7.47`, graph `8.80`, calls `6.0`, tokens `14382`, rounds `4.75`, actions `23.75`
+    - `self-refine`: overall `5.78`, alignment `4.22`, expert `7.34`, calls `3.0`, tokens `6120`
+    - `direct`: overall `5.39`, alignment `3.55`, expert `7.22`, calls `1.0`, tokens `1726`
+    - `ai-researcher`: overall `4.59`, alignment `2.17`, expert `7.00`, calls `6.0`, tokens `11361`
+  - AI Idea Bench 2025 mean:
+    - `ours-eig`: `4.67`
+    - `direct`: `4.60`
+    - `self-refine`: `4.54`
+    - `ai-researcher`: `4.42`
+  - LiveIdeaBench mean:
+    - `ours-eig`: `7.10`
+    - `self-refine`: `7.03`
+    - `direct`: `6.18`
+    - `ai-researcher`: `4.76`
+
+- Interpretation:
+  - The parallel heuristic is acceptable as the first teacher for critic-label curation because it is protocol-matched, replay-complete, and currently ranks first on the combined fresh slice.
+  - The margin over `self-refine` is small overall and especially narrow on AI Idea Bench 2025, so this should be framed as a reasonable bootstrap teacher rather than a final strong paper-claim result.
+  - Because the collection artifacts retain round counts, action counts, stop reasons, and protocol stamps, later filtering and reweighting can preferentially keep higher-quality supervision rows without changing the replay schema.
+
+- Collection status:
+  - Full background heuristic collection launched for:
+    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/train`
+    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/dev`
+  - Runtime settings:
+    - baseline `ours-eig`
+    - backend `openai-compatible`
+    - runtime protocol `parallel_graph_v2`
+    - `--skip-existing` enabled so resumed launches can continue safely
+  - Launcher logs:
+    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/train_launcher.log`
+    - `outputs/graph_critic_online_episodes/parallel_v2_heuristic_teacher_qwen_v1/dev_launcher.log`
+
 ## Plan Self-Review
 
 - Spec coverage:

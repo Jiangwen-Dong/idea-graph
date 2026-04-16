@@ -16,8 +16,7 @@ from idea_graph.controller_eval_runtime import (
     load_packet_rows,
 )
 from idea_graph.fs_utils import write_text_file
-
-DEFAULT_BENCHMARK_ROOT_BASE = ROOT / "data" / "benchmarks"
+from idea_graph.repo_paths import default_benchmark_root
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -51,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--benchmark-root-base",
         type=Path,
-        default=DEFAULT_BENCHMARK_ROOT_BASE,
+        default=default_benchmark_root(ROOT),
         help="Base benchmark-data directory.",
     )
     parser.add_argument(
