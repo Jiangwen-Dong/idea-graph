@@ -24,8 +24,11 @@ def test_append_parallel_round_trace_persists_round_payload_in_metadata() -> Non
             "round": "Round1",
             "active_roles": ["MechanismProposer"],
             "inactive_roles": ["EvaluationDesigner"],
-            "selected_actions": [],
+            "selected_role_decisions": [],
+            "edit_patches": [],
+            "materialized_graph_actions": [],
             "skipped_roles": ["MechanismProposer"],
+            "post_round_commit": {"should_commit": False},
             "graph_delta": {
                 "node_count_before": 5,
                 "node_count_after": 6,

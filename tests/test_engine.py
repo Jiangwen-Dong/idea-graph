@@ -631,8 +631,14 @@ class EngineTests(unittest.TestCase):
         self.assertIn("graph_delta", traces[0])
         self.assertIn("node_count_before", traces[0]["graph_delta"])
         self.assertIn("node_count_after", traces[0]["graph_delta"])
-        self.assertIn("selected_actions", traces[0])
-        self.assertIsInstance(traces[0]["selected_actions"], list)
+        self.assertIn("selected_role_decisions", traces[0])
+        self.assertIsInstance(traces[0]["selected_role_decisions"], list)
+        self.assertIn("edit_patches", traces[0])
+        self.assertIsInstance(traces[0]["edit_patches"], list)
+        self.assertIn("materialized_graph_actions", traces[0])
+        self.assertIsInstance(traces[0]["materialized_graph_actions"], list)
+        self.assertIn("post_round_commit", traces[0])
+        self.assertNotIn("selected_actions", traces[0])
 
     def test_parallel_runtime_records_parallel_edit_rows(self) -> None:
         graph = run_experiment(

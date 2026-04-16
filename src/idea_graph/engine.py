@@ -3230,7 +3230,15 @@ def run_experiment(
                 runtime_controller_metadata=runtime_controller_metadata,
                 progress_callback=progress_callback,
             )
-            selected_action_payloads = [
+            selected_role_decision_payloads = [
+                asdict(record)
+                for record in result.selected_role_decisions
+            ]
+            edit_patch_payloads = [
+                asdict(record)
+                for record in result.edit_patches
+            ]
+            materialized_action_payloads = [
                 {
                     "id": action.id,
                     "role": action.role,
@@ -3239,7 +3247,7 @@ def run_experiment(
                     "payload": dict(action.payload),
                     "source": action.source,
                 }
-                for action in result.selected_actions
+                for action in result.materialized_graph_actions
             ]
             append_parallel_round_trace(
                 graph.metadata,
@@ -3247,9 +3255,11 @@ def run_experiment(
                     "round": result.round_name,
                     "active_roles": list(result.active_roles),
                     "inactive_roles": [role for role in ROLE_NAMES if role not in result.active_roles],
-                    "selected_actions": selected_action_payloads,
+                    "selected_role_decisions": selected_role_decision_payloads,
+                    "edit_patches": edit_patch_payloads,
+                    "materialized_graph_actions": materialized_action_payloads,
                     "skipped_roles": list(result.skipped_roles),
-                    "termination_reason": result.termination_reason,
+                    "post_round_commit": asdict(result.post_round_commit),
                     "graph_delta": {
                         "node_count_before": result.node_count_before,
                         "node_count_after": result.node_count_after,
@@ -3287,7 +3297,9 @@ def run_experiment(
                     "runtime_protocol": runtime_protocol,
                     "active_roles": list(result.active_roles),
                     "skipped_roles": list(result.skipped_roles),
-                    "selected_action_count": len(result.selected_actions),
+                    "selected_role_decision_count": len(result.selected_role_decisions),
+                    "materialized_action_count": len(result.materialized_graph_actions),
+                    "post_round_commit": bool(result.post_round_commit.should_commit),
                     "support_coverage": snapshot.support_coverage,
                     "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
                     "utility": snapshot.utility,
