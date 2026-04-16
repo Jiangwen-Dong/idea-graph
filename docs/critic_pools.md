@@ -7,6 +7,47 @@ Dataset layout guide:
 
 - `docs/graph_critic_dataset_layout.md`
 
+## Active Parallel V2 Splits
+
+The current paper-facing split manifests are tracked in:
+
+- `data/splits/parallel_v2`
+
+Critic train/dev:
+
+- registry:
+  `data/splits/parallel_v2/critic_train_dev_registry.jsonl`
+- split overrides:
+  `data/splits/parallel_v2/critic_train_dev_split_overrides.jsonl`
+- stats:
+  `data/splits/parallel_v2/critic_train_dev_stats.json`
+- role counts:
+  - `critic_train`: `300`
+  - `critic_dev`: `100`
+- benchmark balance:
+  - `AI_Idea_Bench_2025`: `150` train and `50` dev
+  - `LiveIdeaBench`: `150` train and `50` dev
+
+Paper eval:
+
+- registry:
+  `data/splits/parallel_v2/paper_eval_v2_registry.jsonl`
+- stats:
+  `data/splits/parallel_v2/paper_eval_v2_stats.json`
+- disjointness audit:
+  `data/splits/parallel_v2/paper_eval_v2_disjointness_audit.json`
+- role counts:
+  - `paper_eval`: `256`
+- benchmark balance:
+  - `AI_Idea_Bench_2025`: `128`
+  - `LiveIdeaBench`: `128`
+- overlap with critic train/dev:
+  - `0`
+
+These parallel-v2 manifests supersede the smaller development pools below for
+new critic training, calibration, and paper evaluation. The older sections are
+kept to preserve engineering history.
+
 ## Current Frozen Development Pool
 
 Pool name:

@@ -67,6 +67,54 @@ class GraphAction:
     timestamp: datetime = field(default_factory=utc_now)
 
 
+@dataclass(frozen=True)
+class ParallelRoleDecisionRecord:
+    role: str
+    kind: str
+    target_ids: tuple[str, ...]
+    payload: dict[str, object]
+    rationale: str
+
+
+@dataclass(frozen=True)
+class ParallelEditPatchRecord:
+    role: str
+    kind: str
+    target_ids: tuple[str, ...]
+    payload: dict[str, object]
+    is_empty: bool
+
+
+@dataclass(frozen=True)
+class ParallelCommitCheckRecord:
+    round_name: str
+    state_kind: str
+    should_commit: bool
+    source: str
+    support_coverage: float = 0.0
+    unresolved_contradiction_ratio: float = 0.0
+    utility: float = 0.0
+
+
+@dataclass(frozen=True)
+class ParallelRoleRoundResult:
+    round_name: str
+    active_roles: tuple[str, ...]
+    skipped_roles: tuple[str, ...]
+    selected_role_decisions: tuple[ParallelRoleDecisionRecord, ...]
+    edit_patches: tuple[ParallelEditPatchRecord, ...]
+    materialized_graph_actions: tuple[GraphAction, ...]
+    post_round_commit: ParallelCommitCheckRecord
+    edit_rows: tuple[dict[str, object], ...] = ()
+    post_round_commit_rows: tuple[dict[str, object], ...] = ()
+    node_count_before: int = 0
+    node_count_after: int = 0
+    edge_count_before: int = 0
+    edge_count_after: int = 0
+    action_count_before: int = 0
+    action_count_after: int = 0
+
+
 @dataclass
 class UtilityBreakdown:
     promise: float = 0.0

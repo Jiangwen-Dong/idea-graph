@@ -604,6 +604,95 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(graph.metadata.get("executed_round_count"), 5)
         self.assertEqual(graph.metadata.get("stop_reason"), "max_rounds_reached")
 
+    def test_run_experiment_accepts_parallel_runtime_protocol(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        self.assertEqual(graph.metadata.get("runtime_protocol"), "parallel_graph_v2")
+        self.assertEqual(graph.metadata.get("executed_round_count"), 1)
+
+    def test_parallel_runtime_records_round_traces(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        traces = graph.metadata.get("parallel_round_traces")
+        self.assertTrue(traces)
+        self.assertEqual(traces[0]["round"], "Round1")
+        self.assertIn("graph_delta", traces[0])
+        self.assertIn("node_count_before", traces[0]["graph_delta"])
+        self.assertIn("node_count_after", traces[0]["graph_delta"])
+        self.assertIn("selected_role_decisions", traces[0])
+        self.assertIsInstance(traces[0]["selected_role_decisions"], list)
+        self.assertIn("edit_patches", traces[0])
+        self.assertIsInstance(traces[0]["edit_patches"], list)
+        self.assertIn("materialized_graph_actions", traces[0])
+        self.assertIsInstance(traces[0]["materialized_graph_actions"], list)
+        self.assertIn("post_round_commit", traces[0])
+        self.assertNotIn("selected_actions", traces[0])
+
+    def test_parallel_runtime_records_parallel_edit_rows(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        rows = graph.metadata.get("parallel_edit_rows")
+        self.assertTrue(rows)
+        self.assertEqual(len(rows), len(graph.metadata["parallel_round_traces"][0]["active_roles"]))
+        first_row = rows[0]
+        self.assertEqual(first_row["schema_version"], "parallel_edit_row_v1")
+        self.assertEqual(first_row["runtime_protocol"], "parallel_graph_v2")
+        self.assertIn("selected_candidate_id", first_row)
+        self.assertIn("state_text", first_row)
+        self.assertIn("candidates", first_row)
+        self.assertTrue(any(candidate["candidate_kind"] == "skip" for candidate in first_row["candidates"]))
+        self.assertEqual(
+            sum(1 for candidate in first_row["candidates"] if bool(candidate["is_selected"])),
+            1,
+        )
+
+    def test_parallel_runtime_records_post_round_commit_rows(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        rows = graph.metadata.get("post_round_commit_rows")
+        self.assertTrue(rows)
+        first_row = rows[0]
+        self.assertEqual(first_row["schema_version"], "post_round_commit_row_v1")
+        self.assertEqual(first_row["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(first_row["state_kind"], "parallel_post_round")
+        self.assertIn("state_snapshot", first_row)
+        self.assertEqual(first_row["commit_supervision"]["source"], "maturity_snapshot")
+        self.assertIn("label", first_row["commit_supervision"])
+
+    def test_run_experiment_records_default_runtime_protocol(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        self.assertEqual(graph.metadata.get("runtime_protocol"), "sequential_v1")
+
     def test_run_experiment_stops_early_when_mature(self) -> None:
         mature_snapshot = MaturitySnapshot(
             support_coverage=0.8,
@@ -1550,6 +1639,126 @@ class EngineTests(unittest.TestCase):
         graph.utility_history = [8.0, 8.1]
         specific_snapshot = maturity_snapshot(graph)
         self.assertTrue(specific_snapshot.is_mature)
+
+    def test_aiib_maturity_accepts_visible_reference_anchors_without_dataset_metadata(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is 3D language field modeling.",
+            literature=[
+                "3D Gaussian Splatting for Real-Time Radiance Field Rendering",
+                "LERF: Language Embedded Radiance Fields",
+                "Segment Anything",
+            ],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "generation_safe_metadata": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "paper_grounding": {
+                        "reference_paper_snippets": [
+                            {
+                                "resolved_title": "3D Gaussian Splatting for Real-Time Radiance Field Rendering",
+                                "method": "3D Gaussian Splatting represents scenes with explicit Gaussian primitives for efficient rendering.",
+                            },
+                            {
+                                "resolved_title": "LERF: Language Embedded Radiance Fields",
+                                "method": "LERF grounds CLIP features in radiance fields for open-vocabulary 3D language queries.",
+                            },
+                            {
+                                "resolved_title": "Segment Anything",
+                                "method": "Segment Anything provides mask-based hierarchical segmentation cues.",
+                            },
+                        ]
+                    },
+                },
+            },
+        )
+        problem_branch = create_branch(graph, "ImpactReframer")
+        gap_branch = create_branch(graph, "NoveltyExaminer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+        risk_branch = create_branch(graph, "FeasibilityCritic")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="3D language field modeling remains slow and ambiguous when CLIP language features are queried over radiance fields.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.86,
+            evidence=["LERF grounds CLIP features in radiance fields for open-vocabulary 3D language queries."],
+        )
+        gap = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Visible references suggest combining Gaussian Splatting speed with LERF-style language fields and hierarchical semantics.",
+            role="NoveltyExaminer",
+            branch_id=gap_branch.id,
+            confidence=0.84,
+            evidence=["3D Gaussian Splatting provides efficient rendering while LERF provides language embedded radiance fields."],
+        )
+        hypothesis = create_node(
+            graph,
+            node_type="Hypothesis",
+            text="A 3D Gaussian Splatting language field with CLIP compression and hierarchical semantic masks can improve open-vocabulary queries.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.86,
+            evidence=["Segment Anything provides mask-based hierarchical segmentation cues."],
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text=(
+                "Attach compact CLIP language embeddings to 3D Gaussian Splatting primitives, use a scene-specific "
+                "language autoencoder, and organize queries with hierarchical semantics from segmentation masks."
+            ),
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.86,
+            evidence=["LERF grounds CLIP features in radiance fields for open-vocabulary 3D language queries."],
+        )
+        evaluation = create_node(
+            graph,
+            node_type="EvalPlan",
+            text=(
+                "Evaluate open-vocabulary 3D language query localization against LERF and 3D Gaussian Splatting "
+                "baselines, reporting query accuracy and ablations on CLIP compression and hierarchical semantics."
+            ),
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.84,
+            evidence=["3D Gaussian Splatting provides efficient rendering while LERF provides language grounding."],
+        )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="CLIP language compression may blur fine-grained boundaries, so hierarchy-aware query refinement is necessary.",
+            role="FeasibilityCritic",
+            branch_id=risk_branch.id,
+            confidence=0.78,
+            evidence=["Segment Anything provides mask-based hierarchical segmentation cues."],
+        )
+        for source, target in (
+            (gap, problem),
+            (hypothesis, problem),
+            (hypothesis, gap),
+            (method, hypothesis),
+            (evaluation, method),
+            (risk, method),
+        ):
+            create_edge(
+                graph,
+                source_id=source.id,
+                relation="depends_on" if source is risk else "supports",
+                target_id=target.id,
+                role=source.role,
+                branch_id=source.branch_id,
+            )
+
+        graph.utility_history = [7.8, 7.9]
+        snapshot = maturity_snapshot(graph)
+
+        self.assertGreaterEqual(snapshot.utility_breakdown.benchmark_specificity, 0.3)
+        self.assertTrue(snapshot.is_mature)
 
 
 if __name__ == "__main__":

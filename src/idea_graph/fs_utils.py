@@ -22,6 +22,10 @@ def ensure_parent_dir(path: Path | str) -> None:
     os.makedirs(_windows_safe_path(parent), exist_ok=True)
 
 
+def ensure_dir(path: Path | str) -> None:
+    os.makedirs(_windows_safe_path(path), exist_ok=True)
+
+
 def read_text_file(path: Path | str, *, encoding: str = "utf-8") -> str:
     with open(_windows_safe_path(path), "r", encoding=encoding) as handle:
         return handle.read()

@@ -182,29 +182,107 @@ The redesign should avoid:
 The new runtime mode should be named something explicit such as
 `parallel_graph_v2`.
 
+The runtime state for round `t` should be the pair:
+
+- `(G_t, H_t)`
+- `G_t`: the current idea graph
+- `H_t = E(G_t)`: the cached shared-encoder representation of `G_t`
+
+Initialization:
+
+1. Build the initial graph `G_0`.
+2. Encode once to obtain `H_0 = E(G_0)`.
+
 At round `t`:
 
-1. Freeze graph snapshot `G_t`.
-2. Run a global commit pre-check on `G_t`.
-3. If commit fires, stop and synthesize.
-4. Run a cheap role-activation gate on `G_t`.
-5. Query all active roles in parallel on the same snapshot.
-6. Each active role returns:
-   - `K` role-local edit candidates
+1. Start from cached state `(G_t, H_t)`.
+2. Run a cheap role-activation gate on `G_t` and `H_t`.
+3. Freeze the round snapshot at `G_t`.
+4. Query all active roles in parallel on the same frozen snapshot.
+5. Each active role returns a role-local candidate slate containing:
+   - `K` concrete edit candidates
    - one explicit `skip` candidate
-7. Validate and deduplicate all returned candidates.
-8. Score edit candidates with the edit head.
-9. Select at most one action per active role.
-10. Materialize selected non-skip actions in deterministic role order.
-11. Recompute graph utility and maturity.
-12. Run a global commit post-check.
-13. If commit fires, stop; otherwise continue.
+6. Validate and deduplicate each role-local slate.
+7. Score each role-local slate with the edit head using cached graph
+   embedding `H_t` plus role and candidate features.
+8. Select exactly one `selected_role_decision` for each active role.
+9. Execute the selected role decisions in parallel against the frozen
+   snapshot to produce role-local `edit_patches`.
+10. Map `skip` to an empty patch.
+11. Deterministically merge all non-empty patches to form:
+   - the updated graph `G_{t+1}`
+   - the realized `materialized_graph_actions`
+12. Encode the updated graph once to obtain `H_{t+1} = E(G_{t+1})`.
+13. Run the global commit head only on `H_{t+1}`.
+14. If commit fires, synthesize and stop.
+15. Otherwise continue with cached state `(G_{t+1}, H_{t+1})`.
+
+There should be no separate routine pre-check. The end-of-round commit check
+for round `t` becomes the reused control state for round `t+1`, because if the
+run continues we already have `H_{t+1}` cached for the next round's edit-head
+scoring.
 
 This keeps:
 
 - proposal generation parallel
-- graph mutation controlled
+- graph mutation controlled and deterministic
 - stopping global rather than role-local
+- encoder recomputation at once per realized graph state
+
+### Runtime Objects
+
+The runtime should distinguish clearly between controller outputs and realized
+graph mutations.
+
+`selected_role_decisions`:
+
+- one chosen decision per active role
+- the direct supervision target for the edit head
+- may be a concrete edit or `skip`
+
+`edit_patches`:
+
+- role-local tentative graph edits produced by executing the selected decision
+  against the frozen snapshot
+- do not mutate the shared graph immediately
+- `skip` maps to an empty patch
+
+`materialized_graph_actions`:
+
+- the deterministic merged non-empty patches that are finally applied to the
+  shared graph
+- may be fewer than the number of active roles because some roles select
+  `skip`
+
+`post_round_commit_rows`:
+
+- graph-level supervision rows derived from the realized post-merge graph
+  `G_{t+1}`
+- the direct supervision target for the commit head
+
+### Paper-Style Pseudocode
+
+```text
+Initialize G_0
+H_0 <- E(G_0)
+for t = 0, 1, 2, ... do
+    active_roles <- ActivateRoles(G_t, H_t)
+    frozen_graph <- G_t
+    slates <- ParallelCollectCandidates(frozen_graph, active_roles, include_skip=True)
+    selected_role_decisions <- {
+        r: EditHeadSelect(H_t, r, slates[r]) for r in active_roles
+    }
+    edit_patches <- ParallelExecute(frozen_graph, selected_role_decisions)
+    materialized_graph_actions <- MergeNonEmptyPatches(edit_patches)
+    G_{t+1} <- Apply(materialized_graph_actions, G_t)
+    H_{t+1} <- E(G_{t+1})
+    commit <- CommitHead(H_{t+1})
+    LogRound(G_t, selected_role_decisions, materialized_graph_actions, commit)
+    if commit then
+        return SynthesizeFinalProposal(G_{t+1})
+    end if
+end for
+```
 
 ## Role Activation And Skip
 
@@ -218,6 +296,10 @@ Purpose:
 - reduce unnecessary graph growth
 - reduce token and latency cost by normalizing no-op decisions
 - give the edit head a clean abstention target
+
+`skip` should remain a first-class candidate action in every role-local slate
+and in the replay labels. It is filtered only at materialization time because
+its realized `edit_patch` is empty, not because it is unimportant.
 
 ### Role Activation
 
@@ -259,11 +341,27 @@ into:
 - `EditHead`
 - `CommitHead`
 
+### Encoder Reuse Across Rounds
+
+The shared encoder should be run exactly once for each realized graph state.
+
+Desired caching pattern:
+
+- encode `G_t` once to obtain `H_t` for role activation and edit-head scoring
+- after deterministic merge, encode `G_{t+1}` once to obtain `H_{t+1}` for the
+  commit head
+- if the commit head predicts continue, reuse `H_{t+1}` directly as the next
+  round's edit-side graph representation
+
+This is the clean reason to place commit prediction only after the round has
+finished. It avoids an extra encode pass on the same graph while keeping both
+heads attached to the same shared encoder.
+
 ### Edit Head
 
 Input:
 
-- graph snapshot `G_t`
+- cached graph embedding `H_t` derived from frozen graph snapshot `G_t`
 - role id `r`
 - candidate action `a`
 - candidate targets and local neighborhood context
@@ -283,7 +381,8 @@ Responsibilities:
 
 Input:
 
-- graph snapshot `G_t`
+- cached graph embedding `H_{t+1}` derived from realized post-round graph
+  `G_{t+1}`
 - graph-level progress or maturity summary features
 
 Output:
@@ -292,9 +391,11 @@ Output:
 
 Responsibilities:
 
-- judge global readiness to stop
+- judge global readiness to stop after a completed round
 - remain independent of any one role or candidate text
-- support both pre-check and post-check decisions
+- consume the realized post-merge graph rather than hypothetical pre-round
+  choices
+- provide only one routine stop decision per round
 
 ### Why Two Heads Are Necessary
 
@@ -303,11 +404,11 @@ abstraction.
 
 Reasons:
 
-- edit choice is role-conditional and target-aware
-- commit is graph-global and not tied to one role
+- edit choice is role-conditional and target-aware on `G_t`
+- commit is graph-global and is evaluated on realized `G_{t+1}`
 - calibration is cleaner when stop prediction has its own head
-- replay datasets naturally split into role-round edit rows and graph-level
-  commit rows
+- replay datasets naturally split into role-round decision rows and graph-level
+  post-round commit rows
 - the paper story is clearer
 
 ## Training Implications
@@ -322,6 +423,8 @@ A new edit-head training set is required because:
 - `skip` becomes first-class rather than incidental
 - the teacher chooses at most one candidate per active role under the new
   protocol
+- the supervision target is the `selected_role_decision`, not the later merged
+  graph action
 
 Warm-start option:
 
@@ -338,9 +441,17 @@ But:
 A new commit-head training set is also required because:
 
 - commit is now a separate prediction target
-- commit rows should be graph-level pre/post checks, not mixed with edit rows
+- commit rows should be graph-level post-round checks, not mixed with edit rows
 - the current live evidence still suggests that enabling learned commit too
   early is risky
+
+Commit-head supervision should be built from the realized post-round graph
+state:
+
+- input state: `G_{t+1}` and cached embedding `H_{t+1}`
+- label: `commit` or `continue`
+- row semantics: one graph-level row for each completed round
+- no routine pre-check rows in the target design
 
 Recommendation:
 
@@ -369,17 +480,34 @@ traces.
 
 New replay collection should write:
 
-- round-level frozen snapshots
-- active and inactive roles
-- per-role candidate slates including `skip`
-- selected edit per active role
-- graph delta after deterministic materialization
-- pre-commit and post-commit teacher labels
+- `parallel_state_snapshots`
+  - frozen `G_t` snapshots used to build edit-head rows
+  - realized post-round `G_{t+1}` snapshots used to build commit-head rows
+- `parallel_round_traces`
+  - active and inactive roles
+  - per-role candidate slates including `skip`
+  - `selected_role_decisions`
+  - role-local `edit_patches`
+  - deterministic merge summary
+  - realized `materialized_graph_actions`
+  - post-round `commit` or `continue`
+- `parallel_edit_rows`
+  - one supervision row per active role-round
+  - label is the chosen `selected_role_decision`
+- `post_round_commit_rows`
+  - one supervision row per completed round
+  - label is the post-round `commit` or `continue` decision
 
 Dataset outputs should be separated into:
 
 - `edit_head_rows`
 - `commit_head_rows`
+
+During migration, compatibility adapters may still export
+`candidate_dataset.jsonl` so existing loaders and evaluation code continue to
+work. But the target two-head design should conceptually treat edit selection
+and commit prediction as separate supervised tasks rather than as one mixed
+candidate table.
 
 Each row must record:
 
@@ -388,6 +516,28 @@ Each row must record:
 - runtime protocol version
 
 so future revisions do not become mixed accidentally.
+
+### Supervision Label Quality Rules
+
+High-quality supervision matters more than raw row count. Replay curation
+should keep rows only when:
+
+- candidate slates were parsed and validated successfully
+- the selected role decision is unambiguous
+- `skip` is preserved as a valid positive label when it was selected
+- deterministic merge completed without hidden fallback behavior
+- the post-round commit label is attached to the realized merged graph, not a
+  hypothetical earlier graph
+- train/dev/test splitting is grouped by benchmark instance or run family to
+  avoid leakage across highly similar rounds
+
+Recommended quality checks:
+
+- inspect per-role label distributions including `skip`
+- audit a sample of round traces by hand before large-scale training
+- compare selected decisions against realized materialized actions to catch
+  merge-path bugs
+- reject rows with missing snapshot references or schema mismatches
 
 ## Compatibility Strategy
 
@@ -437,7 +587,8 @@ The revision should prefer extracting new modules rather than making
 `parallel_runtime.py`:
 
 - frozen-round coordination
-- pre/post commit checks
+- cached runtime state `(G_t, H_t)`
+- post-round commit checks only
 - deterministic materialization
 
 `parallel_role_executor.py`:
@@ -454,7 +605,8 @@ The revision should prefer extracting new modules rather than making
 `parallel_replay.py`:
 
 - write round-level replay artifacts
-- write edit/commit datasets
+- write edit rows and post-round commit rows
+- maintain compatibility exports for existing dataset tooling
 
 `graph_encoder.py`:
 
@@ -466,7 +618,7 @@ The revision should prefer extracting new modules rather than making
 
 `graph_commit_head.py`:
 
-- graph-level stop scoring and probability output
+- graph-level post-round stop scoring and probability output
 
 ## Delivery Stages
 
@@ -534,7 +686,7 @@ Goal:
 
 Deliverables:
 
-- commit-head dataset rows
+- post-round commit-head dataset rows
 - shadow commit logging
 - frozen dev calibration reports
 - go/no-go decision for live commit

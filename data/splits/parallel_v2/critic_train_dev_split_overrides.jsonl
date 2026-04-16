@@ -1,0 +1,400 @@
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1002", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1004", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1008", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1020", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1025", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1029", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1030", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1036", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1067", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1071", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1073", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1091", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1099", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-110", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1101", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1111", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1117", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1136", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1144", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1145", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1156", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1162", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1165", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1197", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1200", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1201", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1208", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1215", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1226", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1231", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1232", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1242", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-125", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1260", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1270", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1293", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-13", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1308", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1310", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1325", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1333", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1353", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1360", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1363", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1372", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1373", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1399", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1412", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1418", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1422", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1434", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1439", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1440", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1441", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1451", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-146", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1460", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1461", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-147", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1481", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1488", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1493", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1498", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1499", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-15", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1508", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1518", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-153", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1539", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1550", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1565", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1588", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1592", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1593", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1594", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1599", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1607", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1616", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1622", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1630", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1631", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1649", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-165", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1654", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1658", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1660", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-167", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1676", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1677", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1683", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1701", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1706", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1712", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1714", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1719", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1722", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1724", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-18", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-193", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-21", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-25", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-253", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-258", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-290", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-296", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-30", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-305", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-314", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-334", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-357", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-358", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-36", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-372", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-375", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-388", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-389", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-406", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-420", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-421", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-423", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-433", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-436", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-437", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-442", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-449", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-451", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-455", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-473", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-477", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-500", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-507", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-515", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-517", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-523", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-527", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-531", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-537", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-542", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-547", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-550", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-551", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-559", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-560", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-561", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-562", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-584", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-586", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-597", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-601", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-605", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-610", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-627", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-656", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-658", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-661", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-677", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-686", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-696", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-697", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-707", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-728", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-729", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-735", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-741", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-742", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-745", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-751", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-763", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-771", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-778", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-780", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-784", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-801", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-802", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-813", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-815", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-818", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-82", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-824", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-831", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-836", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-847", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-849", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-854", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-861", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-863", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-864", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-87", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-885", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-889", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-899", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-905", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-918", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-95", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-959", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-966", "split": "validation"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-973", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-984", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-985", "split": "train"}
+{"group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-990", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-earthquakes-70", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-71", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-earthquakes-72", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-73", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-74", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-75", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-earthquakes-76", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-77", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-78", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-79", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-earthquakes-80", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-81", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-82", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-83", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-earthquakes-84", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-85", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-86", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-87", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-earthquakes-88", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-89", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-90", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-91", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-earthquakes-92", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-93", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-94", "split": "train"}
+{"group_id": "liveideabench::liveideabench-earthquakes-95", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-galaxies-163", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-164", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-galaxies-165", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-166", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-167", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-168", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-galaxies-169", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-170", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-171", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-172", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-galaxies-173", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-174", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-175", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-176", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-galaxies-177", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-178", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-179", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-180", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-galaxies-181", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-182", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-183", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-184", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-galaxies-185", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-186", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-187", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-188", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-galaxies-189", "split": "train"}
+{"group_id": "liveideabench::liveideabench-galaxies-190", "split": "train"}
+{"group_id": "liveideabench::liveideabench-global positioning system-191", "split": "train"}
+{"group_id": "liveideabench::liveideabench-global positioning system-192", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-global positioning system-193", "split": "train"}
+{"group_id": "liveideabench::liveideabench-global positioning system-194", "split": "train"}
+{"group_id": "liveideabench::liveideabench-global positioning system-195", "split": "train"}
+{"group_id": "liveideabench::liveideabench-global positioning system-196", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-global positioning system-197", "split": "train"}
+{"group_id": "liveideabench::liveideabench-global positioning system-198", "split": "train"}
+{"group_id": "liveideabench::liveideabench-global positioning system-199", "split": "train"}
+{"group_id": "liveideabench::liveideabench-global positioning system-200", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-hurricanes-118", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-119", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-120", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-hurricanes-121", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-122", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-123", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-124", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-hurricanes-125", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-126", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-127", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-128", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-hurricanes-129", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-130", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-131", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-132", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-hurricanes-133", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-134", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-135", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-136", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-hurricanes-137", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-138", "split": "train"}
+{"group_id": "liveideabench::liveideabench-hurricanes-139", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-0", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-1", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-10", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-11", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-meteorology-12", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-13", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-14", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-15", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-meteorology-16", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-17", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-18", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-19", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-meteorology-2", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-20", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-21", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-22", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-3", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-meteorology-4", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-5", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-6", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-7", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-meteorology-8", "split": "train"}
+{"group_id": "liveideabench::liveideabench-meteorology-9", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-23", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-periodic table-24", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-25", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-26", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-27", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-periodic table-28", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-29", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-30", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-31", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-periodic table-32", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-33", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-34", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-35", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-periodic table-36", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-37", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-38", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-39", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-periodic table-40", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-41", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-42", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-43", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-periodic table-44", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-45", "split": "train"}
+{"group_id": "liveideabench::liveideabench-periodic table-46", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-140", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-phycology-141", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-142", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-143", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-144", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-phycology-145", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-146", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-147", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-148", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-phycology-149", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-150", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-151", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-152", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-phycology-153", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-154", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-155", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-156", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-phycology-157", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-158", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-159", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-160", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-phycology-161", "split": "train"}
+{"group_id": "liveideabench::liveideabench-phycology-162", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-100", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-stars-101", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-102", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-103", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-104", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-stars-105", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-106", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-107", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-108", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-stars-109", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-110", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-111", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-112", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-stars-113", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-114", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-115", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-116", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-stars-117", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-97", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-98", "split": "train"}
+{"group_id": "liveideabench::liveideabench-stars-99", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-47", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-48", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-49", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-50", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-51", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-52", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-53", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-54", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-55", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-56", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-57", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-58", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-59", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-60", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-61", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-62", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-63", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-64", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-65", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-66", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-67", "split": "validation"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-68", "split": "train"}
+{"group_id": "liveideabench::liveideabench-weather forecasting-69", "split": "train"}

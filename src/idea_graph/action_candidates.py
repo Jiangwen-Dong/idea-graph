@@ -87,6 +87,30 @@ def enumerate_candidate_specs(
     return dedupe_action_specs(candidates)
 
 
+def enumerate_edit_candidate_specs(
+    graph: IdeaGraph,
+    *,
+    round_name: str,
+    role: str,
+    baseline_action: GraphAction,
+) -> list[dict[str, object]]:
+    from .engine import branch_for_role, generic_candidate_action_specs
+
+    branch = branch_for_role(graph, role)
+    baseline_candidate = action_spec_from_action(baseline_action, candidate_source="parallel_selected")
+    candidates = [baseline_candidate, *generic_candidate_action_specs(graph, round_name, role, branch)]
+    candidates.append(
+        build_action_spec(
+            kind="skip",
+            target_ids=[],
+            payload={"branch_id": branch.id},
+            rationale="Skip editing for this role in the current parallel round.",
+            candidate_source="parallel_skip",
+        )
+    )
+    return dedupe_action_specs(candidates)
+
+
 def flatten_candidate_text(graph: IdeaGraph, spec: dict[str, object]) -> str:
     target_descriptions: list[str] = []
     for target_id in [str(item).strip() for item in spec.get("target_ids", []) if str(item).strip()]:

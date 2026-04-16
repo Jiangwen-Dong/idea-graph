@@ -54,7 +54,9 @@ Use the same rubric on both benchmarks:
 
 Recommended setup:
 
-- balanced subset from both benchmarks
+- the frozen `data/splits/parallel_v2/paper_eval_v2_registry.jsonl` pool when
+  budget allows
+- a smaller balanced subset only for smoke or pilot analysis
 - blind evaluation
 - `3` reviewers per idea when feasible
 
@@ -79,16 +81,14 @@ not be merged into the main benchmark score.
 
 Recommended critic-specific ablations:
 
-- `ours-eig-heuristic`
-  the current utility/maturity controller
-- `ours-eig-critic-text`
-  a learned critic over flattened graph summaries
-- `ours-eig-critic-graph`
-  a learned critic over the structured idea graph
-- `ours-eig-critic-no-commit`
-  learned edit selection with fixed stopping
-- `ours-eig-critic-calibrated`
-  graph critic with calibrated commit decision
+- `ours-eig` with `--runtime-protocol parallel_graph_v2`
+  the current parallel heuristic teacher/controller
+- learned two-head parallel EIG
+  shared graph encoder plus edit/action and commit heads
+- calibrated learned two-head parallel EIG
+  learned edit/action selection plus dev-calibrated commit threshold
+- older `ours-eig-critic-text` and `ours-eig-critic-graph`
+  historical sequential/controller ablations, not the active forward path
 
 ## Development-Time Local Deterministic Evaluator
 

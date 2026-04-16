@@ -2344,6 +2344,48 @@ def _reference_snippet_texts(metadata: dict[str, object]) -> list[str]:
     return texts
 
 
+def _benchmark_topic_text(graph: IdeaGraph) -> str:
+    metadata = _utility_grounding_metadata(graph)
+    packet = metadata.get("benchmark_input_packet", {})
+    topic = ""
+    if isinstance(packet, dict):
+        topic = str(packet.get("topic", "")).strip()
+    if not topic:
+        topic = str(graph.topic).strip()
+    prefix = "The topic of this paper is "
+    if topic.startswith(prefix):
+        topic = topic[len(prefix) :].strip()
+    return topic
+
+
+def _benchmark_packet_reference_texts(metadata: dict[str, object]) -> list[str]:
+    packet = metadata.get("benchmark_input_packet", {})
+    if not isinstance(packet, dict):
+        return []
+    reference_packet = packet.get("reference_packet", [])
+    if not isinstance(reference_packet, list):
+        return []
+
+    texts: list[str] = []
+    for item in reference_packet[:6]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title", "")).strip()
+        snippet = str(item.get("snippet", "")).strip()
+        combined = " ".join(part for part in (title, snippet) if part)
+        if combined:
+            texts.append(combined)
+    return texts
+
+
+def _token_group_matches(node_tokens: set[str], source_tokens: set[str]) -> bool:
+    if not node_tokens or not source_tokens:
+        return False
+    overlap = node_tokens & source_tokens
+    threshold = 1 if len(source_tokens) <= 3 else 2
+    return len(overlap) >= threshold
+
+
 def _benchmark_specificity_score(graph: IdeaGraph, nodes: list[Node]) -> float:
     if not nodes:
         return 0.0
@@ -2352,14 +2394,69 @@ def _benchmark_specificity_score(graph: IdeaGraph, nodes: list[Node]) -> float:
         metadata=_utility_grounding_metadata(graph),
     )
     text = " ".join(node.text for node in nodes if node.text)
-    anchors = [
+    node_tokens = _normalized_token_set(text)
+    if not node_tokens:
+        return 0.0
+
+    metadata = _utility_grounding_metadata(graph)
+    topic_tokens = _normalized_token_set(_benchmark_topic_text(graph))
+    topic_signal = 1.0 if _token_group_matches(node_tokens, topic_tokens) else 0.0
+
+    reference_texts = [
+        *_benchmark_packet_reference_texts(metadata),
+        *_reference_snippet_texts(metadata),
+        *grounding.reference_titles[:4],
+    ]
+    reference_groups = []
+    seen_reference_groups: set[tuple[str, ...]] = set()
+    for item in reference_texts:
+        tokens = _normalized_token_set(item)
+        if not tokens:
+            continue
+        signature = tuple(sorted(tokens))
+        if signature in seen_reference_groups:
+            continue
+        seen_reference_groups.add(signature)
+        reference_groups.append(tokens)
+    reference_hits = sum(1 for group in reference_groups if _token_group_matches(node_tokens, group))
+    reference_signal = (
+        min(1.0, reference_hits / max(1, min(2, len(reference_groups))))
+        if reference_groups
+        else 0.0
+    )
+
+    design_groups = []
+    for item in grounding.design_highlights[:4]:
+        tokens = _normalized_token_set(item)
+        if tokens:
+            design_groups.append(tokens)
+    design_hits = sum(1 for group in design_groups if _token_group_matches(node_tokens, group))
+    design_signal = (
+        min(1.0, design_hits / max(1, min(2, len(design_groups))))
+        if design_groups
+        else 0.0
+    )
+
+    eval_anchors = [
         *grounding.dataset_items[:3],
         *grounding.metric_items[:4],
     ]
-    if not anchors:
-        return 0.0
-    hit_count = sum(1 for anchor in anchors if _contains_anchor(text, anchor))
-    return round(_clamp(hit_count / min(3, len(anchors))), 2)
+    eval_anchor_hits = sum(1 for anchor in eval_anchors if _contains_anchor(text, anchor))
+    eval_anchor_signal = (
+        _clamp(eval_anchor_hits / min(3, len(eval_anchors)))
+        if eval_anchors
+        else 0.0
+    )
+
+    return round(
+        _clamp(
+            (0.25 * topic_signal)
+            + (0.35 * reference_signal)
+            + (0.20 * design_signal)
+            + (0.20 * eval_anchor_signal)
+        ),
+        2,
+    )
 
 
 def _experiment_method_alignment_score(nodes: list[Node]) -> float:
@@ -3102,6 +3199,11 @@ def run_experiment(
     stop_when_mature: bool = True,
 ) -> IdeaGraph:
     graph = IdeaGraph(topic=topic, literature=literature, metadata=dict(metadata or {}))
+    runtime_protocol = (
+        str(graph.metadata.get("runtime_protocol", "sequential_v1")).strip()
+        or "sequential_v1"
+    )
+    graph.metadata["runtime_protocol"] = runtime_protocol
     graph.metadata.setdefault(
         "literature_grounding",
         build_literature_grounding(literature=graph.literature, metadata=_generation_metadata(graph)).as_dict(),
@@ -3213,6 +3315,115 @@ def run_experiment(
             message=f"{round_name} started with phase '{phase.title}'.",
             details={"round": round_name, "phase": phase.key, "phase_title": phase.title},
         )
+        if runtime_protocol == "parallel_graph_v2":
+            from .parallel_replay import (
+                append_parallel_edit_rows,
+                append_parallel_round_trace,
+                append_post_round_commit_rows,
+            )
+            from .parallel_runtime import execute_parallel_role_round
+
+            result = execute_parallel_role_round(
+                graph,
+                round_name=round_name,
+                collaboration_backend=collaboration_backend,
+                runtime_controller=runtime_controller,
+                runtime_controller_metadata=runtime_controller_metadata,
+                progress_callback=progress_callback,
+            )
+            selected_role_decision_payloads = [
+                asdict(record)
+                for record in result.selected_role_decisions
+            ]
+            edit_patch_payloads = [
+                asdict(record)
+                for record in result.edit_patches
+            ]
+            materialized_action_payloads = [
+                {
+                    "id": action.id,
+                    "role": action.role,
+                    "kind": action.kind,
+                    "target_ids": list(action.target_ids),
+                    "payload": dict(action.payload),
+                    "source": action.source,
+                }
+                for action in result.materialized_graph_actions
+            ]
+            append_parallel_round_trace(
+                graph.metadata,
+                {
+                    "round": result.round_name,
+                    "active_roles": list(result.active_roles),
+                    "inactive_roles": [role for role in ROLE_NAMES if role not in result.active_roles],
+                    "selected_role_decisions": selected_role_decision_payloads,
+                    "edit_patches": edit_patch_payloads,
+                    "materialized_graph_actions": materialized_action_payloads,
+                    "skipped_roles": list(result.skipped_roles),
+                    "post_round_commit": asdict(result.post_round_commit),
+                    "graph_delta": {
+                        "node_count_before": result.node_count_before,
+                        "node_count_after": result.node_count_after,
+                        "node_delta": result.node_count_after - result.node_count_before,
+                        "edge_count_before": result.edge_count_before,
+                        "edge_count_after": result.edge_count_after,
+                        "edge_delta": result.edge_count_after - result.edge_count_before,
+                        "action_count_before": result.action_count_before,
+                        "action_count_after": result.action_count_after,
+                        "action_delta": result.action_count_after - result.action_count_before,
+                    },
+                },
+            )
+            append_parallel_edit_rows(
+                graph.metadata,
+                result.edit_rows,
+            )
+            append_post_round_commit_rows(
+                graph.metadata,
+                result.post_round_commit_rows,
+            )
+            snapshot = maturity_snapshot(graph)
+            graph.round_summaries.append((round_name, snapshot))
+            if snapshot.is_mature and graph.matured_at_round is None:
+                graph.matured_at_round = round_name
+                graph.metadata["maturity_stop_candidate"] = round_name
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="round_complete",
+                message=(
+                    f"{round_name} complete: support={snapshot.support_coverage}, "
+                    f"contradictions={snapshot.unresolved_contradiction_ratio}, "
+                    f"utility={snapshot.utility}, coherence={snapshot.utility_breakdown.coherence}, "
+                    f"mature={snapshot.is_mature}."
+                ),
+                details={
+                    "round": round_name,
+                    "runtime_protocol": runtime_protocol,
+                    "active_roles": list(result.active_roles),
+                    "skipped_roles": list(result.skipped_roles),
+                    "selected_role_decision_count": len(result.selected_role_decisions),
+                    "materialized_action_count": len(result.materialized_graph_actions),
+                    "post_round_commit": bool(result.post_round_commit.should_commit),
+                    "support_coverage": snapshot.support_coverage,
+                    "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
+                    "utility": snapshot.utility,
+                    "utility_breakdown": asdict(snapshot.utility_breakdown),
+                    "is_mature": snapshot.is_mature,
+                },
+            )
+            if stop_when_mature and snapshot.is_mature:
+                graph.metadata["stopped_early"] = True
+                graph.metadata["stop_reason"] = f"mature_at_{round_name}"
+                emit_progress(
+                    graph,
+                    progress_callback,
+                    stage="maturity_stop",
+                    message=f"{round_name} reached maturity, stopping early before additional rounds.",
+                    details={"round": round_name},
+                )
+                break
+            continue
         for role in ROLE_NAMES:
             action_source = "deterministic"
             deterministic_ranked_action: GraphAction | None = None

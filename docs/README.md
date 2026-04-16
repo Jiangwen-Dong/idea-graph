@@ -9,8 +9,12 @@ then the current method plan, then evaluation and experiment tracking.
 
 - `paper_protocol.md`
   Canonical paper-facing task, baseline, and evaluation protocol.
+- `reproducibility.md`
+  Current release-hygiene, split, artifact, baseline, and worktree policy for
+  a clean supplementary-code snapshot.
 - `eig_graph_critic_plan.md`
-  Canonical forward method plan for EIG with a learned graph critic.
+  Historical-to-current graph-critic roadmap. The parallel-v2 plans and specs
+  are now the active implementation path.
 - `evaluation.md`
   Canonical evaluation policy for benchmark-native scoring, human review, and
   critic-specific ablations.
@@ -67,34 +71,31 @@ then the current method plan, then evaluation and experiment tracking.
 
 ## Current Status
 
-- `M0` and the small `M1` pilot are complete.
-- The current reference small-`M1` packet is:
-  - `outputs/quality_batches/20260411-000159-refreshed-m1-mini-synthesis-cleanup-v2-native`
-- The current graph-critic stack now includes:
-  - a frozen `development_pool_v1`
-  - a split registry over the active 11-group development pool
-  - a first untouched `paper_eval_candidate_pool_v1`
-  - a real `critic_train` episode collection packet:
-    `outputs/graph_critic_online_episodes/development_pool_v1_critic_train_qwen_v1`
-  - an adapted text critic:
-    `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g46_text_online_real_train_v1`
-- The first controller-in-the-loop 4-case AIIB gate is complete:
-  - `outputs/m2_aiib_g48_controller_gate_v1`
-  - paired summary:
-    `outputs/m2_aiib_g48_controller_gate_v1/paired_summary.md`
-- Current controller conclusion:
-  - the learned text critic improves held-out action ranking on `critic_dev`
-  - but the first end-to-end 4-case gate is mixed and slightly negative, so
-    `ours-eig` remains the main benchmarked method
-- The next planned milestone is a trace-persistent rerun of the same frozen
-  4-case AIIB controller gate with stronger maturity-sensitive safety, not a
-  broader controller packet yet.
+- The active runtime path is `parallel_graph_v2`, not the older sequential EIG
+  loop.
+- The heuristic parallel-v2 teacher is the current bootstrap controller for
+  replay collection and ablation.
+- The tracked critic split is `data/splits/parallel_v2`:
+  - `300` critic-train groups
+  - `100` critic-dev groups
+  - balanced `150/50` train/dev rows per benchmark
+- The tracked paper-eval split is also in `data/splits/parallel_v2`:
+  - `256` frozen paper-eval groups
+  - `128` AI Idea Bench 2025 groups
+  - `128` LiveIdeaBench groups
+  - zero overlap with critic train/dev according to the tracked audit
+- The old sequential/text-critic controller notes are preserved as historical
+  development context, but new experiments should use the parallel-v2 protocol
+  unless explicitly reproducing an older ablation.
 
 ## Practical Use
 
 - If you want the paper-facing rules, read `paper_protocol.md` and
   `evaluation.md`.
-- If you want the next method implementation, read `eig_graph_critic_plan.md`.
+- If you want the active method implementation, read the parallel-v2 spec and
+  plans under `superpowers/specs/` and `superpowers/plans/`.
 - If you want the next experiments, read `paper_experiment_plan.md` and
   `paper_experiment_tracker.md`.
+- If you want the frozen splits and release policy, read `reproducibility.md`
+  and `critic_pools.md`.
 - If you want the engineering history, read `experiment_execution_log.md`.

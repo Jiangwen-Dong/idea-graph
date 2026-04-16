@@ -1,0 +1,20 @@
+{
+  "row_count": 400,
+  "pool_counts": {
+    "development_pool_v1": 400
+  },
+  "role_counts": {
+    "critic_dev": 100,
+    "critic_train": 300
+  },
+  "benchmark_role_counts": {
+    "AI_Idea_Bench_2025": {
+      "critic_dev": 50,
+      "critic_train": 150
+    },
+    "liveideabench": {
+      "critic_dev": 50,
+      "critic_train": 150
+    }
+  }
+}

@@ -213,7 +213,11 @@ class RelationGraphRuntimeBatch:
 
 def _build_snapshot_lookup(g1_dataset_dir: Path) -> dict[str, dict[str, Any]]:
     lookup: dict[str, dict[str, Any]] = {}
-    for relative_name in ("trajectory_examples.jsonl", "terminal_state_manifest.jsonl"):
+    for relative_name in (
+        "trajectory_examples.jsonl",
+        "terminal_state_manifest.jsonl",
+        "parallel_edit_examples.jsonl",
+    ):
         path = Path(g1_dataset_dir) / relative_name
         if not path.exists():
             continue
@@ -225,7 +229,8 @@ def _build_snapshot_lookup(g1_dataset_dir: Path) -> dict[str, dict[str, Any]]:
             payload = json.loads(read_text_file(snapshot_path))
             if not isinstance(payload, dict):
                 raise ValueError(f"{snapshot_path} does not contain a JSON object.")
-            lookup[state_id_from_transition(row)] = dict(payload)
+            explicit_state_id = str(row.get("state_id", "")).strip()
+            lookup[explicit_state_id or state_id_from_transition(row)] = dict(payload)
     return lookup
 
 

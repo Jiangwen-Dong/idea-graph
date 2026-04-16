@@ -18,6 +18,7 @@ from idea_graph.critic_episode_collection import (
     select_pool_rows,
     write_collection_artifacts,
 )
+from idea_graph.repo_paths import default_benchmark_root
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -104,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--benchmark-root",
         type=Path,
-        default=ROOT / "data" / "benchmarks",
+        default=default_benchmark_root(ROOT),
         help="Benchmark cache root passed through to run_pipeline.py.",
     )
     parser.add_argument(

@@ -1,0 +1,19 @@
+{
+  "blocked_group_ids": 459,
+  "candidate_rows": 256,
+  "partition_rows": 256,
+  "overlap_count": 0,
+  "benchmark_counts": {
+    "AI_Idea_Bench_2025": {
+      "critic_train": 0,
+      "critic_dev": 0,
+      "paper_eval": 128
+    },
+    "liveideabench": {
+      "critic_train": 0,
+      "critic_dev": 0,
+      "paper_eval": 128
+    }
+  },
+  "pool_name": "paper_eval_v2"
+}

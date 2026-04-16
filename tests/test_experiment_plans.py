@@ -74,6 +74,11 @@ class ExperimentPlanTests(unittest.TestCase):
             0,
         )
         self.assertEqual(instance.literature, self._instance().literature)
+        self.assertEqual(instance.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(
+            instance.metadata["idea_graph_protocol_variant"],
+            "eig_parallel_v2_heuristic",
+        )
 
     def test_main_method_plan_includes_exact_ai_researcher(self) -> None:
         self.assertIn("ai-researcher", MAIN_METHOD_PLANS)

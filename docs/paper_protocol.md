@@ -71,14 +71,20 @@ These are useful references, but they should not be the main paper benchmarks.
 
 ## Method Track
 
-The forward paper method is `EIG with a learned graph critic`.
+The forward paper method is `parallel EIG with a learned two-head graph
+critic`.
 
 - `Idea Graph Evolution` is the representation and collaboration process:
   agents edit a shared graph of partial scientific claims instead of rewriting a
   single draft after every turn.
-- The `graph critic` is the controller:
-  it scores candidate graph edits and a special `commit` action from the current
-  graph state.
+- The active runtime protocol is `parallel_graph_v2`: the graph critic reads
+  the current graph, selects role-local edit actions including `skip`, roles
+  edit in parallel, materialized graph actions are applied, and the commit head
+  checks the post-round graph.
+- The `graph critic` is the controller with one shared graph encoder and two
+  heads:
+  - an edit/action head for role-local action selection
+  - a commit head for post-round maturity prediction
 - The earlier heuristic utility/maturity controller remains useful as:
   - a pre-critic prototype
   - an ablation baseline
@@ -86,6 +92,17 @@ The forward paper method is `EIG with a learned graph critic`.
 
 This framing avoids treating maturity as a hand-tuned threshold. In the new
 track, commitment is an adaptive action selected by the learned critic.
+
+### Frozen Paper-Eval Split
+
+The active frozen paper-eval split is tracked at:
+
+- `data/splits/parallel_v2/paper_eval_v2_registry.jsonl`
+
+It contains `256` groups: `128` from `AI_Idea_Bench_2025` and `128` from
+`LiveIdeaBench`. The tracked disjointness audit reports zero overlap with the
+critic train/dev pool used for teacher collection, critic training, checkpoint
+selection, and calibration.
 
 ### Main Table Baselines
 
@@ -259,7 +276,8 @@ Use the same human rubric on both benchmarks:
 
 Recommended evaluation subset:
 
-- balanced instances from both benchmarks
+- the frozen `256`-group paper-eval pool when budget allows
+- a smaller balanced subset may be used only for pilot or ablation smoke runs
 - `3` reviewers per idea when feasible
 
 ### Layer 3: Supplementary Mechanism And Cost Analysis
@@ -318,8 +336,12 @@ analysis tables or the appendix.
 The repository currently supports:
 
 - benchmark-mode input packets for `AI_Idea_Bench_2025` and `LiveIdeaBench`
-- exact external baseline entrypoints for `ai-researcher`, `scipip`, and
-  `virsci`
+- parallel EIG v2 runtime replay with role-local selected decisions, edit
+  patches, materialized graph actions, and post-round commit labels
+- two-head critic dataset and training utilities for the parallel-v2 replay
+- external baseline adapter entrypoints for `ai-researcher`, `scipip`, and
+  `virsci`, provided the corresponding upstream repositories and assets are
+  installed outside this repo
 - local proxy wrappers for rapid iteration
 - local deterministic evaluation artifacts
 - optional benchmark-native evaluation artifacts

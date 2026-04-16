@@ -1388,6 +1388,54 @@ class AgentBackendPromptTests(unittest.TestCase):
         self.assertIn("Compare against", processed.evaluation)
         self.assertIn("ablation", processed.evaluation.lower())
 
+    def test_postprocess_final_proposal_repairs_generic_aiib_method_from_visible_packet_anchors(self) -> None:
+        graph = IdeaGraph(
+            topic="The topic of this paper is 3D language field modeling.",
+            literature=["LERF", "3D Gaussian Splatting", "Segment Anything"],
+            metadata={
+                "benchmark": "AI_Idea_Bench_2025",
+                "benchmark_input_packet": {
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "topic": "The topic of this paper is 3D language field modeling.",
+                    "reference_packet": [
+                        {
+                            "title": "3D Gaussian Splatting for Real-Time Radiance Field Rendering",
+                            "snippet": "Efficient rendering with explicit Gaussian primitives.",
+                        },
+                        {
+                            "title": "LERF: Language Embedded Radiance Fields",
+                            "snippet": "Ground CLIP features in radiance fields for open-vocabulary 3D queries.",
+                        },
+                        {
+                            "title": "Segment Anything",
+                            "snippet": "Use hierarchical semantics and masks for precise segmentation.",
+                        },
+                    ],
+                },
+            },
+        )
+        proposal = FinalProposal(
+            title="Language-Driven 3D Field Modeling",
+            problem="Current methods remain slow and ambiguous for language-aware 3D scene queries.",
+            existing_methods="Current methods remain limited.",
+            motivation="Better 3D language fields would improve scene understanding.",
+            hypothesis="A stronger representation can help.",
+            method="Use a stronger multimodal representation for the task.",
+            evaluation="Compare against strong baselines and include ablations.",
+            significance="This could improve 3D language modeling.",
+            caveats="The method may increase compute cost.",
+        )
+
+        processed = _postprocess_final_proposal(graph, proposal)
+
+        self.assertTrue(
+            any(
+                marker in processed.method.lower()
+                for marker in ("gaussian", "clip", "hierarchical semantics", "radiance")
+            )
+        )
+        self.assertNotIn("stronger multimodal representation", processed.method.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

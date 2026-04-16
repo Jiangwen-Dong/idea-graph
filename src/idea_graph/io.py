@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime
 import re
 
-from .fs_utils import write_text_file
+from .fs_utils import ensure_dir, write_text_file
 from .benchmark_scoring import (
     BenchmarkNativeEvaluation,
     BenchmarkNativeMetric,
@@ -117,7 +117,7 @@ def write_run_artifacts(
     output_root = Path(output_root)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = output_root / f"{timestamp}-{slugify(instance.name)}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    ensure_dir(run_dir)
 
     evaluation = evaluate_graph(graph)
     graph_payload = graph_as_dict(graph)

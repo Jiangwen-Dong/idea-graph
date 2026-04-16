@@ -47,6 +47,7 @@ Start with:
 Most useful active docs:
 
 - `docs/paper_protocol.md`
+- `docs/reproducibility.md`
 - `docs/eig_graph_critic_plan.md`
 - `docs/evaluation.md`
 - `docs/critic_pools.md`
@@ -56,23 +57,21 @@ Most useful active docs:
 
 Current experiment status:
 
-- `M0` is complete.
-- The current reference small-`M1` packet is:
-  - `outputs/quality_batches/20260411-000159-refreshed-m1-mini-synthesis-cleanup-v2-native`
-- The current graph-critic stack now includes:
-  - frozen `development_pool_v1` / `critic_train` / `critic_dev` splits
-  - a real `critic_train` episode collection packet
-  - a first adapted text critic:
-    `outputs/graph_critic_models/current_benchmarked_ours_eig_full_g46_text_online_real_train_v1`
-- The first controller-in-the-loop 4-case AIIB gate is complete:
-  - `outputs/m2_aiib_g48_controller_gate_v1`
-  - paired summary:
-    `outputs/m2_aiib_g48_controller_gate_v1/paired_summary.md`
-- Current decision:
-  - keep `ours-eig` as the main benchmarked method for now
-  - treat the learned text critic as an active controller pilot
-  - next rerun the same frozen 4-case gate with trace-persistent artifacts and
-    stronger maturity-sensitive safety before any larger controller batch
+- The active runtime is `parallel_graph_v2`.
+- The current bootstrap teacher is the parallel-v2 heuristic controller.
+- The tracked critic train/dev split is:
+  `data/splits/parallel_v2/critic_train_dev_registry.jsonl`
+  - `300` critic-train groups
+  - `100` critic-dev groups
+- The tracked frozen paper-eval split is:
+  `data/splits/parallel_v2/paper_eval_v2_registry.jsonl`
+  - `256` total groups
+  - `128` AI Idea Bench 2025 groups
+  - `128` LiveIdeaBench groups
+  - zero overlap with critic train/dev in the tracked audit
+- The older sequential and text-critic artifacts remain useful historical
+  ablations, but new method development should use parallel-v2 unless an older
+  result is being reproduced intentionally.
 
 ## Layout
 
@@ -120,13 +119,16 @@ python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline scipip-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline virsci-proxy
-python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-eig
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-eig --runtime-protocol parallel_graph_v2
 ```
 
-For DashScope or Qwen models, `ai-researcher` now supports a documented
-OpenAI-compatible bridge that preserves the same seed-generation,
-proposal-expansion, and ranking structure inside this repo. The older
-`ai-researcher-proxy` remains useful as a lightweight local fallback.
+The `*-proxy` baselines are diagnostic local approximations. They are useful
+for fast development but should not be used as headline paper baselines unless
+they are explicitly labeled as proxies.
+
+For DashScope or Qwen models, `ai-researcher` supports an OpenAI-compatible
+bridge inside this repo. Treat that bridge as a convenience adapter unless the
+configured run exactly follows the upstream AI-Researcher implementation.
 
 Budget guidance:
 
@@ -148,6 +150,7 @@ python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 
 Notes:
 
 - `ai-researcher`, `scipip`, and `virsci` need `--external-baseline-config`.
+- `.tmp-baselines/*` upstream clones are local-only and are not tracked by Git.
 - `ai-researcher` can run in two modes:
   - exact upstream mode for providers the upstream repo natively supports
   - `openai-compatible-bridge` mode for DashScope/Qwen-style providers
@@ -262,6 +265,12 @@ Add benchmark-native scoring with the same judge configuration:
 
 ```bash
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json --native-eval
+```
+
+Use the active parallel-v2 EIG protocol:
+
+```bash
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-eig --runtime-protocol parallel_graph_v2 --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json
 ```
 
 You can also override config values directly:

@@ -8,3 +8,5 @@ data/benchmarks/
 .tmp-tests/
 .tmp-baselines/
 .tmp-external-baseline-runs/
+configs/external_baselines.qwen.json
+docs/archive/worktree-patches/
