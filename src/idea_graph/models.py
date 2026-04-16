@@ -106,6 +106,7 @@ class ParallelRoleRoundResult:
     materialized_graph_actions: tuple[GraphAction, ...]
     post_round_commit: ParallelCommitCheckRecord
     edit_rows: tuple[dict[str, object], ...] = ()
+    post_round_commit_rows: tuple[dict[str, object], ...] = ()
     node_count_before: int = 0
     node_count_after: int = 0
     edge_count_before: int = 0

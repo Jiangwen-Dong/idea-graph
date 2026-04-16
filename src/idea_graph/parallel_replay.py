@@ -21,7 +21,22 @@ def append_parallel_edit_rows(
         payload.extend(dict(row) for row in rows)
 
 
-def _state_snapshot(graph: IdeaGraph) -> dict[str, Any]:
+def append_post_round_commit_rows(
+    metadata: dict[str, object],
+    rows: Sequence[Mapping[str, object]],
+) -> None:
+    payload = metadata.setdefault("post_round_commit_rows", [])
+    if isinstance(payload, list):
+        payload.extend(dict(row) for row in rows)
+
+
+def _state_snapshot(
+    graph: IdeaGraph,
+    *,
+    state_kind: str = "parallel_pre_action",
+    action_id: str = "parallel_round_pre_action",
+    action_timestamp: object | None = None,
+) -> dict[str, Any]:
     included_nodes = {
         node_id: {
             "id": node.id,
@@ -69,10 +84,10 @@ def _state_snapshot(graph: IdeaGraph) -> dict[str, Any]:
         )
 
     return {
-        "action_id": "parallel_round_pre_action",
+        "action_id": action_id,
         "action_index": len(graph.actions),
-        "action_timestamp": None,
-        "state_kind": "parallel_pre_action",
+        "action_timestamp": action_timestamp,
+        "state_kind": state_kind,
         "nodes": included_nodes,
         "edges": included_edges,
         "node_count": len(included_nodes),
@@ -224,3 +239,45 @@ def build_parallel_edit_rows(
         )
     return rows
 
+
+def build_post_round_commit_row(
+    graph: IdeaGraph,
+    *,
+    round_name: str,
+    commit_check: Any,
+    runtime_protocol: str,
+    label_source: str,
+) -> dict[str, object]:
+    state_snapshot = _state_snapshot(
+        graph,
+        state_kind="parallel_post_round",
+        action_id="parallel_round_post_action",
+    )
+    should_commit = bool(getattr(commit_check, "should_commit", False))
+    return {
+        "schema_version": "post_round_commit_row_v1",
+        "state_id": f"parallel::{round_name}::post_round_commit",
+        "runtime_protocol": runtime_protocol,
+        "label_source": label_source,
+        "benchmark": _metadata_string(graph, "benchmark"),
+        "instance_name": _metadata_string(graph, "instance_name", graph.topic),
+        "baseline_name": _metadata_string(graph, "baseline_name"),
+        "topic": graph.topic,
+        "round_name": round_name,
+        "state_kind": "parallel_post_round",
+        "state_text": _flatten_state_text(graph),
+        "state_snapshot": state_snapshot,
+        "state_node_count": state_snapshot["node_count"],
+        "state_edge_count": state_snapshot["edge_count"],
+        "state_action_count": state_snapshot["action_count"],
+        "commit_supervision": {
+            "available": True,
+            "label": 1 if should_commit else 0,
+            "source": str(getattr(commit_check, "source", label_source)).strip() or label_source,
+        },
+        "support_coverage": float(getattr(commit_check, "support_coverage", 0.0)),
+        "unresolved_contradiction_ratio": float(
+            getattr(commit_check, "unresolved_contradiction_ratio", 0.0)
+        ),
+        "utility": float(getattr(commit_check, "utility", 0.0)),
+    }

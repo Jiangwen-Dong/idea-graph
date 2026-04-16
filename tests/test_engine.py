@@ -664,6 +664,25 @@ class EngineTests(unittest.TestCase):
             1,
         )
 
+    def test_parallel_runtime_records_post_round_commit_rows(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        rows = graph.metadata.get("post_round_commit_rows")
+        self.assertTrue(rows)
+        first_row = rows[0]
+        self.assertEqual(first_row["schema_version"], "post_round_commit_row_v1")
+        self.assertEqual(first_row["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(first_row["state_kind"], "parallel_post_round")
+        self.assertIn("state_snapshot", first_row)
+        self.assertEqual(first_row["commit_supervision"]["source"], "maturity_snapshot")
+        self.assertIn("label", first_row["commit_supervision"])
+
     def test_run_experiment_records_default_runtime_protocol(self) -> None:
         graph = run_experiment(
             topic="graph-based scientific ideation",

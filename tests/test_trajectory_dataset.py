@@ -16,8 +16,10 @@ from idea_graph.fs_utils import _windows_safe_path, write_text_file
 from idea_graph.trajectory_dataset import (
     PricingConfig,
     aggregate_dataset_profile,
+    aggregate_parallel_label_quality,
     aggregate_parallel_edit_profile,
     build_parallel_edit_rows,
+    build_post_round_commit_rows,
     build_terminal_state_rows,
     build_run_manifest_row,
     build_transition_rows,
@@ -220,6 +222,81 @@ class TrajectoryDatasetTests(unittest.TestCase):
                         ],
                     }
                 ],
+                "post_round_commit_rows": [
+                    {
+                        "schema_version": "post_round_commit_row_v1",
+                        "state_id": "parallel::Round1::post_round_commit",
+                        "runtime_protocol": "parallel_graph_v2",
+                        "label_source": "parallel_protocol_teacher_v1",
+                        "benchmark": "AI_Idea_Bench_2025",
+                        "instance_name": "toy-instance",
+                        "baseline_name": baseline_name,
+                        "topic": "Toy topic",
+                        "round_name": "Round1",
+                        "state_kind": "parallel_post_round",
+                        "state_text": "nodes=2;edges=1;contradictions=0",
+                        "state_snapshot": {
+                            "action_id": "parallel_round_post_action",
+                            "action_index": 1,
+                            "action_timestamp": None,
+                            "state_kind": "parallel_post_round",
+                            "nodes": {
+                                "N1": {
+                                    "id": "N1",
+                                    "type": "Problem",
+                                    "text": "Problem node",
+                                    "role": "TaskFramer",
+                                    "branch_id": "B1",
+                                    "confidence": 0.7,
+                                    "evidence": [],
+                                    "status": "active",
+                                    "created_at": "1970-01-01 00:16:41+00:00",
+                                    "provenance": [],
+                                },
+                                "N2": {
+                                    "id": "N2",
+                                    "type": "Method",
+                                    "text": "Method node",
+                                    "role": "MechanismProposer",
+                                    "branch_id": "B1",
+                                    "confidence": 0.7,
+                                    "evidence": [],
+                                    "status": "active",
+                                    "created_at": "1970-01-01 00:16:42+00:00",
+                                    "provenance": [],
+                                },
+                            },
+                            "edges": [
+                                {
+                                    "id": "E1",
+                                    "source_id": "N1",
+                                    "relation": "supports",
+                                    "target_id": "N2",
+                                    "role": "TaskFramer",
+                                    "branch_id": "B1",
+                                    "resolved": False,
+                                    "created_at": "1970-01-01 00:16:43+00:00",
+                                }
+                            ],
+                            "node_count": 2,
+                            "edge_count": 1,
+                            "contradiction_count": 0,
+                            "support_edge_count": 1,
+                            "action_count": 1,
+                        },
+                        "state_node_count": 2,
+                        "state_edge_count": 1,
+                        "state_action_count": 1,
+                        "commit_supervision": {
+                            "available": True,
+                            "label": 0,
+                            "source": "maturity_snapshot",
+                        },
+                        "support_coverage": 0.5,
+                        "unresolved_contradiction_ratio": 1.0,
+                        "utility": 4.5,
+                    }
+                ],
             },
             "nodes": {
                 "N1": {
@@ -391,6 +468,27 @@ class TrajectoryDatasetTests(unittest.TestCase):
                 snapshot_dir=self.tmp_dir / "parallel_state_snapshots",
             )
 
+    def test_build_post_round_commit_rows_flattens_validated_rows(self) -> None:
+        run_dir = self.tmp_dir / "runs" / "good"
+        summary_payload = self._summary_payload()
+        graph_payload = self._graph_payload()
+        snapshot_dir = self.tmp_dir / "post_round_commit_state_snapshots"
+
+        rows = build_post_round_commit_rows(
+            run_dir,
+            summary_payload,
+            graph_payload,
+            snapshot_dir=snapshot_dir,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["state_kind"], "parallel_post_round")
+        self.assertEqual(row["commit_supervision"]["label"], 0)
+        self.assertEqual(row["runtime_protocol"], "parallel_graph_v2")
+        self.assertTrue((self.tmp_dir / row["before_state_snapshot"]).exists())
+        self.assertTrue(str(row["state_id"]).startswith(str(run_dir.resolve())))
+
     def test_export_graph_critic_dataset_writes_parallel_edit_examples(self) -> None:
         root = self.tmp_dir / "runs"
         good = root / "good"
@@ -410,10 +508,48 @@ class TrajectoryDatasetTests(unittest.TestCase):
             for line in (dataset_dir / "parallel_edit_examples.jsonl").read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
+        commit_rows = [
+            json.loads(line)
+            for line in (dataset_dir / "post_round_commit_examples.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
         profile = json.loads((dataset_dir / "parallel_edit_profile.json").read_text(encoding="utf-8"))
+        quality = json.loads((dataset_dir / "parallel_label_quality.json").read_text(encoding="utf-8"))
         self.assertEqual(len(parallel_rows), 2)
+        self.assertEqual(len(commit_rows), 1)
+        self.assertEqual(commit_rows[0]["state_kind"], "parallel_post_round")
         self.assertEqual(profile["state_count"], 1)
         self.assertEqual(profile["selected_skip_count"], 0)
+        self.assertEqual(quality["edit_state_count"], 1)
+        self.assertEqual(quality["post_round_commit_state_count"], 1)
+
+    def test_aggregate_parallel_label_quality_reports_commit_balance(self) -> None:
+        quality = aggregate_parallel_label_quality(
+            parallel_rows=[
+                {
+                    "state_id": "s1",
+                    "candidate_kind": "skip",
+                    "is_logged_selected": True,
+                    "role": "MechanismProposer",
+                }
+            ],
+            post_round_commit_rows=[
+                {
+                    "state_id": "c1",
+                    "commit_supervision": {"available": True, "label": 0},
+                },
+                {
+                    "state_id": "c2",
+                    "commit_supervision": {"available": True, "label": 1},
+                },
+            ],
+        )
+
+        self.assertEqual(quality["edit_state_count"], 1)
+        self.assertEqual(quality["selected_skip_count"], 1)
+        self.assertEqual(quality["post_round_commit_state_count"], 2)
+        self.assertEqual(quality["post_round_commit_positive_count"], 1)
+        self.assertEqual(quality["post_round_continue_count"], 1)
 
     def test_export_graph_critic_dataset_namespaces_parallel_state_ids_per_run(self) -> None:
         root = self.tmp_dir / "runs"

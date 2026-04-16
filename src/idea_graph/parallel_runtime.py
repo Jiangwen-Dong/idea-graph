@@ -10,7 +10,7 @@ from .models import (
     ParallelRoleDecisionRecord,
     ParallelRoleRoundResult,
 )
-from .parallel_replay import build_parallel_edit_rows
+from .parallel_replay import build_parallel_edit_rows, build_post_round_commit_row
 from .parallel_role_executor import collect_parallel_role_decisions
 from .role_activation import active_roles_for_round
 
@@ -106,6 +106,22 @@ def execute_parallel_role_round(
         apply_action(graph, action)
         materialized_graph_actions.append(action)
     post_round_snapshot = maturity_snapshot(graph)
+    post_round_commit = ParallelCommitCheckRecord(
+        round_name=round_name,
+        state_kind="parallel_post_round",
+        should_commit=bool(post_round_snapshot.is_mature),
+        source="maturity_snapshot",
+        support_coverage=float(post_round_snapshot.support_coverage),
+        unresolved_contradiction_ratio=float(post_round_snapshot.unresolved_contradiction_ratio),
+        utility=float(post_round_snapshot.utility),
+    )
+    post_round_commit_row = build_post_round_commit_row(
+        graph,
+        round_name=round_name,
+        commit_check=post_round_commit,
+        runtime_protocol="parallel_graph_v2",
+        label_source=post_round_commit.source,
+    )
     return ParallelRoleRoundResult(
         round_name=round_name,
         active_roles=tuple(role for role, _ in raw_decisions),
@@ -113,16 +129,9 @@ def execute_parallel_role_round(
         selected_role_decisions=tuple(selected_role_decisions),
         edit_patches=tuple(edit_patches),
         materialized_graph_actions=tuple(materialized_graph_actions),
-        post_round_commit=ParallelCommitCheckRecord(
-            round_name=round_name,
-            state_kind="parallel_post_round",
-            should_commit=bool(post_round_snapshot.is_mature),
-            source="maturity_snapshot",
-            support_coverage=float(post_round_snapshot.support_coverage),
-            unresolved_contradiction_ratio=float(post_round_snapshot.unresolved_contradiction_ratio),
-            utility=float(post_round_snapshot.utility),
-        ),
+        post_round_commit=post_round_commit,
         edit_rows=tuple(dict(row) for row in edit_rows),
+        post_round_commit_rows=(dict(post_round_commit_row),),
         node_count_before=node_count_before,
         node_count_after=len(graph.nodes),
         edge_count_before=edge_count_before,

@@ -850,6 +850,124 @@ def build_parallel_edit_rows(
     return rows
 
 
+def _validate_post_round_commit_row(row: Mapping[str, Any], *, run_dir: Path, state_index: int) -> dict[str, Any]:
+    schema_version = str(row.get("schema_version", "")).strip()
+    if schema_version != "post_round_commit_row_v1":
+        raise ValueError(
+            f"{run_dir} post_round_commit_rows[{state_index}] has unsupported schema_version '{schema_version}'."
+        )
+
+    runtime_protocol = str(row.get("runtime_protocol", "")).strip()
+    if runtime_protocol != "parallel_graph_v2":
+        raise ValueError(
+            f"{run_dir} post_round_commit_rows[{state_index}] must use runtime_protocol 'parallel_graph_v2'."
+        )
+
+    state_id = str(row.get("state_id", "")).strip()
+    if not state_id:
+        raise ValueError(f"{run_dir} post_round_commit_rows[{state_index}] is missing state_id.")
+
+    state_snapshot = _as_object_dict(row.get("state_snapshot"))
+    if not state_snapshot:
+        raise ValueError(f"{run_dir} post_round_commit_rows[{state_index}] is missing state_snapshot.")
+    if _safe_int(state_snapshot.get("node_count")) != _safe_int(row.get("state_node_count")):
+        raise ValueError(
+            f"{run_dir} post_round_commit_rows[{state_index}] state_node_count does not match state_snapshot."
+        )
+    if _safe_int(state_snapshot.get("edge_count")) != _safe_int(row.get("state_edge_count")):
+        raise ValueError(
+            f"{run_dir} post_round_commit_rows[{state_index}] state_edge_count does not match state_snapshot."
+        )
+    if _safe_int(state_snapshot.get("action_count")) != _safe_int(row.get("state_action_count")):
+        raise ValueError(
+            f"{run_dir} post_round_commit_rows[{state_index}] state_action_count does not match state_snapshot."
+        )
+
+    commit_supervision = _as_object_dict(row.get("commit_supervision"))
+    if not bool(commit_supervision.get("available", False)):
+        raise ValueError(
+            f"{run_dir} post_round_commit_rows[{state_index}] must provide available commit supervision."
+        )
+    label = _safe_int(commit_supervision.get("label"))
+    if label not in (0, 1):
+        raise ValueError(f"{run_dir} post_round_commit_rows[{state_index}] must use a binary commit label.")
+
+    return {
+        **dict(row),
+        "state_id": state_id,
+        "runtime_protocol": runtime_protocol,
+        "state_snapshot": state_snapshot,
+        "commit_supervision": commit_supervision,
+    }
+
+
+def build_post_round_commit_rows(
+    run_dir: Path,
+    summary_payload: Mapping[str, Any],
+    graph_payload: Mapping[str, Any],
+    *,
+    snapshot_dir: Path,
+) -> list[dict[str, Any]]:
+    metadata = graph_payload.get("metadata", {})
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    raw_rows = metadata.get("post_round_commit_rows", [])
+    if not isinstance(raw_rows, list) or not raw_rows:
+        return []
+
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    run_path = Path(run_dir).resolve()
+    native_evaluation = summary_payload.get("benchmark_native_evaluation", {})
+    if not isinstance(native_evaluation, Mapping):
+        native_evaluation = {}
+    rows: list[dict[str, Any]] = []
+
+    for state_index, raw_row in enumerate(raw_rows):
+        if not isinstance(raw_row, Mapping):
+            raise ValueError(f"{run_path} post_round_commit_rows[{state_index}] must be a JSON object.")
+        row = _validate_post_round_commit_row(raw_row, run_dir=run_path, state_index=state_index)
+        exported_state_id = f"{run_path}::{row['state_id']}"
+        snapshot_name = f"{run_path.name}-post-round-state-{state_index:03d}.json"
+        snapshot_path = snapshot_dir / snapshot_name
+        write_text_file(
+            snapshot_path,
+            json.dumps(row["state_snapshot"], indent=2, ensure_ascii=False, default=str),
+        )
+        rows.append(
+            {
+                "run_dir": str(run_path),
+                "benchmark": str(metadata.get("benchmark", "")).strip()
+                or str(native_evaluation.get("benchmark", "")).strip()
+                or "unknown",
+                "instance_name": str(summary_payload.get("instance_name", run_path.name)).strip() or run_path.name,
+                "baseline_name": str(metadata.get("baseline_name", "")).strip() or "unknown",
+                "topic": str(summary_payload.get("topic", graph_payload.get("topic", ""))).strip(),
+                "post_round_state_index": state_index,
+                "state_id": exported_state_id,
+                "round_name": str(row.get("round_name", "")).strip(),
+                "role": "CommitController",
+                "state_kind": str(row.get("state_kind", "")).strip() or "parallel_post_round",
+                "runtime_protocol": row["runtime_protocol"],
+                "label_source": str(row.get("label_source", "")).strip(),
+                "state_text": str(row.get("state_text", "")).strip(),
+                "before_state_snapshot": f"post_round_commit_state_snapshots/{snapshot_name}",
+                "before_state_node_count": _safe_int(row["state_snapshot"].get("node_count")),
+                "before_state_edge_count": _safe_int(row["state_snapshot"].get("edge_count")),
+                "before_state_contradiction_count": _safe_int(row["state_snapshot"].get("contradiction_count")),
+                "before_state_support_edge_count": _safe_int(row["state_snapshot"].get("support_edge_count")),
+                "before_state_action_count": _safe_int(row["state_snapshot"].get("action_count")),
+                "commit_supervision": row["commit_supervision"],
+                "support_coverage": _safe_float(row.get("support_coverage")),
+                "unresolved_contradiction_ratio": _safe_float(row.get("unresolved_contradiction_ratio")),
+                "utility": _safe_float(row.get("utility")),
+                "final_return_local": _safe_float(_as_object_dict(summary_payload.get("idea_evaluation")).get("overall_score")),
+                "final_return_native": _native_average(native_evaluation),
+            }
+        )
+
+    return rows
+
+
 def aggregate_parallel_edit_profile(parallel_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     state_ids = {
         str(row.get("state_id", "")).strip()
@@ -893,6 +1011,46 @@ def aggregate_parallel_edit_profile(parallel_rows: Sequence[Mapping[str, Any]]) 
         "role_counts": role_counts,
         "label_source_counts": label_source_counts,
         "runtime_protocol_counts": runtime_protocol_counts,
+    }
+
+
+def aggregate_parallel_label_quality(
+    *,
+    parallel_rows: Sequence[Mapping[str, Any]],
+    post_round_commit_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    edit_state_ids = {
+        str(row.get("state_id", "")).strip()
+        for row in parallel_rows
+        if str(row.get("state_id", "")).strip()
+    }
+    commit_state_ids = {
+        str(row.get("state_id", "")).strip()
+        for row in post_round_commit_rows
+        if str(row.get("state_id", "")).strip()
+    }
+    selected_skip_count = sum(
+        1
+        for row in parallel_rows
+        if str(row.get("candidate_kind", "")).strip() == "skip" and bool(row.get("is_logged_selected", False))
+    )
+    positive_commit_count = sum(
+        1
+        for row in post_round_commit_rows
+        if _safe_int(_as_object_dict(row.get("commit_supervision")).get("label")) == 1
+    )
+    continue_count = sum(
+        1
+        for row in post_round_commit_rows
+        if _safe_int(_as_object_dict(row.get("commit_supervision")).get("label")) == 0
+    )
+    return {
+        "edit_state_count": len(edit_state_ids),
+        "edit_candidate_count": len(parallel_rows),
+        "selected_skip_count": selected_skip_count,
+        "post_round_commit_state_count": len(commit_state_ids),
+        "post_round_commit_positive_count": positive_commit_count,
+        "post_round_continue_count": continue_count,
     }
 
 
@@ -999,11 +1157,14 @@ def _readme_text() -> str:
             "- `trajectory_examples.jsonl`: one row per exported graph action",
             "- `terminal_state_manifest.jsonl`: one positive commit-supervision state per completed EIG run",
             "- `parallel_edit_examples.jsonl`: one row per exported parallel candidate action",
+            "- `post_round_commit_examples.jsonl`: one row per exported post-round commit decision state",
             "- `parallel_edit_profile.json`: aggregate integrity and coverage stats for parallel edit labels",
+            "- `parallel_label_quality.json`: combined edit and post-round commit label counts",
             "- `dataset_profile.json`: aggregate counts, coverage, token, and cost indicators",
             "- `state_snapshots/`: JSON snapshots of the reconstructed pre-action graph state",
             "- `terminal_state_snapshots/`: JSON snapshots of final graph states used for commit supervision",
             "- `parallel_state_snapshots/`: JSON snapshots of frozen role-round states from `parallel_graph_v2`",
+            "- `post_round_commit_state_snapshots/`: JSON snapshots of realized post-round graph states",
             "",
             "Caveat: state reconstruction is timestamp-based and approximate. It is",
             "structurally faithful for offline critic training, but it is not a full",
@@ -1031,14 +1192,17 @@ def export_graph_critic_dataset(
     snapshot_dir = dataset_dir / "state_snapshots"
     terminal_snapshot_dir = dataset_dir / "terminal_state_snapshots"
     parallel_snapshot_dir = dataset_dir / "parallel_state_snapshots"
+    post_round_commit_snapshot_dir = dataset_dir / "post_round_commit_state_snapshots"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     terminal_snapshot_dir.mkdir(parents=True, exist_ok=True)
     parallel_snapshot_dir.mkdir(parents=True, exist_ok=True)
+    post_round_commit_snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_rows: list[dict[str, Any]] = []
     transition_rows: list[dict[str, Any]] = []
     terminal_rows: list[dict[str, Any]] = []
     parallel_edit_rows: list[dict[str, Any]] = []
+    post_round_commit_rows: list[dict[str, Any]] = []
 
     for run_dir in run_dirs:
         summary_payload, graph_payload = load_run_artifacts(run_dir)
@@ -1067,14 +1231,27 @@ def export_graph_critic_dataset(
                 snapshot_dir=parallel_snapshot_dir,
             )
         )
+        post_round_commit_rows.extend(
+            build_post_round_commit_rows(
+                run_dir,
+                summary_payload,
+                graph_payload,
+                snapshot_dir=post_round_commit_snapshot_dir,
+            )
+        )
 
     profile = aggregate_dataset_profile(manifest_rows, transition_rows, terminal_rows)
     parallel_profile = aggregate_parallel_edit_profile(parallel_edit_rows)
+    label_quality = aggregate_parallel_label_quality(
+        parallel_rows=parallel_edit_rows,
+        post_round_commit_rows=post_round_commit_rows,
+    )
 
     write_text_file(dataset_dir / "run_manifest.jsonl", _jsonl_lines(manifest_rows))
     write_text_file(dataset_dir / "trajectory_examples.jsonl", _jsonl_lines(transition_rows))
     write_text_file(dataset_dir / "terminal_state_manifest.jsonl", _jsonl_lines(terminal_rows))
     write_text_file(dataset_dir / "parallel_edit_examples.jsonl", _jsonl_lines(parallel_edit_rows))
+    write_text_file(dataset_dir / "post_round_commit_examples.jsonl", _jsonl_lines(post_round_commit_rows))
     write_text_file(
         dataset_dir / "dataset_profile.json",
         json.dumps(profile, indent=2, ensure_ascii=False, default=str),
@@ -1082,6 +1259,10 @@ def export_graph_critic_dataset(
     write_text_file(
         dataset_dir / "parallel_edit_profile.json",
         json.dumps(parallel_profile, indent=2, ensure_ascii=False, default=str),
+    )
+    write_text_file(
+        dataset_dir / "parallel_label_quality.json",
+        json.dumps(label_quality, indent=2, ensure_ascii=False, default=str),
     )
     write_text_file(dataset_dir / "README.md", _readme_text())
 
