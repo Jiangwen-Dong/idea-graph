@@ -3102,6 +3102,11 @@ def run_experiment(
     stop_when_mature: bool = True,
 ) -> IdeaGraph:
     graph = IdeaGraph(topic=topic, literature=literature, metadata=dict(metadata or {}))
+    runtime_protocol = (
+        str(graph.metadata.get("runtime_protocol", "sequential_v1")).strip()
+        or "sequential_v1"
+    )
+    graph.metadata["runtime_protocol"] = runtime_protocol
     graph.metadata.setdefault(
         "literature_grounding",
         build_literature_grounding(literature=graph.literature, metadata=_generation_metadata(graph)).as_dict(),

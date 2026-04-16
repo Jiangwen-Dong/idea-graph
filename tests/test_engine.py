@@ -604,6 +604,28 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(graph.metadata.get("executed_round_count"), 5)
         self.assertEqual(graph.metadata.get("stop_reason"), "max_rounds_reached")
 
+    def test_run_experiment_accepts_parallel_runtime_protocol(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        self.assertEqual(graph.metadata.get("runtime_protocol"), "parallel_graph_v2")
+        self.assertEqual(graph.metadata.get("executed_round_count"), 1)
+
+    def test_run_experiment_records_default_runtime_protocol(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        self.assertEqual(graph.metadata.get("runtime_protocol"), "sequential_v1")
+
     def test_run_experiment_stops_early_when_mature(self) -> None:
         mature_snapshot = MaturitySnapshot(
             support_coverage=0.8,
