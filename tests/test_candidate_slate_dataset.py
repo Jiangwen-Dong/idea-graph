@@ -1081,6 +1081,7 @@ class CandidateSlateDatasetTests(unittest.TestCase):
         self.assertEqual(len(commit_rows_out), 2)
         self.assertTrue(all(row["state_kind"] == "parallel_pre_action" for row in edit_rows))
         self.assertTrue(all(row["state_kind"] == "parallel_post_round" for row in commit_rows_out))
+        self.assertTrue(all(str(row["before_state_snapshot"]).startswith("parallel_state_snapshots/") for row in edit_rows))
         self.assertEqual(stats["edit_state_count"], 2)
         self.assertEqual(stats["commit_positive_count"], 1)
 
