@@ -296,6 +296,14 @@ def aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         mean_graph = mean_or_zero([float(item["graph_process"]) for item in items])
         mean_calls = mean_or_zero([float(item["llm_call_count"]) for item in items])
         mean_tokens = mean_or_zero([float(item["total_tokens"]) for item in items])
+        mean_rounds = mean_or_zero([float(item.get("executed_round_count", 0.0) or 0.0) for item in items])
+        mean_actions = mean_or_zero([float(item.get("action_count", 0.0) or 0.0) for item in items])
+        runtime_protocols = sorted(
+            {
+                str(item.get("runtime_protocol", "")).strip() or "sequential_v1"
+                for item in items
+            }
+        )
         native_rows = [
             float(item["native_average_normalized_10"])
             for item in items
@@ -311,6 +319,9 @@ def aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "mean_graph_process": mean_graph,
                 "mean_llm_call_count": mean_calls,
                 "mean_total_tokens": mean_tokens,
+                "mean_executed_round_count": mean_rounds,
+                "mean_action_count": mean_actions,
+                "runtime_protocols": runtime_protocols,
                 "mean_native_average_normalized_10": mean_or_zero(native_rows) if native_rows else None,
                 "run_count": len(items),
                 "selected_run_dirs": [item["run_dir"] for item in items],
@@ -332,6 +343,14 @@ def overall_aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         mean_graph = mean_or_zero([float(item["graph_process"]) for item in items])
         mean_calls = mean_or_zero([float(item["llm_call_count"]) for item in items])
         mean_tokens = mean_or_zero([float(item["total_tokens"]) for item in items])
+        mean_rounds = mean_or_zero([float(item.get("executed_round_count", 0.0) or 0.0) for item in items])
+        mean_actions = mean_or_zero([float(item.get("action_count", 0.0) or 0.0) for item in items])
+        runtime_protocols = sorted(
+            {
+                str(item.get("runtime_protocol", "")).strip() or "sequential_v1"
+                for item in items
+            }
+        )
         native_rows = [
             float(item["native_average_normalized_10"])
             for item in items
@@ -346,6 +365,9 @@ def overall_aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "mean_graph_process": mean_graph,
                 "mean_llm_call_count": mean_calls,
                 "mean_total_tokens": mean_tokens,
+                "mean_executed_round_count": mean_rounds,
+                "mean_action_count": mean_actions,
+                "runtime_protocols": runtime_protocols,
                 "mean_native_average_normalized_10": mean_or_zero(native_rows) if native_rows else None,
                 "run_count": len(items),
             }
@@ -385,25 +407,27 @@ def format_markdown_summary(payload: dict[str, Any]) -> str:
         method_name = str(item.get("name", item.get("baseline_name", "")))
         runner_name = str(item.get("baseline_name", method_name))
         runner_text = "" if runner_name == method_name else f", runner=`{runner_name}`"
+        runtime_protocol = str(item.get("runtime_protocol", "")).strip() or "sequential_v1"
         lines.append(
             f"- `{method_name}`{runner_text}: restarts={item['restarts']}, max_rounds={item['max_rounds']}, "
-            f"stop_when_mature={item['stop_when_mature']}. {item['rationale']}"
+            f"stop_when_mature={item['stop_when_mature']}, runtime_protocol=`{runtime_protocol}`. {item['rationale']}"
         )
     lines.append("")
     lines.append("## Raw Data Table")
     lines.append("")
-    lines.append("| Benchmark | Selector | Baseline | Overall | Align. | Expert | Graph | Calls | Tokens | Native | Stop | Run Dir |")
-    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
+    lines.append("| Benchmark | Selector | Baseline | Protocol | Overall | Align. | Expert | Graph | Calls | Tokens | Rounds | Actions | Native | Stop | Run Dir |")
+    lines.append("| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
     for row in payload.get("raw_rows", []):
         if "error" in row:
             continue
         native_value = row.get("native_average_normalized_10")
         native_text = "--" if native_value is None else f"{float(native_value):.2f}"
+        runtime_protocol = str(row.get("runtime_protocol", "")).strip() or "sequential_v1"
         lines.append(
-            f"| `{row['benchmark']}` | `{row['display_selector']}` | `{row['baseline_name']}` | "
+            f"| `{row['benchmark']}` | `{row['display_selector']}` | `{row['baseline_name']}` | `{runtime_protocol}` | "
             f"{row['overall_score']:.2f} | {row['benchmark_alignment']:.2f} | "
             f"{row['expert_style_quality']:.2f} | {row['graph_process']:.2f} | "
-            f"{row['llm_call_count']} | {row['total_tokens']} | {native_text} | "
+            f"{row['llm_call_count']} | {row['total_tokens']} | {row.get('executed_round_count', 0)} | {row.get('action_count', 0)} | {native_text} | "
             f"`{row['stop_reason']}` | `{row['run_dir_name']}` |"
         )
     lines.append("")
@@ -418,11 +442,11 @@ def format_markdown_summary(payload: dict[str, Any]) -> str:
                 f"| `{row['benchmark']}` | `{row['display_selector']}` | `{row['baseline_name']}` | "
                 f"{_clean_text(row['error'])} |"
             )
-        lines.append("")
+    lines.append("")
     lines.append("## Per-Benchmark Aggregate")
     lines.append("")
-    lines.append("| Benchmark | Baseline | Overall | Align. | Expert | Graph | Calls | Tokens | x Direct | Native |")
-    lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| Benchmark | Baseline | Protocols | Overall | Align. | Expert | Graph | Calls | Tokens | Rounds | Actions | x Direct | Native |")
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     benchmark_rows = list(payload.get("aggregate_rows", []))
     benchmark_groups: dict[str, list[dict[str, Any]]] = {}
     for row in benchmark_rows:
@@ -434,17 +458,18 @@ def format_markdown_summary(payload: dict[str, Any]) -> str:
             native_text = "--" if native_value is None else f"{float(native_value):.2f}"
             multiplier_value = multiplier_lookup[row["baseline_name"]]
             multiplier_text = "--" if multiplier_value is None else f"{float(multiplier_value):.2f}x"
+            protocols_text = ", ".join(str(item) for item in row.get("runtime_protocols", [])) or "sequential_v1"
             lines.append(
-                f"| `{benchmark_name}` | `{row['baseline_name']}` | {row['mean_overall_score']:.2f} | "
+                f"| `{benchmark_name}` | `{row['baseline_name']}` | `{protocols_text}` | {row['mean_overall_score']:.2f} | "
                 f"{row['mean_benchmark_alignment']:.2f} | {row['mean_expert_style_quality']:.2f} | "
                 f"{row['mean_graph_process']:.2f} | {row['mean_llm_call_count']:.2f} | "
-                f"{row['mean_total_tokens']:.0f} | {multiplier_text} | {native_text} |"
+                f"{row['mean_total_tokens']:.0f} | {row['mean_executed_round_count']:.2f} | {row['mean_action_count']:.2f} | {multiplier_text} | {native_text} |"
             )
     lines.append("")
     lines.append("## Overall Aggregate")
     lines.append("")
-    lines.append("| Baseline | Overall | Align. | Expert | Graph | Calls | Tokens | x Direct | Native |")
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| Baseline | Protocols | Overall | Align. | Expert | Graph | Calls | Tokens | Rounds | Actions | x Direct | Native |")
+    lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     overall_rows = list(payload.get("overall_aggregate_rows", []))
     multiplier_lookup = _token_multiplier_lookup(overall_rows)
     for row in overall_rows:
@@ -452,11 +477,12 @@ def format_markdown_summary(payload: dict[str, Any]) -> str:
         native_text = "--" if native_value is None else f"{float(native_value):.2f}"
         multiplier_value = multiplier_lookup[row["baseline_name"]]
         multiplier_text = "--" if multiplier_value is None else f"{float(multiplier_value):.2f}x"
+        protocols_text = ", ".join(str(item) for item in row.get("runtime_protocols", [])) or "sequential_v1"
         lines.append(
-            f"| `{row['baseline_name']}` | {row['mean_overall_score']:.2f} | "
+            f"| `{row['baseline_name']}` | `{protocols_text}` | {row['mean_overall_score']:.2f} | "
             f"{row['mean_benchmark_alignment']:.2f} | {row['mean_expert_style_quality']:.2f} | "
             f"{row['mean_graph_process']:.2f} | {row['mean_llm_call_count']:.2f} | "
-            f"{row['mean_total_tokens']:.0f} | {multiplier_text} | {native_text} |"
+            f"{row['mean_total_tokens']:.0f} | {row['mean_executed_round_count']:.2f} | {row['mean_action_count']:.2f} | {multiplier_text} | {native_text} |"
         )
     lines.append("")
     lines.append("## Key Findings")
@@ -608,8 +634,10 @@ def main() -> None:
                     "native_average_normalized_10": native_average,
                     "run_dir": str(run_dir),
                     "run_dir_name": run_dir.name,
+                    "runtime_protocol": str(graph.metadata.get("runtime_protocol", "sequential_v1") or "sequential_v1"),
                     "stop_reason": str(graph.metadata.get("stop_reason", "")),
                     "executed_round_count": int(graph.metadata.get("executed_round_count", 0) or 0),
+                    "action_count": len(graph.actions),
                     "title": graph.final_proposal.title if graph.final_proposal is not None else "",
                 }
                 raw_rows.append(row)

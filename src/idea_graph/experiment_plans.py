@@ -15,6 +15,7 @@ class ExperimentMethodPlan:
     max_rounds: int
     stop_when_mature: bool
     rationale: str
+    runtime_protocol: str = "sequential_v1"
     metadata_overrides: dict[str, Any] = field(default_factory=dict)
     strip_reference_packet: bool = False
     strip_paper_grounding: bool = False
@@ -82,9 +83,10 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         restarts=1,
         max_rounds=5,
         stop_when_mature=True,
+        runtime_protocol="parallel_graph_v2",
         rationale="Evolving Idea Graph multi-agent collaboration with maturity-based early stopping.",
         metadata_overrides={
-            "idea_graph_protocol_variant": "eig_default",
+            "idea_graph_protocol_variant": "eig_parallel_v2_heuristic",
         },
     ),
 }
@@ -98,6 +100,7 @@ ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         restarts=1,
         max_rounds=2,
         stop_when_mature=False,
+        runtime_protocol="parallel_graph_v2",
         rationale="EIG with early commitment: synthesize after a short fixed horizon instead of waiting for structural maturity.",
         metadata_overrides={
             "idea_graph_protocol_variant": "early_consensus",
@@ -110,6 +113,7 @@ ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         restarts=1,
         max_rounds=5,
         stop_when_mature=False,
+        runtime_protocol="parallel_graph_v2",
         rationale="Full idea graph without maturity-based early stopping.",
         metadata_overrides={
             "idea_graph_protocol_variant": "no_maturity_stop",
@@ -121,6 +125,7 @@ ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         restarts=1,
         max_rounds=5,
         stop_when_mature=True,
+        runtime_protocol="parallel_graph_v2",
         rationale="Full idea graph without the core-node completeness safeguard added after the hard-case failure analysis.",
         metadata_overrides={
             "idea_graph_protocol_variant": "no_coverage_safeguard",
@@ -133,6 +138,7 @@ ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         restarts=1,
         max_rounds=5,
         stop_when_mature=True,
+        runtime_protocol="parallel_graph_v2",
         rationale="Full idea graph with the benchmark topic preserved but reference-packet and paper-grounding evidence removed.",
         metadata_overrides={
             "idea_graph_protocol_variant": "no_reference_grounding",
@@ -179,6 +185,7 @@ def prepare_instance_for_method_plan(instance, *, plan: ExperimentMethodPlan):
     metadata["method_name"] = plan.name
     metadata["runner_baseline_name"] = plan.baseline_name
     metadata["method_plan"] = plan.as_dict()
+    metadata["runtime_protocol"] = plan.runtime_protocol
     metadata["idea_graph_protocol_variant"] = metadata.get("idea_graph_protocol_variant") or plan.name
     metadata.update(deepcopy(plan.metadata_overrides))
 
