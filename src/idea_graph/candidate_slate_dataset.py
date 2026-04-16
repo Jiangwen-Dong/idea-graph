@@ -611,6 +611,14 @@ class CandidateSlateDatasetBuildResult:
     candidate_count: int
 
 
+@dataclass(frozen=True)
+class ParallelTwoHeadDatasetBuildResult:
+    dataset_dir: Path
+    edit_state_count: int
+    edit_candidate_count: int
+    commit_state_count: int
+
+
 def _group_parallel_rows_by_state(
     parallel_rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
@@ -761,6 +769,118 @@ def build_parallel_candidate_dataset_rows(
     return candidate_rows, state_manifest
 
 
+def _group_commit_rows_by_state(
+    commit_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in commit_rows:
+        state_id = str(row.get("state_id", "")).strip()
+        if not state_id:
+            raise ValueError("Post-round commit row is missing required state_id.")
+        grouped.setdefault(state_id, []).append(dict(row))
+    return grouped
+
+
+def _validate_parallel_commit_state_rows(
+    state_id: str,
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    ordered_rows = sorted(
+        (dict(row) for row in rows),
+        key=lambda row: (
+            _safe_int(row.get("post_round_state_index")),
+            str(row.get("state_id", "")).strip(),
+        ),
+    )
+    if not ordered_rows:
+        raise ValueError(f"Post-round commit state '{state_id}' is empty.")
+    if len(ordered_rows) != 1:
+        raise ValueError(f"Post-round commit state '{state_id}' must contain exactly one row.")
+
+    row = ordered_rows[0]
+    commit_supervision = _as_object_dict(row.get("commit_supervision"))
+    if not bool(commit_supervision.get("available", False)):
+        raise ValueError(f"Post-round commit state '{state_id}' is missing available commit supervision.")
+    label = _safe_int(commit_supervision.get("label"))
+    if label not in (0, 1):
+        raise ValueError(f"Post-round commit state '{state_id}' must use binary commit supervision.")
+    return row
+
+
+def build_parallel_commit_dataset_rows(
+    *,
+    commit_rows: Sequence[Mapping[str, Any]],
+    manifest_rows: Sequence[Mapping[str, Any]],
+    split_rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    manifest_by_run_dir = {
+        str(row.get("run_dir", "")).strip(): row
+        for row in manifest_rows
+        if str(row.get("run_dir", "")).strip()
+    }
+    split_by_group = _split_lookup(split_rows)
+    packaged_rows: list[dict[str, Any]] = []
+    state_manifest: list[dict[str, Any]] = []
+
+    grouped = _group_commit_rows_by_state(commit_rows)
+    for state_id in sorted(grouped):
+        row = _validate_parallel_commit_state_rows(state_id, grouped[state_id])
+        run_dir = str(row.get("run_dir", "")).strip()
+        manifest_row = manifest_by_run_dir.get(run_dir)
+        if manifest_row is None:
+            raise ValueError(
+                f"Post-round commit state '{state_id}' references run_dir '{run_dir}' missing from run manifest."
+            )
+        group_id = make_group_id(manifest_row)
+        split = split_by_group.get(group_id)
+        if split is None:
+            raise ValueError(f"Missing split assignment for post-round commit group_id '{group_id}'.")
+        label_package = package_labels_from_manifest_row(manifest_row)
+        commit_supervision = _as_object_dict(row.get("commit_supervision"))
+        packaged_rows.append(
+            {
+                "state_id": state_id,
+                "group_id": group_id,
+                "split": split,
+                "benchmark": str(row.get("benchmark", "unknown")).strip() or "unknown",
+                "instance_name": str(row.get("instance_name", "unknown")).strip() or "unknown",
+                "run_dir": run_dir,
+                "step_index": _safe_int(row.get("post_round_state_index")),
+                "round_name": str(row.get("round_name", "")).strip(),
+                "role": str(row.get("role", "CommitController")).strip() or "CommitController",
+                "state_kind": str(row.get("state_kind", "parallel_post_round")).strip() or "parallel_post_round",
+                "state_text": str(row.get("state_text", "")).strip(),
+                "before_state_snapshot": str(row.get("before_state_snapshot", "")).strip(),
+                "commit_supervision": commit_supervision,
+                "commit_label": _safe_int(commit_supervision.get("label")),
+                "targets": label_package["targets"],
+                "weak_local": label_package["weak_local"],
+                "native": label_package["native"],
+                "label_availability": label_package["label_availability"],
+                "runtime_protocol": str(row.get("runtime_protocol", "")).strip(),
+                "label_source": str(row.get("label_source", "")).strip(),
+            }
+        )
+        state_manifest.append(
+            {
+                "state_id": state_id,
+                "group_id": group_id,
+                "split": split,
+                "benchmark": str(row.get("benchmark", "unknown")).strip() or "unknown",
+                "instance_name": str(row.get("instance_name", "unknown")).strip() or "unknown",
+                "run_dir": run_dir,
+                "step_index": _safe_int(row.get("post_round_state_index")),
+                "round_name": str(row.get("round_name", "")).strip(),
+                "role": str(row.get("role", "CommitController")).strip() or "CommitController",
+                "state_kind": str(row.get("state_kind", "parallel_post_round")).strip() or "parallel_post_round",
+                "runtime_protocol": str(row.get("runtime_protocol", "")).strip(),
+                "label_source": str(row.get("label_source", "")).strip(),
+            }
+        )
+
+    return packaged_rows, state_manifest
+
+
 def build_parallel_candidate_dataset_from_export(
     *,
     g1_dataset_dir: Path,
@@ -805,6 +925,92 @@ def build_parallel_candidate_dataset_from_export(
         dataset_dir=dataset_dir,
         state_count=len(state_manifest),
         candidate_count=len(candidate_rows),
+    )
+
+
+def _two_head_readme_text(dataset_name: str) -> str:
+    return "\n".join(
+        [
+            f"# {dataset_name}",
+            "",
+            "Parallel two-head critic dataset derived from frozen edit states and post-round commit states.",
+            "",
+            "Files:",
+            "- edit_head_rows.jsonl",
+            "- edit_state_manifest.jsonl",
+            "- commit_head_rows.jsonl",
+            "- commit_state_manifest.jsonl",
+            "- split_manifest.jsonl",
+            "- dataset_stats.json",
+            "",
+        ]
+    )
+
+
+def build_parallel_two_head_dataset_from_export(
+    *,
+    g1_dataset_dir: Path,
+    output_dir: Path,
+    dataset_name: str,
+    validation_fraction: float = 0.2,
+    split_overrides_path: Path | None = None,
+) -> ParallelTwoHeadDatasetBuildResult:
+    manifest_rows = _load_optional_jsonl(Path(g1_dataset_dir) / "run_manifest.jsonl")
+    parallel_rows = _load_optional_jsonl(Path(g1_dataset_dir) / "parallel_edit_examples.jsonl")
+    commit_rows = _load_optional_jsonl(Path(g1_dataset_dir) / "post_round_commit_examples.jsonl")
+    split_override_rows = _load_optional_jsonl(Path(split_overrides_path)) if split_overrides_path else []
+    group_rows = build_group_manifest(manifest_rows, [*parallel_rows, *commit_rows])
+    split_rows = assign_group_splits(
+        group_rows,
+        validation_fraction=validation_fraction,
+        split_override_rows=split_override_rows,
+    )
+    edit_rows, edit_state_manifest = build_parallel_candidate_dataset_rows(
+        g1_dataset_dir=g1_dataset_dir,
+        parallel_rows=parallel_rows,
+        manifest_rows=manifest_rows,
+        split_rows=split_rows,
+    )
+    packaged_commit_rows, commit_state_manifest = build_parallel_commit_dataset_rows(
+        commit_rows=commit_rows,
+        manifest_rows=manifest_rows,
+        split_rows=split_rows,
+    )
+    dataset_stats = {
+        "edit_state_count": len(edit_state_manifest),
+        "edit_candidate_count": len(edit_rows),
+        "commit_state_count": len(commit_state_manifest),
+        "commit_positive_count": sum(1 for row in packaged_commit_rows if _safe_int(row.get("commit_label")) == 1),
+        "commit_continue_count": sum(1 for row in packaged_commit_rows if _safe_int(row.get("commit_label")) == 0),
+        "split_counts": {
+            split: sum(1 for row in edit_state_manifest if str(row.get("split", "")).strip() == split)
+            + sum(1 for row in commit_state_manifest if str(row.get("split", "")).strip() == split)
+            for split in sorted(
+                {
+                    *(str(row.get("split", "train")).strip() or "train" for row in edit_state_manifest),
+                    *(str(row.get("split", "train")).strip() or "train" for row in commit_state_manifest),
+                }
+            )
+        },
+    }
+
+    dataset_dir = Path(output_dir) / dataset_name
+    write_text_file(dataset_dir / "edit_head_rows.jsonl", _jsonl_lines(edit_rows))
+    write_text_file(dataset_dir / "edit_state_manifest.jsonl", _jsonl_lines(edit_state_manifest))
+    write_text_file(dataset_dir / "commit_head_rows.jsonl", _jsonl_lines(packaged_commit_rows))
+    write_text_file(dataset_dir / "commit_state_manifest.jsonl", _jsonl_lines(commit_state_manifest))
+    write_text_file(dataset_dir / "split_manifest.jsonl", _jsonl_lines(split_rows))
+    write_text_file(
+        dataset_dir / "dataset_stats.json",
+        json.dumps(dataset_stats, indent=2, ensure_ascii=False, default=str),
+    )
+    write_text_file(dataset_dir / "README.md", _two_head_readme_text(dataset_name))
+
+    return ParallelTwoHeadDatasetBuildResult(
+        dataset_dir=dataset_dir,
+        edit_state_count=len(edit_state_manifest),
+        edit_candidate_count=len(edit_rows),
+        commit_state_count=len(commit_state_manifest),
     )
 
 

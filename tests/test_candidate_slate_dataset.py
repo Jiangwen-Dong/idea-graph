@@ -18,6 +18,7 @@ from idea_graph.candidate_slate_dataset import (
     build_candidate_dataset_stats,
     build_graph_critic_candidate_dataset,
     build_parallel_candidate_dataset_from_export,
+    build_parallel_two_head_dataset_from_export,
 )
 from idea_graph.critic_dataset import build_graph_critic_dataset
 
@@ -800,6 +801,288 @@ class CandidateSlateDatasetTests(unittest.TestCase):
                 output_dir=output_dir,
                 dataset_name="parallel-g25-bad",
             )
+
+    def test_parallel_two_head_builder_writes_edit_and_commit_rows(self) -> None:
+        g1_dataset_dir = self.tmp_dir / "g1_parallel_two_head"
+        output_dir = self.tmp_dir / "out_parallel_two_head"
+        g1_dataset_dir.mkdir(parents=True, exist_ok=True)
+        (g1_dataset_dir / "parallel_state_snapshots").mkdir(parents=True, exist_ok=True)
+        (g1_dataset_dir / "post_round_commit_state_snapshots").mkdir(parents=True, exist_ok=True)
+
+        manifest_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 6.0,
+                "final_native_average": 7.0,
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-03",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 7.0,
+                "final_native_average": 8.0,
+            },
+            {
+                "run_dir": "run-d",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-04",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "final_local_overall": 6.7,
+                "final_native_average": 7.4,
+            },
+        ]
+        parallel_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+                "parallel_state_index": 0,
+                "state_id": "run-a::parallel::Round1::MechanismProposer",
+                "round_name": "Round1",
+                "role": "MechanismProposer",
+                "state_kind": "parallel_pre_action",
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "parallel_protocol_teacher_v1",
+                "state_text": "nodes=2;edges=1;contradictions=0",
+                "before_state_snapshot": "parallel_state_snapshots/run-a-parallel-state-000.json",
+                "before_state_node_count": 2,
+                "before_state_edge_count": 1,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 1,
+                "candidate_id": "run-a::parallel::Round1::MechanismProposer::candidate:0000",
+                "candidate_index": 0,
+                "candidate_count": 2,
+                "candidate_kind": "add_support_edge",
+                "candidate_target_ids": ["N001", "N002"],
+                "candidate_payload": {"branch_id": "B001"},
+                "candidate_source": "parallel_selected",
+                "candidate_text": "kind=add_support_edge",
+                "selected_candidate_id": "run-a::parallel::Round1::MechanismProposer::candidate:0000",
+                "is_logged_selected": True,
+                "selected_action_kind": "add_support_edge",
+                "selected_action_targets": ["N001", "N002"],
+                "selected_action_payload": {"branch_id": "B001"},
+                "selected_action_source": "parallel_protocol_teacher_v1",
+            },
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+                "parallel_state_index": 0,
+                "state_id": "run-a::parallel::Round1::MechanismProposer",
+                "round_name": "Round1",
+                "role": "MechanismProposer",
+                "state_kind": "parallel_pre_action",
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "parallel_protocol_teacher_v1",
+                "state_text": "nodes=2;edges=1;contradictions=0",
+                "before_state_snapshot": "parallel_state_snapshots/run-a-parallel-state-000.json",
+                "before_state_node_count": 2,
+                "before_state_edge_count": 1,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 1,
+                "candidate_id": "run-a::parallel::Round1::MechanismProposer::candidate:0001",
+                "candidate_index": 1,
+                "candidate_count": 2,
+                "candidate_kind": "skip",
+                "candidate_target_ids": [],
+                "candidate_payload": {"branch_id": "B001"},
+                "candidate_source": "parallel_skip",
+                "candidate_text": "kind=skip",
+                "selected_candidate_id": "run-a::parallel::Round1::MechanismProposer::candidate:0000",
+                "is_logged_selected": False,
+                "selected_action_kind": "add_support_edge",
+                "selected_action_targets": ["N001", "N002"],
+                "selected_action_payload": {"branch_id": "B001"},
+                "selected_action_source": "parallel_protocol_teacher_v1",
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-03",
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+                "parallel_state_index": 0,
+                "state_id": "run-c::parallel::Round1::EvaluationDesigner",
+                "round_name": "Round1",
+                "role": "EvaluationDesigner",
+                "state_kind": "parallel_pre_action",
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "parallel_protocol_teacher_v1",
+                "state_text": "nodes=3;edges=2;contradictions=0",
+                "before_state_snapshot": "parallel_state_snapshots/run-c-parallel-state-000.json",
+                "before_state_node_count": 3,
+                "before_state_edge_count": 2,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 1,
+                "candidate_id": "run-c::parallel::Round1::EvaluationDesigner::candidate:0000",
+                "candidate_index": 0,
+                "candidate_count": 2,
+                "candidate_kind": "request_evidence",
+                "candidate_target_ids": ["N003"],
+                "candidate_payload": {"branch_id": "B003"},
+                "candidate_source": "parallel_selected",
+                "candidate_text": "kind=request_evidence",
+                "selected_candidate_id": "run-c::parallel::Round1::EvaluationDesigner::candidate:0000",
+                "is_logged_selected": True,
+                "selected_action_kind": "request_evidence",
+                "selected_action_targets": ["N003"],
+                "selected_action_payload": {"branch_id": "B003"},
+                "selected_action_source": "parallel_protocol_teacher_v1",
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-03",
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+                "parallel_state_index": 0,
+                "state_id": "run-c::parallel::Round1::EvaluationDesigner",
+                "round_name": "Round1",
+                "role": "EvaluationDesigner",
+                "state_kind": "parallel_pre_action",
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "parallel_protocol_teacher_v1",
+                "state_text": "nodes=3;edges=2;contradictions=0",
+                "before_state_snapshot": "parallel_state_snapshots/run-c-parallel-state-000.json",
+                "before_state_node_count": 3,
+                "before_state_edge_count": 2,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 1,
+                "candidate_id": "run-c::parallel::Round1::EvaluationDesigner::candidate:0001",
+                "candidate_index": 1,
+                "candidate_count": 2,
+                "candidate_kind": "skip",
+                "candidate_target_ids": [],
+                "candidate_payload": {"branch_id": "B003"},
+                "candidate_source": "parallel_skip",
+                "candidate_text": "kind=skip",
+                "selected_candidate_id": "run-c::parallel::Round1::EvaluationDesigner::candidate:0000",
+                "is_logged_selected": False,
+                "selected_action_kind": "request_evidence",
+                "selected_action_targets": ["N003"],
+                "selected_action_payload": {"branch_id": "B003"},
+                "selected_action_source": "parallel_protocol_teacher_v1",
+            },
+        ]
+        commit_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+                "post_round_state_index": 0,
+                "state_id": "run-a::parallel::Round1::post_round_commit",
+                "round_name": "Round1",
+                "role": "CommitController",
+                "state_kind": "parallel_post_round",
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "maturity_snapshot",
+                "state_text": "nodes=2;edges=1;contradictions=0",
+                "before_state_snapshot": "post_round_commit_state_snapshots/run-a-post-round-state-000.json",
+                "before_state_node_count": 2,
+                "before_state_edge_count": 1,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 1,
+                "before_state_action_count": 1,
+                "commit_supervision": {"available": True, "label": 0, "source": "maturity_snapshot"},
+                "support_coverage": 0.5,
+                "unresolved_contradiction_ratio": 1.0,
+                "utility": 4.5,
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-03",
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+                "post_round_state_index": 0,
+                "state_id": "run-c::parallel::Round1::post_round_commit",
+                "round_name": "Round1",
+                "role": "CommitController",
+                "state_kind": "parallel_post_round",
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "maturity_snapshot",
+                "state_text": "nodes=3;edges=2;contradictions=0",
+                "before_state_snapshot": "post_round_commit_state_snapshots/run-c-post-round-state-000.json",
+                "before_state_node_count": 3,
+                "before_state_edge_count": 2,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 1,
+                "before_state_action_count": 1,
+                "commit_supervision": {"available": True, "label": 1, "source": "maturity_snapshot"},
+                "support_coverage": 1.0,
+                "unresolved_contradiction_ratio": 0.0,
+                "utility": 7.5,
+            },
+        ]
+
+        write_text_file(
+            g1_dataset_dir / "run_manifest.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in manifest_rows),
+        )
+        write_text_file(
+            g1_dataset_dir / "parallel_edit_examples.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in parallel_rows),
+        )
+        write_text_file(
+            g1_dataset_dir / "post_round_commit_examples.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in commit_rows),
+        )
+        write_text_file(
+            g1_dataset_dir / "parallel_state_snapshots" / "run-a-parallel-state-000.json",
+            json.dumps({"node_count": 2, "edge_count": 1, "contradiction_count": 0, "support_edge_count": 1, "nodes": {}, "edges": []}),
+        )
+        write_text_file(
+            g1_dataset_dir / "parallel_state_snapshots" / "run-c-parallel-state-000.json",
+            json.dumps({"node_count": 3, "edge_count": 2, "contradiction_count": 0, "support_edge_count": 1, "nodes": {}, "edges": []}),
+        )
+        write_text_file(
+            g1_dataset_dir / "post_round_commit_state_snapshots" / "run-a-post-round-state-000.json",
+            json.dumps({"node_count": 2, "edge_count": 1, "contradiction_count": 0, "support_edge_count": 1, "action_count": 1, "nodes": {}, "edges": []}),
+        )
+        write_text_file(
+            g1_dataset_dir / "post_round_commit_state_snapshots" / "run-c-post-round-state-000.json",
+            json.dumps({"node_count": 3, "edge_count": 2, "contradiction_count": 0, "support_edge_count": 1, "action_count": 1, "nodes": {}, "edges": []}),
+        )
+
+        result = build_parallel_two_head_dataset_from_export(
+            g1_dataset_dir=g1_dataset_dir,
+            output_dir=output_dir,
+            dataset_name="parallel-two-head-smoke",
+        )
+
+        self.assertEqual(result.edit_state_count, 2)
+        self.assertEqual(result.commit_state_count, 2)
+        edit_rows = [
+            json.loads(line)
+            for line in (result.dataset_dir / "edit_head_rows.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        commit_rows_out = [
+            json.loads(line)
+            for line in (result.dataset_dir / "commit_head_rows.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        stats = json.loads((result.dataset_dir / "dataset_stats.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(edit_rows), 4)
+        self.assertEqual(len(commit_rows_out), 2)
+        self.assertTrue(all(row["state_kind"] == "parallel_pre_action" for row in edit_rows))
+        self.assertTrue(all(row["state_kind"] == "parallel_post_round" for row in commit_rows_out))
+        self.assertEqual(stats["edit_state_count"], 2)
+        self.assertEqual(stats["commit_positive_count"], 1)
 
 
 if __name__ == "__main__":
