@@ -16,10 +16,13 @@ from idea_graph.fs_utils import _windows_safe_path, write_text_file
 from idea_graph.trajectory_dataset import (
     PricingConfig,
     aggregate_dataset_profile,
+    aggregate_parallel_edit_profile,
+    build_parallel_edit_rows,
     build_terminal_state_rows,
     build_run_manifest_row,
     build_transition_rows,
     discover_run_dirs,
+    export_graph_critic_dataset,
     extract_trace_stats,
     reconstruct_terminal_state,
     reconstruct_state_before_action,
@@ -72,6 +75,7 @@ class TrajectoryDatasetTests(unittest.TestCase):
                 "benchmark": "AI_Idea_Bench_2025",
                 "benchmark_index": 7,
                 "baseline_name": baseline_name,
+                "runtime_protocol": "parallel_graph_v2",
                 "agent_traces": [
                     {
                         "stage": "seed_generation",
@@ -118,6 +122,104 @@ class TrajectoryDatasetTests(unittest.TestCase):
                         "created": 1030,
                     }
                 },
+                "parallel_edit_rows": [
+                    {
+                        "schema_version": "parallel_edit_row_v1",
+                        "state_id": "parallel::Round1::MechanismProposer",
+                        "runtime_protocol": "parallel_graph_v2",
+                        "label_source": "parallel_protocol_teacher_v1",
+                        "benchmark": "AI_Idea_Bench_2025",
+                        "instance_name": "toy-instance",
+                        "baseline_name": baseline_name,
+                        "topic": "Toy topic",
+                        "round_name": "Round1",
+                        "role": "MechanismProposer",
+                        "state_kind": "parallel_pre_action",
+                        "state_text": "nodes=3;edges=2;contradictions=0",
+                        "state_snapshot": {
+                            "action_id": "parallel_round_pre_action",
+                            "action_index": 0,
+                            "action_timestamp": None,
+                            "state_kind": "parallel_pre_action",
+                            "nodes": {
+                                "N1": {
+                                    "id": "N1",
+                                    "type": "Problem",
+                                    "text": "Problem node",
+                                    "role": "TaskFramer",
+                                    "branch_id": "B1",
+                                    "confidence": 0.7,
+                                    "evidence": [],
+                                    "status": "active",
+                                    "created_at": "1970-01-01 00:16:41+00:00",
+                                    "provenance": [],
+                                },
+                                "N2": {
+                                    "id": "N2",
+                                    "type": "Method",
+                                    "text": "Method node",
+                                    "role": "MechanismProposer",
+                                    "branch_id": "B1",
+                                    "confidence": 0.7,
+                                    "evidence": [],
+                                    "status": "active",
+                                    "created_at": "1970-01-01 00:16:42+00:00",
+                                    "provenance": [],
+                                },
+                            },
+                            "edges": [
+                                {
+                                    "id": "E1",
+                                    "source_id": "N1",
+                                    "relation": "supports",
+                                    "target_id": "N2",
+                                    "role": "TaskFramer",
+                                    "branch_id": "B1",
+                                    "resolved": False,
+                                    "created_at": "1970-01-01 00:16:43+00:00",
+                                }
+                            ],
+                            "node_count": 2,
+                            "edge_count": 1,
+                            "contradiction_count": 0,
+                            "support_edge_count": 1,
+                            "action_count": 0,
+                        },
+                        "state_node_count": 2,
+                        "state_edge_count": 1,
+                        "state_action_count": 0,
+                        "candidate_count": 2,
+                        "selected_candidate_id": "parallel::Round1::MechanismProposer::candidate:0000",
+                        "selected_action_kind": "add_support_edge",
+                        "selected_action_targets": ["N1", "N2"],
+                        "selected_action_payload": {"branch_id": "B1"},
+                        "selected_action_source": "parallel_protocol_teacher_v1",
+                        "candidates": [
+                            {
+                                "candidate_id": "parallel::Round1::MechanismProposer::candidate:0000",
+                                "candidate_index": 0,
+                                "candidate_kind": "add_support_edge",
+                                "candidate_target_ids": ["N1", "N2"],
+                                "candidate_payload": {"branch_id": "B1"},
+                                "candidate_rationale": "Support problem with method.",
+                                "candidate_source": "parallel_selected",
+                                "candidate_text": "kind=add_support_edge | targets=Problem: Problem node; Method: Method node",
+                                "is_selected": True,
+                            },
+                            {
+                                "candidate_id": "parallel::Round1::MechanismProposer::candidate:0001",
+                                "candidate_index": 1,
+                                "candidate_kind": "skip",
+                                "candidate_target_ids": [],
+                                "candidate_payload": {"branch_id": "B1"},
+                                "candidate_rationale": "Skip editing for this role in the current parallel round.",
+                                "candidate_source": "parallel_skip",
+                                "candidate_text": "kind=skip",
+                                "is_selected": False,
+                            },
+                        ],
+                    }
+                ],
             },
             "nodes": {
                 "N1": {
@@ -245,6 +347,100 @@ class TrajectoryDatasetTests(unittest.TestCase):
         discovered = discover_run_dirs([root])
 
         self.assertEqual(discovered, [good.resolve()])
+
+    def test_build_parallel_edit_rows_flattens_validated_candidate_rows(self) -> None:
+        run_dir = self.tmp_dir / "runs" / "good"
+        summary_payload = self._summary_payload()
+        graph_payload = self._graph_payload()
+        snapshot_dir = self.tmp_dir / "parallel_state_snapshots"
+
+        rows = build_parallel_edit_rows(
+            run_dir,
+            summary_payload,
+            graph_payload,
+            snapshot_dir=snapshot_dir,
+        )
+
+        self.assertEqual(len(rows), 2)
+        selected = next(row for row in rows if bool(row["is_logged_selected"]))
+        skipped = next(row for row in rows if str(row["candidate_kind"]) == "skip")
+        self.assertEqual(selected["candidate_kind"], "add_support_edge")
+        self.assertFalse(skipped["is_logged_selected"])
+        self.assertEqual(selected["label_source"], "parallel_protocol_teacher_v1")
+        self.assertEqual(selected["runtime_protocol"], "parallel_graph_v2")
+        self.assertTrue((self.tmp_dir / selected["before_state_snapshot"]).exists())
+        self.assertTrue(str(selected["state_id"]).startswith(str(run_dir.resolve())))
+        self.assertTrue(str(selected["candidate_id"]).startswith(str(run_dir.resolve())))
+
+    def test_build_parallel_edit_rows_rejects_missing_skip_candidate(self) -> None:
+        run_dir = self.tmp_dir / "runs" / "bad"
+        summary_payload = self._summary_payload()
+        graph_payload = self._graph_payload()
+        parallel_rows = graph_payload["metadata"]["parallel_edit_rows"]
+        assert isinstance(parallel_rows, list)
+        bad_row = dict(parallel_rows[0])
+        bad_row["candidates"] = [dict(candidate) for candidate in bad_row["candidates"] if candidate["candidate_kind"] != "skip"]
+        bad_row["candidate_count"] = len(bad_row["candidates"])
+        graph_payload["metadata"]["parallel_edit_rows"] = [bad_row]
+
+        with self.assertRaisesRegex(ValueError, "skip"):
+            build_parallel_edit_rows(
+                run_dir,
+                summary_payload,
+                graph_payload,
+                snapshot_dir=self.tmp_dir / "parallel_state_snapshots",
+            )
+
+    def test_export_graph_critic_dataset_writes_parallel_edit_examples(self) -> None:
+        root = self.tmp_dir / "runs"
+        good = root / "good"
+        self._write_json(good / "summary.json", self._summary_payload())
+        self._write_json(good / "graph.json", self._graph_payload())
+
+        result = export_graph_critic_dataset(
+            input_roots=[root],
+            output_dir=self.tmp_dir / "exports",
+            dataset_name="parallel-smoke",
+        )
+
+        self.assertEqual(result.run_count, 1)
+        dataset_dir = self.tmp_dir / "exports" / "parallel-smoke"
+        parallel_rows = [
+            json.loads(line)
+            for line in (dataset_dir / "parallel_edit_examples.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        profile = json.loads((dataset_dir / "parallel_edit_profile.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(parallel_rows), 2)
+        self.assertEqual(profile["state_count"], 1)
+        self.assertEqual(profile["selected_skip_count"], 0)
+
+    def test_export_graph_critic_dataset_namespaces_parallel_state_ids_per_run(self) -> None:
+        root = self.tmp_dir / "runs"
+        good_a = root / "good-a"
+        good_b = root / "good-b"
+        self._write_json(good_a / "summary.json", self._summary_payload())
+        self._write_json(good_a / "graph.json", self._graph_payload())
+        self._write_json(good_b / "summary.json", self._summary_payload())
+        self._write_json(good_b / "graph.json", self._graph_payload())
+
+        export_graph_critic_dataset(
+            input_roots=[root],
+            output_dir=self.tmp_dir / "exports",
+            dataset_name="parallel-multi-run",
+        )
+
+        dataset_dir = self.tmp_dir / "exports" / "parallel-multi-run"
+        parallel_rows = [
+            json.loads(line)
+            for line in (dataset_dir / "parallel_edit_examples.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        profile = json.loads((dataset_dir / "parallel_edit_profile.json").read_text(encoding="utf-8"))
+        state_ids = {row["state_id"] for row in parallel_rows}
+
+        self.assertEqual(len(state_ids), 2)
+        self.assertEqual(profile["state_count"], 2)
 
     def test_extract_trace_stats_and_costs(self) -> None:
         graph_payload = self._graph_payload()

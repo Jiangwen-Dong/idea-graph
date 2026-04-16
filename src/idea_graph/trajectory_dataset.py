@@ -670,6 +670,232 @@ def build_terminal_state_rows(
     ]
 
 
+def _as_object_dict(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): inner for key, inner in value.items()}
+
+
+def _normalize_candidate_targets(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _validate_parallel_edit_row(row: Mapping[str, Any], *, run_dir: Path, state_index: int) -> dict[str, Any]:
+    schema_version = str(row.get("schema_version", "")).strip()
+    if schema_version != "parallel_edit_row_v1":
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] has unsupported schema_version '{schema_version}'."
+        )
+
+    runtime_protocol = str(row.get("runtime_protocol", "")).strip()
+    if runtime_protocol != "parallel_graph_v2":
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] must use runtime_protocol 'parallel_graph_v2'."
+        )
+
+    state_id = str(row.get("state_id", "")).strip()
+    if not state_id:
+        raise ValueError(f"{run_dir} parallel_edit_rows[{state_index}] is missing state_id.")
+
+    candidates_payload = row.get("candidates", [])
+    if not isinstance(candidates_payload, list) or not candidates_payload:
+        raise ValueError(f"{run_dir} parallel_edit_rows[{state_index}] must contain non-empty candidates.")
+    candidates = [dict(candidate) for candidate in candidates_payload if isinstance(candidate, Mapping)]
+    if len(candidates) != len(candidates_payload):
+        raise ValueError(f"{run_dir} parallel_edit_rows[{state_index}] candidates must all be JSON objects.")
+
+    candidate_count = _safe_int(row.get("candidate_count"))
+    if candidate_count != len(candidates):
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] candidate_count={candidate_count} "
+            f"does not match actual candidates={len(candidates)}."
+        )
+
+    if not any(str(candidate.get("candidate_kind", "")).strip() == "skip" for candidate in candidates):
+        raise ValueError(f"{run_dir} parallel_edit_rows[{state_index}] must include an explicit skip candidate.")
+    if any(str(candidate.get("candidate_kind", "")).strip() == "commit" for candidate in candidates):
+        raise ValueError(f"{run_dir} parallel_edit_rows[{state_index}] must not include commit candidates.")
+
+    selected_candidates = [candidate for candidate in candidates if bool(candidate.get("is_selected", False))]
+    if len(selected_candidates) != 1:
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] must contain exactly one selected candidate."
+        )
+    selected_candidate = dict(selected_candidates[0])
+    selected_candidate_id = str(row.get("selected_candidate_id", "")).strip()
+    if not selected_candidate_id or selected_candidate_id != str(selected_candidate.get("candidate_id", "")).strip():
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] selected_candidate_id does not match the selected candidate."
+        )
+
+    selected_kind = str(row.get("selected_action_kind", "")).strip()
+    if selected_kind != str(selected_candidate.get("candidate_kind", "")).strip():
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] selected_action_kind does not match the selected candidate."
+        )
+    if _normalize_candidate_targets(row.get("selected_action_targets")) != _normalize_candidate_targets(
+        selected_candidate.get("candidate_target_ids")
+    ):
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] selected_action_targets do not match the selected candidate."
+        )
+    if _as_object_dict(row.get("selected_action_payload")) != _as_object_dict(
+        selected_candidate.get("candidate_payload")
+    ):
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] selected_action_payload does not match the selected candidate."
+        )
+
+    state_snapshot = _as_object_dict(row.get("state_snapshot"))
+    if not state_snapshot:
+        raise ValueError(f"{run_dir} parallel_edit_rows[{state_index}] is missing state_snapshot.")
+    if _safe_int(state_snapshot.get("node_count")) != _safe_int(row.get("state_node_count")):
+        raise ValueError(f"{run_dir} parallel_edit_rows[{state_index}] state_node_count does not match state_snapshot.")
+    if _safe_int(state_snapshot.get("edge_count")) != _safe_int(row.get("state_edge_count")):
+        raise ValueError(f"{run_dir} parallel_edit_rows[{state_index}] state_edge_count does not match state_snapshot.")
+    if _safe_int(state_snapshot.get("action_count")) != _safe_int(row.get("state_action_count")):
+        raise ValueError(
+            f"{run_dir} parallel_edit_rows[{state_index}] state_action_count does not match state_snapshot."
+        )
+
+    return {
+        **dict(row),
+        "state_id": state_id,
+        "runtime_protocol": runtime_protocol,
+        "candidates": candidates,
+        "selected_candidate_id": selected_candidate_id,
+        "selected_candidate": selected_candidate,
+        "state_snapshot": state_snapshot,
+    }
+
+
+def build_parallel_edit_rows(
+    run_dir: Path,
+    summary_payload: Mapping[str, Any],
+    graph_payload: Mapping[str, Any],
+    *,
+    snapshot_dir: Path,
+) -> list[dict[str, Any]]:
+    metadata = graph_payload.get("metadata", {})
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    raw_rows = metadata.get("parallel_edit_rows", [])
+    if not isinstance(raw_rows, list) or not raw_rows:
+        return []
+
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    run_path = Path(run_dir).resolve()
+    native_evaluation = summary_payload.get("benchmark_native_evaluation", {})
+    if not isinstance(native_evaluation, Mapping):
+        native_evaluation = {}
+    rows: list[dict[str, Any]] = []
+
+    for state_index, raw_row in enumerate(raw_rows):
+        if not isinstance(raw_row, Mapping):
+            raise ValueError(f"{run_path} parallel_edit_rows[{state_index}] must be a JSON object.")
+        row = _validate_parallel_edit_row(raw_row, run_dir=run_path, state_index=state_index)
+        exported_state_id = f"{run_path}::{row['state_id']}"
+        exported_selected_candidate_id = f"{run_path}::{row['selected_candidate_id']}"
+        snapshot_name = f"{run_path.name}-parallel-state-{state_index:03d}.json"
+        snapshot_path = snapshot_dir / snapshot_name
+        write_text_file(
+            snapshot_path,
+            json.dumps(row["state_snapshot"], indent=2, ensure_ascii=False, default=str),
+        )
+        for candidate in row["candidates"]:
+            exported_candidate_id = f"{run_path}::{str(candidate.get('candidate_id', '')).strip()}"
+            rows.append(
+                {
+                    "run_dir": str(run_path),
+                    "benchmark": str(metadata.get("benchmark", "")).strip()
+                    or str(native_evaluation.get("benchmark", "")).strip()
+                    or "unknown",
+                    "instance_name": str(summary_payload.get("instance_name", run_path.name)).strip() or run_path.name,
+                    "baseline_name": str(metadata.get("baseline_name", "")).strip() or "unknown",
+                    "topic": str(summary_payload.get("topic", graph_payload.get("topic", ""))).strip(),
+                    "parallel_state_index": state_index,
+                    "state_id": exported_state_id,
+                    "round_name": str(row.get("round_name", "")).strip(),
+                    "role": str(row.get("role", "")).strip(),
+                    "state_kind": str(row.get("state_kind", "")).strip() or "parallel_pre_action",
+                    "runtime_protocol": row["runtime_protocol"],
+                    "label_source": str(row.get("label_source", "")).strip(),
+                    "state_text": str(row.get("state_text", "")).strip(),
+                    "before_state_snapshot": f"parallel_state_snapshots/{snapshot_name}",
+                    "before_state_node_count": _safe_int(row["state_snapshot"].get("node_count")),
+                    "before_state_edge_count": _safe_int(row["state_snapshot"].get("edge_count")),
+                    "before_state_contradiction_count": _safe_int(row["state_snapshot"].get("contradiction_count")),
+                    "before_state_support_edge_count": _safe_int(row["state_snapshot"].get("support_edge_count")),
+                    "candidate_id": exported_candidate_id,
+                    "candidate_index": _safe_int(candidate.get("candidate_index")),
+                    "candidate_count": _safe_int(row.get("candidate_count")),
+                    "candidate_kind": str(candidate.get("candidate_kind", "")).strip(),
+                    "candidate_target_ids": _normalize_candidate_targets(candidate.get("candidate_target_ids")),
+                    "candidate_payload": _as_object_dict(candidate.get("candidate_payload")),
+                    "candidate_source": str(candidate.get("candidate_source", "")).strip(),
+                    "candidate_text": str(candidate.get("candidate_text", "")).strip(),
+                    "selected_candidate_id": exported_selected_candidate_id,
+                    "is_logged_selected": bool(candidate.get("is_selected", False)),
+                    "selected_action_kind": str(row.get("selected_action_kind", "")).strip(),
+                    "selected_action_targets": _normalize_candidate_targets(row.get("selected_action_targets")),
+                    "selected_action_payload": _as_object_dict(row.get("selected_action_payload")),
+                    "selected_action_source": str(row.get("selected_action_source", "")).strip(),
+                    "final_return_local": _safe_float(_as_object_dict(summary_payload.get("idea_evaluation")).get("overall_score")),
+                    "final_return_native": _native_average(native_evaluation),
+                }
+            )
+
+    return rows
+
+
+def aggregate_parallel_edit_profile(parallel_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    state_ids = {
+        str(row.get("state_id", "")).strip()
+        for row in parallel_rows
+        if str(row.get("state_id", "")).strip()
+    }
+    role_counts: dict[str, int] = {}
+    label_source_counts: dict[str, int] = {}
+    runtime_protocol_counts: dict[str, int] = {}
+    selected_skip_count = 0
+    skip_candidate_count = 0
+    selected_candidate_count = 0
+
+    for row in parallel_rows:
+        role = str(row.get("role", "")).strip() or "unknown"
+        role_counts[role] = role_counts.get(role, 0) + 1
+        label_source = str(row.get("label_source", "")).strip() or "unknown"
+        label_source_counts[label_source] = label_source_counts.get(label_source, 0) + 1
+        runtime_protocol = str(row.get("runtime_protocol", "")).strip() or "unknown"
+        runtime_protocol_counts[runtime_protocol] = runtime_protocol_counts.get(runtime_protocol, 0) + 1
+        if str(row.get("candidate_kind", "")).strip() == "skip":
+            skip_candidate_count += 1
+            if bool(row.get("is_logged_selected", False)):
+                selected_skip_count += 1
+        if bool(row.get("is_logged_selected", False)):
+            selected_candidate_count += 1
+
+    def _fraction(numerator: int, denominator: int) -> float:
+        if denominator <= 0:
+            return 0.0
+        return numerator / denominator
+
+    return {
+        "state_count": len(state_ids),
+        "candidate_count": len(parallel_rows),
+        "selected_candidate_count": selected_candidate_count,
+        "skip_candidate_count": skip_candidate_count,
+        "selected_skip_count": selected_skip_count,
+        "selected_skip_fraction": _fraction(selected_skip_count, len(state_ids)),
+        "mean_candidates_per_state": _fraction(len(parallel_rows), len(state_ids)),
+        "role_counts": role_counts,
+        "label_source_counts": label_source_counts,
+        "runtime_protocol_counts": runtime_protocol_counts,
+    }
+
+
 def aggregate_dataset_profile(
     manifest_rows: Sequence[Mapping[str, Any]],
     transition_rows: Sequence[Mapping[str, Any]],
@@ -772,9 +998,12 @@ def _readme_text() -> str:
             "- `run_manifest.jsonl`: one row per discovered run directory",
             "- `trajectory_examples.jsonl`: one row per exported graph action",
             "- `terminal_state_manifest.jsonl`: one positive commit-supervision state per completed EIG run",
+            "- `parallel_edit_examples.jsonl`: one row per exported parallel candidate action",
+            "- `parallel_edit_profile.json`: aggregate integrity and coverage stats for parallel edit labels",
             "- `dataset_profile.json`: aggregate counts, coverage, token, and cost indicators",
             "- `state_snapshots/`: JSON snapshots of the reconstructed pre-action graph state",
             "- `terminal_state_snapshots/`: JSON snapshots of final graph states used for commit supervision",
+            "- `parallel_state_snapshots/`: JSON snapshots of frozen role-round states from `parallel_graph_v2`",
             "",
             "Caveat: state reconstruction is timestamp-based and approximate. It is",
             "structurally faithful for offline critic training, but it is not a full",
@@ -801,12 +1030,15 @@ def export_graph_critic_dataset(
     dataset_dir = Path(output_dir) / dataset_name
     snapshot_dir = dataset_dir / "state_snapshots"
     terminal_snapshot_dir = dataset_dir / "terminal_state_snapshots"
+    parallel_snapshot_dir = dataset_dir / "parallel_state_snapshots"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     terminal_snapshot_dir.mkdir(parents=True, exist_ok=True)
+    parallel_snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_rows: list[dict[str, Any]] = []
     transition_rows: list[dict[str, Any]] = []
     terminal_rows: list[dict[str, Any]] = []
+    parallel_edit_rows: list[dict[str, Any]] = []
 
     for run_dir in run_dirs:
         summary_payload, graph_payload = load_run_artifacts(run_dir)
@@ -827,15 +1059,29 @@ def export_graph_critic_dataset(
                 snapshot_dir=terminal_snapshot_dir,
             )
         )
+        parallel_edit_rows.extend(
+            build_parallel_edit_rows(
+                run_dir,
+                summary_payload,
+                graph_payload,
+                snapshot_dir=parallel_snapshot_dir,
+            )
+        )
 
     profile = aggregate_dataset_profile(manifest_rows, transition_rows, terminal_rows)
+    parallel_profile = aggregate_parallel_edit_profile(parallel_edit_rows)
 
     write_text_file(dataset_dir / "run_manifest.jsonl", _jsonl_lines(manifest_rows))
     write_text_file(dataset_dir / "trajectory_examples.jsonl", _jsonl_lines(transition_rows))
     write_text_file(dataset_dir / "terminal_state_manifest.jsonl", _jsonl_lines(terminal_rows))
+    write_text_file(dataset_dir / "parallel_edit_examples.jsonl", _jsonl_lines(parallel_edit_rows))
     write_text_file(
         dataset_dir / "dataset_profile.json",
         json.dumps(profile, indent=2, ensure_ascii=False, default=str),
+    )
+    write_text_file(
+        dataset_dir / "parallel_edit_profile.json",
+        json.dumps(parallel_profile, indent=2, ensure_ascii=False, default=str),
     )
     write_text_file(dataset_dir / "README.md", _readme_text())
 
