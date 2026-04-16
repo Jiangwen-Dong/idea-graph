@@ -634,6 +634,30 @@ class EngineTests(unittest.TestCase):
         self.assertIn("selected_actions", traces[0])
         self.assertIsInstance(traces[0]["selected_actions"], list)
 
+    def test_parallel_runtime_records_parallel_edit_rows(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        rows = graph.metadata.get("parallel_edit_rows")
+        self.assertTrue(rows)
+        self.assertEqual(len(rows), len(graph.metadata["parallel_round_traces"][0]["active_roles"]))
+        first_row = rows[0]
+        self.assertEqual(first_row["schema_version"], "parallel_edit_row_v1")
+        self.assertEqual(first_row["runtime_protocol"], "parallel_graph_v2")
+        self.assertIn("selected_candidate_id", first_row)
+        self.assertIn("state_text", first_row)
+        self.assertIn("candidates", first_row)
+        self.assertTrue(any(candidate["candidate_kind"] == "skip" for candidate in first_row["candidates"]))
+        self.assertEqual(
+            sum(1 for candidate in first_row["candidates"] if bool(candidate["is_selected"])),
+            1,
+        )
+
     def test_run_experiment_records_default_runtime_protocol(self) -> None:
         graph = run_experiment(
             topic="graph-based scientific ideation",

@@ -3219,7 +3219,7 @@ def run_experiment(
             details={"round": round_name, "phase": phase.key, "phase_title": phase.title},
         )
         if runtime_protocol == "parallel_graph_v2":
-            from .parallel_replay import append_parallel_round_trace
+            from .parallel_replay import append_parallel_edit_rows, append_parallel_round_trace
             from .parallel_runtime import execute_parallel_role_round
 
             result = execute_parallel_role_round(
@@ -3262,6 +3262,10 @@ def run_experiment(
                         "action_delta": result.action_count_after - result.action_count_before,
                     },
                 },
+            )
+            append_parallel_edit_rows(
+                graph.metadata,
+                result.edit_rows,
             )
             snapshot = maturity_snapshot(graph)
             graph.round_summaries.append((round_name, snapshot))

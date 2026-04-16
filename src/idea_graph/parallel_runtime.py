@@ -5,6 +5,7 @@ from copy import deepcopy
 from .agent_backend import ActionDecision
 from .engine import action_from_decision, apply_action, choose_round_action
 from .models import ParallelRoleRoundResult
+from .parallel_replay import build_parallel_edit_rows
 from .parallel_role_executor import collect_parallel_role_decisions
 from .role_activation import active_roles_for_round
 
@@ -32,8 +33,8 @@ def execute_parallel_role_round(
     edge_count_before = len(graph.edges)
     action_count_before = len(graph.actions)
     roles = active_roles_for_round(graph, round_name)
+    snapshot = deepcopy(graph)
     if collaboration_backend is None:
-        snapshot = deepcopy(graph)
         raw_decisions = [
             (
                 role,
@@ -42,6 +43,7 @@ def execute_parallel_role_round(
             for role in roles
         ]
         action_source = "parallel_deterministic"
+        label_source = "parallel_protocol_teacher_v1"
     else:
         raw_decisions = collect_parallel_role_decisions(
             graph,
@@ -50,6 +52,14 @@ def execute_parallel_role_round(
             roles,
         )
         action_source = "parallel_llm"
+        label_source = "parallel_runtime_logged_v1"
+    edit_rows = build_parallel_edit_rows(
+        snapshot,
+        round_name=round_name,
+        role_decisions=raw_decisions,
+        runtime_protocol="parallel_graph_v2",
+        label_source=label_source,
+    )
     selected_actions = []
     skipped_roles = []
     for role, decision in sorted(raw_decisions, key=lambda item: item[0]):
@@ -71,6 +81,7 @@ def execute_parallel_role_round(
         skipped_roles=tuple(skipped_roles),
         selected_actions=tuple(selected_actions),
         termination_reason="continue",
+        edit_rows=tuple(dict(row) for row in edit_rows),
         node_count_before=node_count_before,
         node_count_after=len(graph.nodes),
         edge_count_before=edge_count_before,
