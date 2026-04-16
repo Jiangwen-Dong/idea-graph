@@ -616,6 +616,19 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(graph.metadata.get("runtime_protocol"), "parallel_graph_v2")
         self.assertEqual(graph.metadata.get("executed_round_count"), 1)
 
+    def test_parallel_runtime_records_round_traces(self) -> None:
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=1,
+            stop_when_mature=False,
+        )
+
+        traces = graph.metadata.get("parallel_round_traces")
+        self.assertTrue(traces)
+        self.assertEqual(traces[0]["round"], "Round1")
+
     def test_run_experiment_records_default_runtime_protocol(self) -> None:
         graph = run_experiment(
             topic="graph-based scientific ideation",

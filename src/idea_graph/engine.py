@@ -3218,6 +3218,69 @@ def run_experiment(
             message=f"{round_name} started with phase '{phase.title}'.",
             details={"round": round_name, "phase": phase.key, "phase_title": phase.title},
         )
+        if runtime_protocol == "parallel_graph_v2":
+            from .parallel_replay import append_parallel_round_trace
+            from .parallel_runtime import execute_parallel_role_round
+
+            result = execute_parallel_role_round(
+                graph,
+                round_name=round_name,
+                collaboration_backend=collaboration_backend,
+                runtime_controller=runtime_controller,
+                runtime_controller_metadata=runtime_controller_metadata,
+                progress_callback=progress_callback,
+            )
+            append_parallel_round_trace(
+                graph.metadata,
+                {
+                    "round": result.round_name,
+                    "active_roles": list(result.active_roles),
+                    "inactive_roles": [role for role in ROLE_NAMES if role not in result.active_roles],
+                    "selected_actions": [action.id for action in result.selected_actions],
+                    "skipped_roles": list(result.skipped_roles),
+                    "termination_reason": result.termination_reason,
+                },
+            )
+            snapshot = maturity_snapshot(graph)
+            graph.round_summaries.append((round_name, snapshot))
+            if snapshot.is_mature and graph.matured_at_round is None:
+                graph.matured_at_round = round_name
+                graph.metadata["maturity_stop_candidate"] = round_name
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="round_complete",
+                message=(
+                    f"{round_name} complete: support={snapshot.support_coverage}, "
+                    f"contradictions={snapshot.unresolved_contradiction_ratio}, "
+                    f"utility={snapshot.utility}, coherence={snapshot.utility_breakdown.coherence}, "
+                    f"mature={snapshot.is_mature}."
+                ),
+                details={
+                    "round": round_name,
+                    "runtime_protocol": runtime_protocol,
+                    "active_roles": list(result.active_roles),
+                    "skipped_roles": list(result.skipped_roles),
+                    "selected_action_count": len(result.selected_actions),
+                    "support_coverage": snapshot.support_coverage,
+                    "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
+                    "utility": snapshot.utility,
+                    "utility_breakdown": asdict(snapshot.utility_breakdown),
+                    "is_mature": snapshot.is_mature,
+                },
+            )
+            if stop_when_mature and snapshot.is_mature:
+                graph.metadata["stopped_early"] = True
+                graph.metadata["stop_reason"] = f"mature_at_{round_name}"
+                emit_progress(
+                    graph,
+                    progress_callback,
+                    stage="maturity_stop",
+                    message=f"{round_name} reached maturity, stopping early before additional rounds.",
+                    details={"round": round_name},
+                )
+                break
+            continue
         for role in ROLE_NAMES:
             action_source = "deterministic"
             deterministic_ranked_action: GraphAction | None = None
