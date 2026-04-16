@@ -63,3 +63,48 @@ def test_parallel_role_round_uses_frozen_snapshot_for_all_roles() -> None:
 
     counts = {count for _, count in observed_node_counts}
     assert len(counts) == 1
+
+
+def test_parallel_round_materializes_non_skip_actions_in_role_order() -> None:
+    class OrderedBackend:
+        name = "ordered-backend"
+
+        def generate_seed(self, graph, role):
+            raise RuntimeError("not used")
+
+        def choose_action(self, graph, round_name, role):
+            branch_id = next(branch.id for branch in graph.branches.values() if branch.role == role)
+            if role == "EvaluationDesigner":
+                return ActionDecision(
+                    kind="skip",
+                    target_ids=[],
+                    payload={"branch_id": branch_id},
+                    rationale="skip",
+                )
+            return ActionDecision(
+                kind="freeze_branch",
+                target_ids=[],
+                payload={"branch_id": branch_id},
+                rationale=role,
+            )
+
+        def synthesize_final_proposal(self, graph, subgraph):
+            raise RuntimeError("not used")
+
+    graph = IdeaGraph(topic="topic", literature=["paper a"])
+    build_seed_graphs(graph)
+    merge_seed_graphs(graph)
+
+    result = execute_parallel_role_round(
+        graph,
+        round_name="Round1",
+        collaboration_backend=OrderedBackend(),
+        runtime_controller=None,
+        runtime_controller_metadata=None,
+        progress_callback=None,
+    )
+
+    assert "EvaluationDesigner" in result.skipped_roles
+    assert [action.role for action in result.selected_actions] == sorted(
+        action.role for action in result.selected_actions
+    )
