@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 import numpy as np
+import torch
 
 from .fs_utils import read_text_file
 from .relation_graph_critic_data import RelationGraphCandidateExample, RelationGraphVocabularies
@@ -31,6 +32,47 @@ class RelationGraphCommitExample:
     edge_index: list[tuple[int, int]]
     edge_type_ids: list[int]
     edge_resolved: list[float]
+    support_coverage: float
+    unresolved_contradiction_ratio: float
+    utility: float
+
+
+@dataclass(frozen=True)
+class RelationGraphCommitBatch:
+    node_text_embeddings: torch.Tensor
+    state_text_embeddings: torch.Tensor
+    node_type_ids: torch.Tensor
+    node_role_ids: torch.Tensor
+    node_scalars: torch.Tensor
+    edge_index: torch.Tensor
+    edge_type_ids: torch.Tensor
+    edge_resolved: torch.Tensor
+    edge_mask: torch.Tensor
+    graph_mask: torch.Tensor
+    graph_features: torch.Tensor
+    labels: torch.Tensor
+    node_type_vocab_size: int
+    role_vocab_size: int
+    edge_type_vocab_size: int
+
+    def to(self, device: torch.device | str) -> "RelationGraphCommitBatch":
+        return RelationGraphCommitBatch(
+            node_text_embeddings=self.node_text_embeddings.to(device),
+            state_text_embeddings=self.state_text_embeddings.to(device),
+            node_type_ids=self.node_type_ids.to(device),
+            node_role_ids=self.node_role_ids.to(device),
+            node_scalars=self.node_scalars.to(device),
+            edge_index=self.edge_index.to(device),
+            edge_type_ids=self.edge_type_ids.to(device),
+            edge_resolved=self.edge_resolved.to(device),
+            edge_mask=self.edge_mask.to(device),
+            graph_mask=self.graph_mask.to(device),
+            graph_features=self.graph_features.to(device),
+            labels=self.labels.to(device),
+            node_type_vocab_size=self.node_type_vocab_size,
+            role_vocab_size=self.role_vocab_size,
+            edge_type_vocab_size=self.edge_type_vocab_size,
+        )
 
 
 @dataclass(frozen=True)
@@ -361,6 +403,9 @@ def build_relation_graph_two_head_dataset(
             edge_index=edge_index,
             edge_type_ids=edge_type_ids,
             edge_resolved=edge_resolved,
+            support_coverage=_safe_float(row.get("support_coverage")),
+            unresolved_contradiction_ratio=_safe_float(row.get("unresolved_contradiction_ratio")),
+            utility=_safe_float(row.get("utility")),
         )
         if example.split == "validation":
             commit_dev_examples.append(example)
@@ -381,4 +426,77 @@ def build_relation_graph_two_head_dataset(
         commit_train_examples=commit_train_examples,
         commit_dev_examples=commit_dev_examples,
         metadata=metadata,
+    )
+
+
+def collate_relation_graph_commit_examples(
+    examples: Sequence[RelationGraphCommitExample],
+) -> RelationGraphCommitBatch:
+    if not examples:
+        raise ValueError("examples must not be empty.")
+
+    batch_size = len(examples)
+    text_dim = int(examples[0].node_text_embeddings.shape[1])
+    max_nodes = max(len(example.node_type_ids) for example in examples)
+    max_edges = max(len(example.edge_index) for example in examples)
+
+    node_text_embeddings = torch.zeros((batch_size, max_nodes, text_dim), dtype=torch.float32)
+    state_text_embeddings = torch.zeros((batch_size, text_dim), dtype=torch.float32)
+    node_type_ids = torch.zeros((batch_size, max_nodes), dtype=torch.long)
+    node_role_ids = torch.zeros((batch_size, max_nodes), dtype=torch.long)
+    node_scalars = torch.zeros((batch_size, max_nodes, 2), dtype=torch.float32)
+    edge_index = torch.zeros((batch_size, max_edges, 2), dtype=torch.long)
+    edge_type_ids = torch.zeros((batch_size, max_edges), dtype=torch.long)
+    edge_resolved = torch.zeros((batch_size, max_edges), dtype=torch.float32)
+    edge_mask = torch.zeros((batch_size, max_edges), dtype=torch.bool)
+    graph_mask = torch.zeros((batch_size, max_nodes), dtype=torch.bool)
+    graph_features = torch.zeros((batch_size, 3), dtype=torch.float32)
+    labels = torch.zeros((batch_size,), dtype=torch.float32)
+
+    node_type_max = 0
+    role_max = 0
+    edge_type_max = 0
+    for batch_index, example in enumerate(examples):
+        node_count = len(example.node_type_ids)
+        node_text_embeddings[batch_index, :node_count] = torch.from_numpy(example.node_text_embeddings)
+        state_text_embeddings[batch_index] = torch.from_numpy(example.state_text_embedding)
+        node_type_ids[batch_index, :node_count] = torch.tensor(example.node_type_ids, dtype=torch.long)
+        node_role_ids[batch_index, :node_count] = torch.tensor(example.node_role_ids, dtype=torch.long)
+        node_scalars[batch_index, :node_count, 0] = torch.tensor(example.node_confidence, dtype=torch.float32)
+        node_scalars[batch_index, :node_count, 1] = torch.tensor(example.node_evidence_count, dtype=torch.float32)
+        graph_mask[batch_index, :node_count] = True
+        labels[batch_index] = float(example.label)
+        graph_features[batch_index] = torch.tensor(
+            [
+                float(example.support_coverage),
+                float(example.unresolved_contradiction_ratio),
+                float(example.utility),
+            ],
+            dtype=torch.float32,
+        )
+        for edge_offset, (source_index, target_index) in enumerate(example.edge_index):
+            edge_index[batch_index, edge_offset] = torch.tensor([source_index, target_index], dtype=torch.long)
+            edge_type_ids[batch_index, edge_offset] = int(example.edge_type_ids[edge_offset])
+            edge_resolved[batch_index, edge_offset] = float(example.edge_resolved[edge_offset])
+            edge_mask[batch_index, edge_offset] = True
+        node_type_max = max(node_type_max, max(example.node_type_ids, default=0))
+        role_max = max(role_max, max(example.node_role_ids, default=0))
+        edge_type_max = max(edge_type_max, max(example.edge_type_ids, default=0))
+
+    return RelationGraphCommitBatch(
+        node_text_embeddings=node_text_embeddings,
+        state_text_embeddings=state_text_embeddings,
+        node_type_ids=node_type_ids,
+        node_role_ids=node_role_ids,
+        node_scalars=node_scalars,
+        edge_index=edge_index,
+        edge_type_ids=edge_type_ids,
+        edge_resolved=edge_resolved,
+        edge_mask=edge_mask,
+        graph_mask=graph_mask,
+        graph_features=graph_features,
+        labels=labels,
+        node_type_vocab_size=node_type_max + 1,
+        role_vocab_size=role_max + 1,
+        edge_type_vocab_size=edge_type_max + 1,
     )
