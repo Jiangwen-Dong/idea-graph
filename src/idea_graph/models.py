@@ -67,6 +67,15 @@ class GraphAction:
     timestamp: datetime = field(default_factory=utc_now)
 
 
+@dataclass(frozen=True)
+class ParallelRoleRoundResult:
+    round_name: str
+    active_roles: tuple[str, ...]
+    skipped_roles: tuple[str, ...]
+    selected_actions: tuple[GraphAction, ...]
+    termination_reason: str
+
+
 @dataclass
 class UtilityBreakdown:
     promise: float = 0.0
