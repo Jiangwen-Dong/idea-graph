@@ -2344,6 +2344,48 @@ def _reference_snippet_texts(metadata: dict[str, object]) -> list[str]:
     return texts
 
 
+def _benchmark_topic_text(graph: IdeaGraph) -> str:
+    metadata = _utility_grounding_metadata(graph)
+    packet = metadata.get("benchmark_input_packet", {})
+    topic = ""
+    if isinstance(packet, dict):
+        topic = str(packet.get("topic", "")).strip()
+    if not topic:
+        topic = str(graph.topic).strip()
+    prefix = "The topic of this paper is "
+    if topic.startswith(prefix):
+        topic = topic[len(prefix) :].strip()
+    return topic
+
+
+def _benchmark_packet_reference_texts(metadata: dict[str, object]) -> list[str]:
+    packet = metadata.get("benchmark_input_packet", {})
+    if not isinstance(packet, dict):
+        return []
+    reference_packet = packet.get("reference_packet", [])
+    if not isinstance(reference_packet, list):
+        return []
+
+    texts: list[str] = []
+    for item in reference_packet[:6]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title", "")).strip()
+        snippet = str(item.get("snippet", "")).strip()
+        combined = " ".join(part for part in (title, snippet) if part)
+        if combined:
+            texts.append(combined)
+    return texts
+
+
+def _token_group_matches(node_tokens: set[str], source_tokens: set[str]) -> bool:
+    if not node_tokens or not source_tokens:
+        return False
+    overlap = node_tokens & source_tokens
+    threshold = 1 if len(source_tokens) <= 3 else 2
+    return len(overlap) >= threshold
+
+
 def _benchmark_specificity_score(graph: IdeaGraph, nodes: list[Node]) -> float:
     if not nodes:
         return 0.0
@@ -2352,14 +2394,69 @@ def _benchmark_specificity_score(graph: IdeaGraph, nodes: list[Node]) -> float:
         metadata=_utility_grounding_metadata(graph),
     )
     text = " ".join(node.text for node in nodes if node.text)
-    anchors = [
+    node_tokens = _normalized_token_set(text)
+    if not node_tokens:
+        return 0.0
+
+    metadata = _utility_grounding_metadata(graph)
+    topic_tokens = _normalized_token_set(_benchmark_topic_text(graph))
+    topic_signal = 1.0 if _token_group_matches(node_tokens, topic_tokens) else 0.0
+
+    reference_texts = [
+        *_benchmark_packet_reference_texts(metadata),
+        *_reference_snippet_texts(metadata),
+        *grounding.reference_titles[:4],
+    ]
+    reference_groups = []
+    seen_reference_groups: set[tuple[str, ...]] = set()
+    for item in reference_texts:
+        tokens = _normalized_token_set(item)
+        if not tokens:
+            continue
+        signature = tuple(sorted(tokens))
+        if signature in seen_reference_groups:
+            continue
+        seen_reference_groups.add(signature)
+        reference_groups.append(tokens)
+    reference_hits = sum(1 for group in reference_groups if _token_group_matches(node_tokens, group))
+    reference_signal = (
+        min(1.0, reference_hits / max(1, min(2, len(reference_groups))))
+        if reference_groups
+        else 0.0
+    )
+
+    design_groups = []
+    for item in grounding.design_highlights[:4]:
+        tokens = _normalized_token_set(item)
+        if tokens:
+            design_groups.append(tokens)
+    design_hits = sum(1 for group in design_groups if _token_group_matches(node_tokens, group))
+    design_signal = (
+        min(1.0, design_hits / max(1, min(2, len(design_groups))))
+        if design_groups
+        else 0.0
+    )
+
+    eval_anchors = [
         *grounding.dataset_items[:3],
         *grounding.metric_items[:4],
     ]
-    if not anchors:
-        return 0.0
-    hit_count = sum(1 for anchor in anchors if _contains_anchor(text, anchor))
-    return round(_clamp(hit_count / min(3, len(anchors))), 2)
+    eval_anchor_hits = sum(1 for anchor in eval_anchors if _contains_anchor(text, anchor))
+    eval_anchor_signal = (
+        _clamp(eval_anchor_hits / min(3, len(eval_anchors)))
+        if eval_anchors
+        else 0.0
+    )
+
+    return round(
+        _clamp(
+            (0.25 * topic_signal)
+            + (0.35 * reference_signal)
+            + (0.20 * design_signal)
+            + (0.20 * eval_anchor_signal)
+        ),
+        2,
+    )
 
 
 def _experiment_method_alignment_score(nodes: list[Node]) -> float:

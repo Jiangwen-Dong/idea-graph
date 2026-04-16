@@ -791,28 +791,31 @@ Copy the exact model, calibration artifact, split registry, dataset stats, and e
   - Verified real collection-wrapper execution with `scripts/collect_critic_train_episodes.py --execute --limit 1` for both `critic_train` and `critic_dev`.
 
 - Current quality checkpoint:
-  - Fresh small comparison batch:
+  - Previous small comparison batch:
     - `outputs/quality_batches/20260416-165345-p2v2-qwen-2x2/`
-  - Combined 2x2 aggregate:
-    - `ours-eig` (`parallel_graph_v2`): overall `5.88`, alignment `4.30`, expert `7.47`, graph `8.80`, calls `6.0`, tokens `14382`, rounds `4.75`, actions `23.75`
-    - `self-refine`: overall `5.78`, alignment `4.22`, expert `7.34`, calls `3.0`, tokens `6120`
-    - `direct`: overall `5.39`, alignment `3.55`, expert `7.22`, calls `1.0`, tokens `1726`
-    - `ai-researcher`: overall `4.59`, alignment `2.17`, expert `7.00`, calls `6.0`, tokens `11361`
-  - AI Idea Bench 2025 mean:
-    - `ours-eig`: `4.67`
-    - `direct`: `4.60`
-    - `self-refine`: `4.54`
-    - `ai-researcher`: `4.42`
-  - LiveIdeaBench mean:
-    - `ours-eig`: `7.10`
-    - `self-refine`: `7.03`
-    - `direct`: `6.18`
-    - `ai-researcher`: `4.76`
+  - Improved heuristic-teacher rerun with native evaluation:
+    - `outputs/quality_batches/20260416-192152-p2v2-anchor-v11-2x2/`
+  - Combined 2x2 aggregate on the improved rerun:
+    - `ours-eig` (`parallel_graph_v2`): overall `5.88`, alignment `4.37`, expert `7.40`, graph `7.82`, calls `6.0`, tokens `14131`, rounds `4.50`, actions `13.00`, native `7.61`
+    - `self-refine`: overall `5.78`, alignment `4.25`, expert `7.30`, calls `3.0`, tokens `6056`, native `8.04`
+    - `direct`: overall `5.39`, alignment `3.55`, expert `7.23`, calls `1.0`, tokens `1713`, native `8.04`
+    - `ai-researcher`: overall `4.37`, alignment `1.80`, expert `6.93`, calls `6.0`, tokens `11304`, native `8.11`
+  - Delta versus the previous teacher smoke for `ours-eig`:
+    - overall `+0.00`, alignment `+0.07`, expert `-0.07`, graph `-0.99`
+    - tokens `-251`, rounds `-0.25`, actions `-10.75`
+  - Per-case `ours-eig` highlights:
+    - `AI_Idea_Bench_2025/13`: stop reason improved from `max_rounds_reached` to `mature_at_Round3`, alignment `+0.33`, actions `25 -> 9`
+    - `AI_Idea_Bench_2025/15`: quality remained close while actions dropped `25 -> 17`
+    - `liveideabench/0` and `liveideabench/23`: overall quality stayed essentially flat while actions dropped from `20/25` to `13/13`
+  - Improved rerun per-benchmark means:
+    - AI Idea Bench 2025: `ours-eig` `4.66`, `direct` `4.59`, `self-refine` `4.57`, `ai-researcher` `4.42`
+    - LiveIdeaBench: `ours-eig` `7.11`, `self-refine` `6.99`, `direct` `6.20`, `ai-researcher` `4.32`
 
 - Interpretation:
-  - The parallel heuristic is acceptable as the first teacher for critic-label curation because it is protocol-matched, replay-complete, and currently ranks first on the combined fresh slice.
-  - The margin over `self-refine` is small overall and especially narrow on AI Idea Bench 2025, so this should be framed as a reasonable bootstrap teacher rather than a final strong paper-claim result.
-  - Because the collection artifacts retain round counts, action counts, stop reasons, and protocol stamps, later filtering and reweighting can preferentially keep higher-quality supervision rows without changing the replay schema.
+  - The improved parallel heuristic remains acceptable as the first teacher for critic-label curation because it is still protocol-matched, replay-complete, and ranked first on the refreshed combined slice while using materially fewer materialized graph actions.
+  - The main gain from the anchor-and-activation upgrade is efficiency plus a cleaner AI Idea Bench stop pattern, not a dramatic jump in headline quality. This is the right tradeoff for supervision harvesting, where we care about action labels and commit timing consistency as much as raw benchmark score.
+  - The margin over `self-refine` remains small overall and especially narrow on AI Idea Bench 2025, so this should still be framed as a reasonable bootstrap teacher rather than a final strong paper-claim result.
+  - Because the collection artifacts retain round counts, action counts, stop reasons, selected role decisions, and protocol stamps, later filtering and reweighting can preferentially keep higher-quality supervision rows without changing the replay schema.
 
 - Collection status:
   - Foreground execution is verified for both:
