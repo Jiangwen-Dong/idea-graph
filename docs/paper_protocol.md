@@ -108,6 +108,11 @@ selection, and calibration.
 
 The recommended main comparison set is:
 
+For `ai-researcher`, `scipip`, and `virsci`, the paper-facing claim should be
+`benchmark-faithful reproduction under a unified evaluation interface`. Use
+exact-upstream wording only when the exact upstream benchmark entrypoint is
+actually used.
+
 1. `direct`
 
 - one-pass single-agent idea generation
@@ -126,15 +131,23 @@ The recommended main comparison set is:
 - this is the strongest direct baseline for literature-grounded scientific
   ideation
 
-4. `virsci`
+4. `scipip`
+
+- structured retrieval-and-decomposition literature baseline
+- should be reported through the benchmark-faithful bridge or upstream path
+  that preserves its decomposition-plus-synthesis structure
+- useful because it tests whether structured problem breakdown alone explains
+  the gains of the graph-based method
+
+5. `virsci`
 
 - preferred multi-agent literature baseline
 - closest prior work to our collaboration-centered positioning
-- if the official system cannot be controlled in a benchmark-faithful way, do
-  not silently replace it with a proxy in the main table; either fix the
-  integration or move it out of the headline comparison
+- should be reported as a benchmark-faithful fixed-topic bridge unless the
+  exact upstream benchmark entrypoint becomes available; do not relabel a local
+  proxy as `virsci` in the main table
 
-5. `ours-eig`
+6. `ours-eig`
 
 - the main proposed method
 - should be described as `Evolving Idea Graphs`
@@ -143,9 +156,6 @@ The recommended main comparison set is:
 
 ### Appendix Or Optional Baselines
 
-- `scipip`
-  useful as a structured retrieval-and-decomposition baseline if the official
-  code path is stable
 - `Nova`
   useful as a search/planning ideation baseline if reproducible
 

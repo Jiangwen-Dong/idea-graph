@@ -55,6 +55,9 @@ DEFAULT_HARD_CASE_NEW_SUMMARY = ARCHIVE_ROOT / "20260401-164026-ai-idea-bench-20
 METHOD_DISPLAY_NAMES = {
     "direct": "Direct",
     "self-refine": "Self-Refine",
+    "ai-researcher": r"\textsc{AI-Researcher}",
+    "scipip": r"\textsc{SciPIP}",
+    "virsci": r"\textsc{VirSci}",
     "scipip-proxy": r"\textsc{SciPIP}-Proxy",
     "ai-researcher-proxy": r"\textsc{AI-Researcher}-Proxy",
     "virsci-proxy": r"\textsc{VirSci}-Proxy",
@@ -79,8 +82,9 @@ BENCHMARK_SHORT_NAMES = {
 METHOD_ORDER = [
     "direct",
     "self-refine",
-    "scipip-proxy",
-    "ai-researcher-proxy",
+    "ai-researcher",
+    "scipip",
+    "virsci",
     "ours-eig",
 ]
 
@@ -439,7 +443,7 @@ def render_main_quality_table(batch_summary: dict[str, Any]) -> str:
         r"\begin{table*}[t]",
         r"\centering",
         r"\small",
-        r"\caption{Small-batch cross-benchmark comparison on AI Idea Bench 2025 and LiveIdeaBench using the same \texttt{qwen3-8b} backbone. Higher is better. The main outcome numbers are recomputed with the corrected output-only local scorer; graph-process evidence is reported separately from this outcome table.}",
+        r"\caption{Small-batch cross-benchmark comparison on AI Idea Bench 2025 and LiveIdeaBench under the same benchmark-facing input/output contract. External baselines are reported through their configured benchmark-faithful adapters when exact benchmark entrypoints are unavailable. Higher is better. The main outcome numbers are recomputed with the corrected output-only local scorer; graph-process evidence is reported separately from this outcome table.}",
         r"\label{tab:cross_benchmark_quality_main}",
         r"\begin{tabular}{lcccccc}",
         r"\toprule",

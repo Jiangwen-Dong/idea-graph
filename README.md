@@ -145,6 +145,7 @@ Run an external baseline through its configured adapter:
 ```bash
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher --external-baseline-config configs/external_baselines.example.json
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline scipip --external-baseline-config configs/external_baselines.example.json
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline virsci --external-baseline-config configs/external_baselines.example.json
 ```
 
 Notes:
@@ -154,8 +155,13 @@ Notes:
 - `ai-researcher` can run in two modes:
   - exact upstream mode for providers the upstream repo natively supports
   - `openai-compatible-bridge` mode for DashScope/Qwen-style providers
+- `scipip` currently runs either through its upstream layout or through the
+  configured benchmark-faithful OpenAI-compatible bridge, depending on the
+  local config and provider setup.
+- `virsci` currently uses the benchmark fixed-topic bridge for benchmark-mode
+  evaluation; exact upstream benchmark entrypoints are still not used in the
+  paper-facing runs.
 - `ai-researcher-proxy`, `scipip-proxy`, and `virsci-proxy` remain local approximations implemented entirely inside this repo.
-- `virsci` currently raises a clear error in benchmark mode because the upstream repository does not expose a fixed-topic benchmark entrypoint yet.
 
 ## Package Structure
 

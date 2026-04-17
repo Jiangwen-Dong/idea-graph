@@ -96,6 +96,36 @@ class AIIdeaBench2025PaperAccessTests(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_instance_from_record_skips_corrupt_archive_pdf(self) -> None:
+        root = self._make_temp_root()
+        try:
+            archive_path = root / "Idea_bench_data.zip"
+            with ZipFile(archive_path, "w") as archive:
+                archive.writestr(
+                    "Idea_bench_data/papers_data/corrupt archive paper.pdf",
+                    b"not a valid pdf",
+                )
+
+            record = AIIdeaBench2025Record(
+                benchmark_index=2,
+                topic="topic",
+                revised_topic="topic",
+                target_paper="",
+                target_paper_path="",
+                motivation="",
+                method_summary="",
+                reference_titles=["Corrupt Archive Paper"],
+                reference_local_paths=["./papers_data/corrupt archive paper.pdf"],
+                raw_record={},
+            )
+            instance = ai_idea_bench_2025_instance_from_record(record, benchmark_root=root)
+
+            grounding = instance.metadata["paper_grounding"]
+            self.assertEqual(grounding["target_paper_snippet"], {})
+            self.assertEqual(grounding["reference_paper_snippets"], [])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

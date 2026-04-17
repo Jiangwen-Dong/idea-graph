@@ -43,6 +43,9 @@ DEFAULT_HARD_CASE_NEW_SUMMARY = ARCHIVE_ROOT / "20260401-164026-ai-idea-bench-20
 METHOD_DISPLAY_NAMES = {
     "direct": "Direct",
     "self-refine": "Self-Refine",
+    "ai-researcher": r"\textsc{AI-Researcher}",
+    "scipip": r"\textsc{SciPIP}",
+    "virsci": r"\textsc{VirSci}",
     "scipip-proxy": r"\textsc{SciPIP}-Proxy",
     "ai-researcher-proxy": r"\textsc{AI-Researcher}-Proxy",
     "ours-eig": "Ours (EIG Prototype)",

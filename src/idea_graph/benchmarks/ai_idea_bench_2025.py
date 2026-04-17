@@ -447,22 +447,28 @@ def _load_paper_snippet(root: Path, *, raw_path: str = "", fallback_title: str =
     cache_dir = _paper_snippets_cache_dir(root)
     resolved_file_path = _resolve_local_paper_path(root, raw_path) if raw_path else ""
     if resolved_file_path and Path(resolved_file_path).exists():
-        return build_paper_snippet_from_file(
-            resolved_file_path,
-            fallback_title=fallback_title,
-            cache_dir=cache_dir,
-        ).as_dict()
+        try:
+            return build_paper_snippet_from_file(
+                resolved_file_path,
+                fallback_title=fallback_title,
+                cache_dir=cache_dir,
+            ).as_dict()
+        except Exception:
+            return {}
 
     zip_entry = _resolve_zip_entry(root, raw_path, fallback_title=fallback_title)
     if not zip_entry and fallback_title:
         zip_entry = _best_title_verified_zip_entry(root, fallback_title)
     if zip_entry:
-        return build_paper_snippet_from_zip_entry(
-            default_paths(root).papers_archive_path,
-            zip_entry,
-            fallback_title=fallback_title,
-            cache_dir=cache_dir,
-        ).as_dict()
+        try:
+            return build_paper_snippet_from_zip_entry(
+                default_paths(root).papers_archive_path,
+                zip_entry,
+                fallback_title=fallback_title,
+                cache_dir=cache_dir,
+            ).as_dict()
+        except Exception:
+            return {}
     return {}
 
 
