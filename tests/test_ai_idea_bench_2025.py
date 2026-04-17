@@ -4,6 +4,7 @@ import io
 import sys
 from pathlib import Path
 import shutil
+import tempfile
 import unittest
 from uuid import uuid4
 from zipfile import ZipFile
@@ -31,7 +32,7 @@ def _blank_pdf_bytes() -> bytes:
 
 class AIIdeaBench2025PaperAccessTests(unittest.TestCase):
     def _make_temp_root(self) -> Path:
-        temp_root_base = ROOT / "tests" / "_tmp_ai_idea_bench_2025"
+        temp_root_base = Path(tempfile.gettempdir()) / "idea_graph_ai_idea_bench_2025_tests"
         temp_root_base.mkdir(parents=True, exist_ok=True)
         path = temp_root_base / f"case-{uuid4().hex}"
         path.mkdir(parents=True, exist_ok=True)
