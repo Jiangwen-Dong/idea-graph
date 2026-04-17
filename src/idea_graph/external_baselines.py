@@ -159,6 +159,32 @@ def _resolve_env_overrides(payload: Any) -> dict[str, str]:
     return resolved
 
 
+def _execution_mode(config: dict[str, Any], *, default: str) -> str:
+    return _clean_text(config.get("execution_mode")).lower() or default
+
+
+def _uses_bridge_mode(config: dict[str, Any], *, default: str) -> bool:
+    return "bridge" in _execution_mode(config, default=default)
+
+
+def _write_json_artifact(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _append_external_trace(graph: IdeaGraph, *, stage: str, trace: dict[str, object]) -> None:
+    graph.metadata.setdefault("external_baseline_traces", []).append({"stage": stage, **trace})
+
+
+def _bridge_packet(graph: IdeaGraph) -> dict[str, object]:
+    return {
+        "topic": _clean_text(graph.topic),
+        "benchmark_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "benchmark_background": _build_benchmark_background(graph),
+        "reference_packet": _reference_packet(graph),
+    }
+
+
 def _stamp_external_baseline_metadata(
     graph: IdeaGraph,
     *,
@@ -431,7 +457,7 @@ def _proposal_from_virsci_payload(graph: IdeaGraph, payload: dict[str, Any]) -> 
     )
 
 
-def _build_ai_researcher_bridge_backend(config: dict[str, Any]) -> OpenAICompatibleCollaborationBackend:
+def _build_openai_compatible_bridge_backend(config: dict[str, Any]) -> OpenAICompatibleCollaborationBackend:
     llm_config_path = _clean_text(config.get("llm_config_path"))
     if llm_config_path:
         settings = OpenAICompatibleSettings.from_json_file(llm_config_path)
@@ -443,9 +469,13 @@ def _build_ai_researcher_bridge_backend(config: dict[str, Any]) -> OpenAICompati
         return OpenAICompatibleCollaborationBackend(settings)
 
     raise RuntimeError(
-        "AI-Researcher openai-compatible bridge requires either 'llm_config_path' or an "
+        "OpenAI-compatible bridge mode requires either 'llm_config_path' or an "
         "'openai_compatible' settings mapping in the external baseline config."
     )
+
+
+def _build_ai_researcher_bridge_backend(config: dict[str, Any]) -> OpenAICompatibleCollaborationBackend:
+    return _build_openai_compatible_bridge_backend(config)
 
 
 def _run_ai_researcher_openai_compatible_bridge(
@@ -679,6 +709,9 @@ def _run_scipip(
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
 ) -> FinalProposal:
+    if _uses_bridge_mode(config, default="upstream-generator"):
+        return _run_scipip_openai_compatible_bridge(graph, config, progress_callback)
+
     _stamp_external_baseline_metadata(
         graph,
         execution_mode="upstream-generator",
@@ -768,11 +801,114 @@ def _run_scipip(
     return _proposal_from_scipip_text(graph, selected_text)
 
 
+def _run_scipip_openai_compatible_bridge(
+    graph: IdeaGraph,
+    config: dict[str, Any],
+    progress_callback: Callable[[str], None] | None,
+) -> FinalProposal:
+    from .baselines import _baseline_postprocess_proposal, _llm_json_object, _proposal_from_payload, get_baseline_spec
+
+    _stamp_external_baseline_metadata(
+        graph,
+        execution_mode="openai-compatible-bridge",
+        adapter_status=ADAPTER_STATUS_PAPER_FAITHFUL,
+        proxy_fallback=False,
+        preserved_stages=[
+            "problem_decomposition",
+            "reference_inspiration",
+            "idea_synthesis",
+        ],
+    )
+    repo_root = _require_path(config.get("repo_path"), label="SciPIP repo_path")
+    workspace = _make_workspace(
+        config,
+        baseline_name="scipip",
+        instance_name=_clean_text(graph.metadata.get("instance_name")) or _clean_text(graph.topic) or "run",
+    )
+    graph.metadata["external_baseline_workspace"] = str(workspace)
+
+    backend = _build_openai_compatible_bridge_backend(config)
+    graph.metadata["external_baseline_backend_settings"] = backend.settings.sanitized_dict()
+    graph.metadata["external_baseline_source_repo"] = str(repo_root)
+
+    packet = _bridge_packet(graph)
+    decomposition_path = workspace / "scipip_bridge_decomposition.json"
+    proposal_path = workspace / "scipip_bridge_proposal.json"
+
+    _emit(progress_callback, "SciPIP: decomposing benchmark background into a structured research problem.")
+    decomposition_payload, decomposition_trace = _llm_json_object(
+        backend,
+        role="SciPIPDecomposition",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are emulating the decomposition stage of SciPIP under a fixed benchmark packet. "
+                    "Preserve background-conditioned problem formulation, visible-reference inspiration mining, "
+                    "and a concise integrated direction. Use only the provided topic and visible references. "
+                    "Return one strict JSON object only. "
+                    'Schema: {"research_problem":"...","rationales":["..."],'
+                    '"reference_inspirations":[{"title":"...","inspiration":"..."}],'
+                    '"integrated_direction":"...","experiment_axes":["..."],"candidate_title":"..."}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(packet, ensure_ascii=False, indent=2),
+            },
+        ],
+        temperature=0.2,
+        max_tokens=1600,
+    )
+    _append_external_trace(graph, stage="scipip_problem_decomposition", trace=decomposition_trace)
+    _write_json_artifact(decomposition_path, decomposition_payload)
+
+    _emit(progress_callback, "SciPIP: synthesizing the final benchmark-faithful proposal from the decomposition notes.")
+    proposal_payload, proposal_trace = _llm_json_object(
+        backend,
+        role="SciPIPIdeaSynthesis",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are emulating SciPIP's idea-synthesis stage for scientific paper ideation. "
+                    "Expand the structured decomposition into one strong proposal without changing the benchmark topic. "
+                    "Use only visible references and decomposition notes. Return one strict JSON object only with the "
+                    'fields {"title","problem","existing_methods","motivation","hypothesis","method","evaluation","significance","caveats"}.'
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        **packet,
+                        "decomposition": decomposition_payload,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            },
+        ],
+        temperature=0.3,
+        max_tokens=1800,
+    )
+    _append_external_trace(graph, stage="scipip_idea_synthesis", trace=proposal_trace)
+    _write_json_artifact(proposal_path, proposal_payload)
+
+    graph.metadata["external_baseline_selected_file"] = str(proposal_path)
+    graph.metadata["external_baseline_decomposition_file"] = str(decomposition_path)
+    proposal = _proposal_from_payload(proposal_payload)
+    return _baseline_postprocess_proposal(graph, get_baseline_spec("scipip"), proposal)
+
+
 def _run_virsci(
     graph: IdeaGraph,
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
 ) -> FinalProposal:
+    if _uses_bridge_mode(config, default="upstream-multi-agent"):
+        return _run_virsci_fixed_topic_bridge(graph, config, progress_callback)
+
     _stamp_external_baseline_metadata(
         graph,
         execution_mode="upstream-multi-agent",
@@ -839,3 +975,128 @@ def _run_virsci(
         raise RuntimeError("Virtual-Scientists team info payload is malformed.")
     graph.metadata["external_baseline_selected_file"] = str(team_files[0])
     return _proposal_from_virsci_payload(graph, payload)
+
+
+def _run_virsci_fixed_topic_bridge(
+    graph: IdeaGraph,
+    config: dict[str, Any],
+    progress_callback: Callable[[str], None] | None,
+) -> FinalProposal:
+    from .baselines import _baseline_postprocess_proposal, _llm_json_object, _proposal_from_payload, get_baseline_spec
+
+    _stamp_external_baseline_metadata(
+        graph,
+        execution_mode="benchmark-fixed-topic-bridge",
+        adapter_status=ADAPTER_STATUS_PAPER_FAITHFUL,
+        proxy_fallback=False,
+        preserved_stages=[
+            "multi_agent_discussion",
+            "team_synthesis",
+        ],
+    )
+    repo_root = _require_path(config.get("repo_path"), label="VirSci repo_path")
+    run_root = repo_root / "sci_platform"
+    if not (run_root / "run.py").exists():
+        raise RuntimeError(f"Virtual-Scientists repo is missing sci_platform/run.py: {repo_root}")
+
+    workspace = _make_workspace(
+        config,
+        baseline_name="virsci",
+        instance_name=_clean_text(graph.metadata.get("instance_name")) or _clean_text(graph.topic) or "run",
+    )
+    graph.metadata["external_baseline_workspace"] = str(workspace)
+
+    backend = _build_openai_compatible_bridge_backend(config)
+    graph.metadata["external_baseline_backend_settings"] = backend.settings.sanitized_dict()
+    graph.metadata["external_baseline_source_repo"] = str(repo_root)
+
+    packet = _bridge_packet(graph)
+    discussion_turns = max(2, int(config.get("discussion_turns", 3) or 3))
+    personas = [
+        ("ScientistAlpha", "frame why this topic matters now and surface the most important bottleneck."),
+        ("ScientistBeta", "propose the core mechanism and explain how it differs from nearby work."),
+        ("ScientistGamma", "stress-test feasibility, risks, and the evaluation design."),
+    ][:discussion_turns]
+    discussion_rows: list[dict[str, object]] = []
+
+    for scientist_name, focus in personas:
+        _emit(progress_callback, f"VirSci: collecting discussion turn from {scientist_name}.")
+        discussion_payload, discussion_trace = _llm_json_object(
+            backend,
+            role="VirSciDiscussion",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are {scientist_name} in a VirSci-style multi-agent scientific discussion. "
+                        f"Your focus is: {focus} "
+                        "The benchmark topic is fixed and may not be changed. "
+                        "Respond with one strict JSON object only. "
+                        'Schema: {"scientist":"...", "stance":"...", "topic_commitment":"...", '
+                        '"mechanism":"...", "novelty_argument":"...", "risk":"...", "experiment":"..."}'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            **packet,
+                            "prior_discussion": discussion_rows,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                },
+            ],
+            temperature=0.35,
+            max_tokens=1400,
+        )
+        discussion_rows.append(discussion_payload)
+        _append_external_trace(
+            graph,
+            stage=f"virsci_discussion_{scientist_name.lower()}",
+            trace=discussion_trace,
+        )
+
+    transcript_path = workspace / "virsci_bridge_discussion.json"
+    _write_json_artifact(transcript_path, {"discussion": discussion_rows})
+
+    _emit(progress_callback, "VirSci: synthesizing the panel discussion into one final proposal.")
+    proposal_payload, proposal_trace = _llm_json_object(
+        backend,
+        role="VirSciSynthesis",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are the team leader in a VirSci-style scientific collaboration. "
+                    "Synthesize the fixed-topic panel discussion into one coherent proposal without changing the benchmark topic. "
+                    "Use only the benchmark packet and recorded discussion. Return one strict JSON object only with the "
+                    'fields {"title","problem","existing_methods","motivation","hypothesis","method","evaluation","significance","caveats"}.'
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        **packet,
+                        "discussion": discussion_rows,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            },
+        ],
+        temperature=0.25,
+        max_tokens=1900,
+    )
+    _append_external_trace(graph, stage="virsci_team_synthesis", trace=proposal_trace)
+
+    proposal_path = workspace / "virsci_bridge_proposal.json"
+    _write_json_artifact(proposal_path, proposal_payload)
+
+    graph.metadata["external_baseline_discussion_file"] = str(transcript_path)
+    graph.metadata["external_baseline_selected_file"] = str(proposal_path)
+    graph.metadata["external_baseline_discussion_turns"] = len(discussion_rows)
+    proposal = _proposal_from_payload(proposal_payload)
+    return _baseline_postprocess_proposal(graph, get_baseline_spec("virsci"), proposal)

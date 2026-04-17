@@ -570,6 +570,216 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(graph.metadata["stop_reason"], "baseline_ai-researcher_complete")
         self.assertEqual(graph.metadata["ai_researcher_proxy_candidate_count"], 2)
 
+    def test_scipip_external_bridge_runs_with_openai_compatible_mode(self) -> None:
+        class FakeSettings:
+            max_retries = 0
+            model = "qwen3-8b"
+
+            def model_for_role(self, role: str) -> str:
+                return self.model
+
+            def sanitized_dict(self) -> dict[str, object]:
+                return {"model": self.model}
+
+        class SequencedClient:
+            def __init__(self, payloads: list[dict[str, object]]) -> None:
+                self._payloads = list(payloads)
+
+            def create_chat_completion(self, **kwargs):
+                payload = self._payloads.pop(0)
+                content = json.dumps(payload, ensure_ascii=False)
+                return SimpleNamespace(
+                    content=content,
+                    raw_response={"choices": [{"message": {"content": content}}]},
+                )
+
+        fake_backend = SimpleNamespace(
+            settings=FakeSettings(),
+            client=SequencedClient(
+                [
+                    {
+                        "research_problem": "Panoramic relative pose estimation remains fragile under sparse viewpoint overlap.",
+                        "rationales": [
+                            "Current panorama methods struggle to separate geometry errors from appearance variation.",
+                            "Benchmark-safe references suggest geometry-aware constraints but not efficient adaptation.",
+                        ],
+                        "reference_inspirations": [
+                            {
+                                "title": "Paper A",
+                                "inspiration": "Use self-supervised geometry cues to stabilize relative pose estimation.",
+                            }
+                        ],
+                        "integrated_direction": "Combine overlap-aware geometry cues with lightweight panorama adaptation.",
+                        "experiment_axes": ["pose error", "overlap robustness"],
+                        "candidate_title": "Overlap-Aware Panorama Pose Adaptation",
+                    },
+                    {
+                        "title": "Overlap-Aware Panorama Pose Adaptation",
+                        "problem": "Scaled relative pose estimation in panoramic images remains brittle when overlap is weak.",
+                        "existing_methods": "Panorama pose baselines use geometry cues but remain unstable under low overlap.",
+                        "motivation": "A structured decomposition of geometry and appearance could improve robustness.",
+                        "hypothesis": "Overlap-aware adaptation can reduce pose drift in sparse-overlap panoramas.",
+                        "method": "Estimate overlap confidence, then route geometry-aware adaptation modules to stabilize scaled relative pose prediction.",
+                        "evaluation": "Measure scaled pose error and robustness across varying panorama overlap regimes.",
+                        "significance": "This gives a more benchmark-faithful and testable panoramic pose direction.",
+                        "caveats": "Performance may depend on overlap confidence calibration.",
+                    },
+                ]
+            ),
+        )
+
+        instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="scipip",
+            io_mode="auto",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp) / "SciPIP"
+            (repo_root / "src").mkdir(parents=True)
+            (repo_root / "src" / "generator.py").write_text("print('ok')\n", encoding="utf-8")
+
+            config = {
+                "scipip": {
+                    "enabled": True,
+                    "execution_mode": "openai-compatible-bridge",
+                    "repo_path": str(repo_root),
+                    "openai_compatible": {
+                        "base_url": "https://example.com/v1",
+                        "api_key": "test-key",
+                        "model": "qwen3-8b",
+                        "provider": "dashscope",
+                        "reasoning_mode": "auto",
+                    },
+                }
+            }
+
+            with patch("idea_graph.external_baselines._build_openai_compatible_bridge_backend", return_value=fake_backend):
+                graph = run_baseline_experiment(
+                    instance,
+                    baseline_name="scipip",
+                    external_baseline_config=config,
+                )
+
+        self.assertIsNotNone(graph.final_proposal)
+        self.assertEqual(graph.final_proposal.title, "Overlap-Aware Panorama Pose Adaptation")
+        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "openai-compatible-bridge")
+        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful-adapter")
+        self.assertEqual(graph.metadata["stop_reason"], "baseline_scipip_complete")
+        self.assertIn("external_baseline_decomposition_file", graph.metadata)
+
+    def test_virsci_fixed_topic_bridge_runs_with_openai_compatible_mode(self) -> None:
+        class FakeSettings:
+            max_retries = 0
+            model = "qwen3-8b"
+
+            def model_for_role(self, role: str) -> str:
+                return self.model
+
+            def sanitized_dict(self) -> dict[str, object]:
+                return {"model": self.model}
+
+        class SequencedClient:
+            def __init__(self, payloads: list[dict[str, object]]) -> None:
+                self._payloads = list(payloads)
+
+            def create_chat_completion(self, **kwargs):
+                payload = self._payloads.pop(0)
+                content = json.dumps(payload, ensure_ascii=False)
+                return SimpleNamespace(
+                    content=content,
+                    raw_response={"choices": [{"message": {"content": content}}]},
+                )
+
+        fake_backend = SimpleNamespace(
+            settings=FakeSettings(),
+            client=SequencedClient(
+                [
+                    {
+                        "scientist": "ScientistAlpha",
+                        "stance": "Lock the benchmark topic and emphasize the real bottleneck.",
+                        "topic_commitment": "Stay focused on 3D language field modeling rather than generic 3D reconstruction.",
+                        "mechanism": "Prioritize benchmark-aligned language localization errors.",
+                        "novelty_argument": "Current methods do not explicitly optimize benchmark-aligned localization drift.",
+                        "risk": "Too much focus on drift could miss representation quality.",
+                        "experiment": "Track localization drift and retrieval quality together.",
+                    },
+                    {
+                        "scientist": "ScientistBeta",
+                        "stance": "Push one concrete mechanism.",
+                        "topic_commitment": "Keep the idea centered on open-vocabulary 3D language fields.",
+                        "mechanism": "Distill hierarchical language cues into sparse 3D anchors.",
+                        "novelty_argument": "This separates semantic grounding from rendering-heavy field updates.",
+                        "risk": "Sparse anchors may underfit fine-grained objects.",
+                        "experiment": "Compare anchor density against localization quality.",
+                    },
+                    {
+                        "scientist": "ScientistGamma",
+                        "stance": "Stress-test feasibility and evaluation.",
+                        "topic_commitment": "Use only task-relevant benchmarks and ablations.",
+                        "mechanism": "Add confidence-weighted query heads for stable retrieval.",
+                        "novelty_argument": "This makes the method testable under benchmark-native failure modes.",
+                        "risk": "Confidence heads may add calibration error.",
+                        "experiment": "Run calibration, robustness, and retrieval ablations.",
+                    },
+                    {
+                        "title": "Sparse Anchor Language Fields for Open-Vocabulary 3D Queries",
+                        "problem": "3D language field modeling still struggles with stable open-vocabulary localization.",
+                        "existing_methods": "Existing language radiance fields and Gaussian variants are strong but drift under sparse supervision.",
+                        "motivation": "A discussion-style team synthesis points to stable semantic anchors as the key missing ingredient.",
+                        "hypothesis": "Sparse semantic anchors with confidence-weighted query heads can reduce localization drift.",
+                        "method": "Use a multi-view language field with sparse semantic anchors and confidence-aware query heads to stabilize open-vocabulary 3D querying.",
+                        "evaluation": "Evaluate localization accuracy, retrieval quality, calibration, and sparse-supervision robustness against strong baselines.",
+                        "significance": "This preserves the benchmark topic while adding a more discussion-vetted mechanism.",
+                        "caveats": "Anchor sparsity and calibration may need careful tuning.",
+                    },
+                ]
+            ),
+        )
+
+        instance = attach_baseline_metadata(
+            self._language_field_instance(),
+            baseline_name="virsci",
+            io_mode="auto",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp) / "Virtual-Scientists" / "sci_platform"
+            repo_root.mkdir(parents=True)
+            (repo_root / "run.py").write_text("print('ok')\n", encoding="utf-8")
+
+            config = {
+                "virsci": {
+                    "enabled": True,
+                    "execution_mode": "benchmark-fixed-topic-bridge",
+                    "repo_path": str(repo_root.parent),
+                    "openai_compatible": {
+                        "base_url": "https://example.com/v1",
+                        "api_key": "test-key",
+                        "model": "qwen3-8b",
+                        "provider": "dashscope",
+                        "reasoning_mode": "auto",
+                    },
+                }
+            }
+
+            with patch("idea_graph.external_baselines._build_openai_compatible_bridge_backend", return_value=fake_backend):
+                graph = run_baseline_experiment(
+                    instance,
+                    baseline_name="virsci",
+                    external_baseline_config=config,
+                )
+
+        self.assertIsNotNone(graph.final_proposal)
+        self.assertEqual(
+            graph.final_proposal.title,
+            "Sparse Anchor Language Fields for Open-Vocabulary 3D Queries",
+        )
+        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "benchmark-fixed-topic-bridge")
+        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful-adapter")
+        self.assertEqual(graph.metadata["external_baseline_discussion_turns"], 3)
+        self.assertEqual(graph.metadata["stop_reason"], "baseline_virsci_complete")
+
     def test_virsci_benchmark_mode_records_no_go_metadata_before_raising(self) -> None:
         instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),

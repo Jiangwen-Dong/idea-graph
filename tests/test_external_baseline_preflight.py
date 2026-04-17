@@ -143,6 +143,55 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
         self.assertTrue(by_name["ai-researcher"]["ready"])
         self.assertEqual(by_name["ai-researcher"]["adapter_status"], "exact-upstream")
 
+    def test_preflight_accepts_bridge_ready_scipip_and_virsci(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            scipip_repo = root / "SciPIP"
+            (scipip_repo / "src").mkdir(parents=True)
+            (scipip_repo / "src" / "generator.py").write_text("print('ok')\n", encoding="utf-8")
+
+            virsci_repo = root / "Virtual-Scientists" / "sci_platform"
+            virsci_repo.mkdir(parents=True)
+            (virsci_repo / "run.py").write_text("print('ok')\n", encoding="utf-8")
+
+            config_path = root / "external.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "scipip": {
+                            "enabled": True,
+                            "execution_mode": "openai-compatible-bridge",
+                            "repo_path": str(scipip_repo),
+                            "openai_compatible": {
+                                "base_url": "https://example.com/v1",
+                                "api_key_env": "DASHSCOPE_API_KEY",
+                                "model": "qwen3-8b",
+                            },
+                        },
+                        "virsci": {
+                            "enabled": True,
+                            "execution_mode": "benchmark-fixed-topic-bridge",
+                            "repo_path": str(virsci_repo.parent),
+                            "openai_compatible": {
+                                "base_url": "https://example.com/v1",
+                                "api_key_env": "DASHSCOPE_API_KEY",
+                                "model": "qwen3-8b",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = check_external_baseline_config(config_path)
+
+        by_name = {row["baseline"]: row for row in report["baselines"]}
+        self.assertTrue(by_name["scipip"]["ready"])
+        self.assertEqual(by_name["scipip"]["adapter_status"], "paper-faithful-adapter")
+        self.assertTrue(by_name["virsci"]["ready"])
+        self.assertEqual(by_name["virsci"]["adapter_status"], "paper-faithful-adapter")
+
 
 if __name__ == "__main__":
     unittest.main()

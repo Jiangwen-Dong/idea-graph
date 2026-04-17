@@ -33,6 +33,26 @@ def _check_file(path: Path, issues: list[str], label: str) -> bool:
     return False
 
 
+def _bridge_ready(entry: dict[str, Any], *, base_dir: Path, issues: list[str]) -> bool:
+    llm_config_path = _clean(entry.get("llm_config_path"))
+    if llm_config_path:
+        return _check_file(_resolve_path(llm_config_path, base_dir=base_dir), issues, "bridge llm_config_path")
+
+    nested = entry.get("openai_compatible")
+    if not isinstance(nested, dict):
+        issues.append("Missing openai_compatible settings or llm_config_path for bridge mode.")
+        return False
+
+    ready = True
+    if not _clean(nested.get("model")):
+        issues.append("Missing bridge model in openai_compatible settings.")
+        ready = False
+    if not (_clean(nested.get("api_key")) or _clean(nested.get("api_key_env"))):
+        issues.append("Missing bridge api_key or api_key_env in openai_compatible settings.")
+        ready = False
+    return ready
+
+
 def _ai_researcher_status(entry: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
     issues: list[str] = []
     mode = _clean(entry.get("execution_mode")).lower() or "upstream"
@@ -60,20 +80,25 @@ def _ai_researcher_status(entry: dict[str, Any], *, base_dir: Path) -> dict[str,
 
 def _scipip_status(entry: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
     issues: list[str] = []
+    mode = _clean(entry.get("execution_mode")).lower() or "upstream-generator"
     repo = _resolve_path(entry.get("repo_path"), base_dir=base_dir)
     ready = repo.exists()
     if not ready:
         issues.append(f"Missing SciPIP repo_path: {repo}")
     if ready:
         ready = _check_file(repo / "src" / "generator.py", issues, "SciPIP generator.py") and ready
-    config_path = _resolve_path(entry.get("config_path") or (repo / "configs" / "datasets.yaml"), base_dir=base_dir)
-    if ready:
-        ready = _check_file(config_path, issues, "SciPIP config_path") and ready
+    if "bridge" in mode:
+        if ready:
+            ready = _bridge_ready(entry, base_dir=base_dir, issues=issues) and ready
+    else:
+        config_path = _resolve_path(entry.get("config_path") or (repo / "configs" / "datasets.yaml"), base_dir=base_dir)
+        if ready:
+            ready = _check_file(config_path, issues, "SciPIP config_path") and ready
     return {
         "baseline": "scipip",
         "enabled": bool(entry.get("enabled", True)),
         "ready": bool(ready),
-        "execution_mode": "upstream-generator",
+        "execution_mode": mode,
         "adapter_status": "paper-faithful-adapter",
         "issues": issues,
     }
@@ -81,19 +106,27 @@ def _scipip_status(entry: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
 
 def _virsci_status(entry: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
     issues: list[str] = []
+    mode = _clean(entry.get("execution_mode")).lower() or "upstream-multi-agent"
     repo = _resolve_path(entry.get("repo_path"), base_dir=base_dir)
     ready = repo.exists()
     if not ready:
         issues.append(f"Missing VirSci repo_path: {repo}")
     if ready:
         ready = _check_file(repo / "sci_platform" / "run.py", issues, "VirSci sci_platform/run.py") and ready
-    issues.append("VirSci still requires a fixed-topic benchmark adapter before main-table eligibility.")
+    adapter_status = "exclude-until-fixed-topic-adapter"
+    if "bridge" in mode:
+        if ready:
+            ready = _bridge_ready(entry, base_dir=base_dir, issues=issues) and ready
+        adapter_status = "paper-faithful-adapter"
+    else:
+        ready = False
+        issues.append("VirSci still requires a fixed-topic benchmark adapter before main-table eligibility.")
     return {
         "baseline": "virsci",
         "enabled": bool(entry.get("enabled", False)),
-        "ready": False,
-        "execution_mode": "upstream-multi-agent",
-        "adapter_status": "exclude-until-fixed-topic-adapter",
+        "ready": bool(ready),
+        "execution_mode": mode,
+        "adapter_status": adapter_status,
         "issues": issues,
     }
 

@@ -16,8 +16,8 @@ adapter.
 | `direct` | Controlled one-pass generation baseline | Not an external paper baseline | Implemented locally | Native benchmark protocol | Headline lower-bound control |
 | `self-refine` | Self-Refine: Iterative Refinement with Self-Feedback | `https://github.com/madaan/self-refine` | Not cloned; remote HEAD verified as `9a206d4` | Local paper-faithful reproduction of generate-feedback-refine loop | Headline controlled iterative baseline |
 | `ai-researcher` | Can LLMs Generate Novel Research Ideas? / AI-Researcher | `https://github.com/NoviScl/AI-Researcher` | `.tmp-baselines/AI-Researcher`, HEAD `e5dd05a` | Paper-faithful adapter or exact upstream path depending on provider/config | Headline if adapter status is disclosed |
-| `scipip` | SciPIP: An LLM-based Scientific Paper Idea Proposer | `https://github.com/cheerss/SciPIP` | `.tmp-baselines/SciPIP`, HEAD `a0a927a` | Upstream layout present, but Neo4j/data/config stack is heavy | Appendix until enabled and B1-smoked |
-| `virsci` | Many Heads Are Better Than One / VirSci | `https://github.com/open-sciencelab/Virtual-Scientists` | `.tmp-baselines/Virtual-Scientists`, HEAD `07097fd` | Source exists, but no clean fixed-topic benchmark entrypoint yet | Exclude from headline unless fixed-topic adapter passes |
+| `scipip` | SciPIP: An LLM-based Scientific Paper Idea Proposer | `https://github.com/cheerss/SciPIP` | `.tmp-baselines/SciPIP`, HEAD `a0a927a` | Upstream layout present; OpenAI-compatible bridge now implemented for benchmark packets | B0 passed; B1 pending |
+| `virsci` | Many Heads Are Better Than One / VirSci | `https://github.com/open-sciencelab/Virtual-Scientists` | `.tmp-baselines/Virtual-Scientists`, HEAD `07097fd` | Exact upstream remains benchmark-incompatible, but a fixed-topic bridge now exists | B0 passed; B1 pending |
 | `ai-scientist` | The AI Scientist | `https://github.com/SakanaAI/AI-Scientist` | Not cloned; remote HEAD verified as `1de1dbc` | Full autonomous experiment/paper loop, not same idea-only task | Future supplementary only |
 
 ## Baseline-Specific Notes
@@ -67,27 +67,39 @@ expected provider and cache format, we can upgrade the status to
 The SciPIP repository is public and has a terminal entrypoint for idea
 generation. Its faithful operation depends on a Neo4j literature database,
 preloaded paper assets, model configuration, and optional embedding resources.
-Because of this heavy retrieval stack, it is currently not headline-ready in our
-main table until:
+Because of this heavy retrieval stack, we implemented a speed-first
+OpenAI-compatible bridge that preserves the problem-decomposition plus
+idea-synthesis structure while consuming our fixed benchmark packet. The exact
+upstream generator path remains available, but the bridge is the practical path
+for current benchmark sweeps.
+
+Current gate:
 
 - the real config and database paths are enabled locally;
 - a B0 smoke passes without proxy fallback;
 - a B1 smoke passes on the same paper-eval slice as the other baselines.
 
-If these gates pass, SciPIP can be promoted from appendix-only to headline.
+Current status: bridge B0 passed on `AI_Idea_Bench_2025:13` and
+`liveideabench:0`; B1 is still pending.
 
 ### VirSci
 
 The VirSci source and data are public, but the upstream run is designed as a
 science-of-science collaboration simulation using author/team data, paper
 databases, embeddings, and an epoch-based platform. The repository does not
-currently expose a simple fixed-topic entrypoint that cleanly maps one benchmark
-packet to one generated proposal.
+expose a simple fixed-topic entrypoint that cleanly maps one benchmark packet to
+one generated proposal. To avoid blocking on that stack, we implemented a
+benchmark fixed-topic bridge that preserves the paper spirit more honestly than
+the old local proxy: multiple scientist turns discuss the same benchmark topic,
+then a team-synthesis stage consolidates the final proposal.
 
-For paper safety, do not replace VirSci with the old local proxy in the headline
-table. Either implement and smoke-test a fixed-topic adapter that preserves team
-organization and discussion, or exclude VirSci from the headline comparison and
-mention it as incompatible with our fixed benchmark protocol.
+For paper safety, do not describe this as exact-upstream VirSci. It is a
+paper-faithful fixed-topic adapter. The exact upstream stack is still not a fair
+headline baseline for our benchmark unless its native assets and entrypoints are
+used directly.
+
+Current status: bridge B0 passed on `AI_Idea_Bench_2025:13` and
+`liveideabench:0`; B1 is still pending.
 
 ### AI Scientist
 
