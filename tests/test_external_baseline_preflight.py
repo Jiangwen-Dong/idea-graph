@@ -79,6 +79,70 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
         self.assertTrue(by_name["scipip"]["ready"])
         self.assertEqual(by_name["scipip"]["adapter_status"], "paper-faithful-adapter")
 
+    def test_preflight_resolves_relative_paths_from_config_directory(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / "configs"
+            config_dir.mkdir(parents=True)
+
+            ai_repo = root / ".tmp-baselines" / "AI-Researcher"
+            ai_runner = ai_repo / "ai_researcher" / "src"
+            ai_runner.mkdir(parents=True)
+            for name in ("grounded_idea_gen.py", "experiment_plan_gen.py", "tournament_ranking.py"):
+                (ai_runner / name).write_text("print('ok')\n", encoding="utf-8")
+
+            config_path = config_dir / "external.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "ai-researcher": {
+                            "enabled": True,
+                            "execution_mode": "openai-compatible-bridge",
+                            "repo_path": "../.tmp-baselines/AI-Researcher",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = check_external_baseline_config(config_path)
+
+        by_name = {row["baseline"]: row for row in report["baselines"]}
+        self.assertTrue(by_name["ai-researcher"]["ready"])
+        self.assertEqual(by_name["ai-researcher"]["adapter_status"], "paper-faithful-adapter")
+
+    def test_preflight_resolves_repo_relative_paths_from_config_ancestors(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / "configs"
+            config_dir.mkdir(parents=True)
+
+            ai_repo = root / ".tmp-baselines" / "AI-Researcher"
+            ai_runner = ai_repo / "ai_researcher" / "src"
+            ai_runner.mkdir(parents=True)
+            for name in ("grounded_idea_gen.py", "experiment_plan_gen.py", "tournament_ranking.py"):
+                (ai_runner / name).write_text("print('ok')\n", encoding="utf-8")
+
+            config_path = config_dir / "external.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "ai-researcher": {
+                            "enabled": True,
+                            "execution_mode": "upstream",
+                            "repo_path": ".tmp-baselines/AI-Researcher",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = check_external_baseline_config(config_path)
+
+        by_name = {row["baseline"]: row for row in report["baselines"]}
+        self.assertTrue(by_name["ai-researcher"]["ready"])
+        self.assertEqual(by_name["ai-researcher"]["adapter_status"], "exact-upstream")
+
 
 if __name__ == "__main__":
     unittest.main()

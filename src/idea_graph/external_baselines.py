@@ -15,6 +15,10 @@ from .models import FinalProposal, IdeaGraph
 from .agent_backend import OpenAICompatibleCollaborationBackend
 from .settings import OpenAICompatibleSettings
 
+ADAPTER_STATUS_EXACT_UPSTREAM = "exact-upstream"
+ADAPTER_STATUS_PAPER_FAITHFUL = "paper-faithful-adapter"
+ADAPTER_STATUS_EXCLUDED = "exclude-until-fixed-topic-adapter"
+
 
 def load_external_baseline_config(path: str | Path | None) -> dict[str, dict[str, Any]]:
     if path is None:
@@ -153,6 +157,21 @@ def _resolve_env_overrides(payload: Any) -> dict[str, str]:
         if resolved_value:
             resolved[env_name] = resolved_value
     return resolved
+
+
+def _stamp_external_baseline_metadata(
+    graph: IdeaGraph,
+    *,
+    execution_mode: str,
+    adapter_status: str,
+    proxy_fallback: bool = False,
+    preserved_stages: list[str] | None = None,
+) -> None:
+    graph.metadata["external_baseline_execution_mode"] = execution_mode
+    graph.metadata["external_baseline_adapter_status"] = adapter_status
+    graph.metadata["external_baseline_proxy_fallback"] = proxy_fallback
+    if preserved_stages is not None:
+        graph.metadata["external_baseline_preserved_stages"] = list(preserved_stages)
 
 
 @contextmanager
@@ -436,6 +455,17 @@ def _run_ai_researcher_openai_compatible_bridge(
 ) -> FinalProposal:
     from .baselines import BaselineSpec, _llm_ai_researcher_proxy_proposal
 
+    _stamp_external_baseline_metadata(
+        graph,
+        execution_mode="openai-compatible-bridge",
+        adapter_status=ADAPTER_STATUS_PAPER_FAITHFUL,
+        proxy_fallback=False,
+        preserved_stages=[
+            "seed_generation",
+            "proposal_expansion",
+            "candidate_ranking",
+        ],
+    )
     backend = _build_ai_researcher_bridge_backend(config)
     workspace = _make_workspace(
         config,
@@ -443,7 +473,6 @@ def _run_ai_researcher_openai_compatible_bridge(
         instance_name=_clean_text(graph.metadata.get("instance_name")) or _clean_text(graph.topic) or "run",
     )
     graph.metadata["external_baseline_workspace"] = str(workspace)
-    graph.metadata["external_baseline_execution_mode"] = "openai-compatible-bridge"
     sanitized_backend = (
         backend.settings.sanitized_dict()
         if hasattr(backend.settings, "sanitized_dict")
@@ -494,6 +523,17 @@ def _run_ai_researcher(
     } or _clean_text(config.get("llm_config_path")) or isinstance(config.get("openai_compatible"), dict):
         return _run_ai_researcher_openai_compatible_bridge(graph, config, progress_callback)
 
+    _stamp_external_baseline_metadata(
+        graph,
+        execution_mode="upstream",
+        adapter_status=ADAPTER_STATUS_EXACT_UPSTREAM,
+        proxy_fallback=False,
+        preserved_stages=[
+            "grounded_idea_generation",
+            "experiment_plan_generation",
+            "tournament_ranking",
+        ],
+    )
     repo_root = _require_path(config.get("repo_path"), label="AI-Researcher repo_path")
     runner_root = repo_root / "ai_researcher"
     if not runner_root.exists():
@@ -639,6 +679,17 @@ def _run_scipip(
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
 ) -> FinalProposal:
+    _stamp_external_baseline_metadata(
+        graph,
+        execution_mode="upstream-generator",
+        adapter_status=ADAPTER_STATUS_PAPER_FAITHFUL,
+        proxy_fallback=False,
+        preserved_stages=[
+            "background_conditioned_generation",
+            "retrieval_or_inspiration",
+            "idea_filtering_or_expansion",
+        ],
+    )
     repo_root = _require_path(config.get("repo_path"), label="SciPIP repo_path")
     generator_path = repo_root / "src" / "generator.py"
     if not generator_path.exists():
@@ -722,6 +773,16 @@ def _run_virsci(
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
 ) -> FinalProposal:
+    _stamp_external_baseline_metadata(
+        graph,
+        execution_mode="upstream-multi-agent",
+        adapter_status=ADAPTER_STATUS_EXCLUDED,
+        proxy_fallback=False,
+        preserved_stages=[
+            "multi_agent_discussion",
+            "team_synthesis",
+        ],
+    )
     if _clean_text(graph.metadata.get("benchmark")):
         raise RuntimeError(
             "The upstream Virtual-Scientists repository does not expose a fixed-topic benchmark entrypoint, "

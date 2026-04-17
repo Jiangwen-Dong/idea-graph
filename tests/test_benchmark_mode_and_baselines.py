@@ -32,6 +32,7 @@ from idea_graph.baselines import (
     run_baseline_experiment,
 )
 from idea_graph.external_baselines import load_external_baseline_config
+from idea_graph.external_baselines import _run_virsci
 from idea_graph.instances import ExperimentInstance
 from idea_graph.literature_grounding import build_literature_grounding
 from idea_graph.models import FinalProposal, IdeaGraph
@@ -564,8 +565,34 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(graph.final_proposal.title, "Benchmark-Faithful 3D Language Field Modeling")
         self.assertEqual(graph.metadata["baseline_name"], "ai-researcher")
         self.assertEqual(graph.metadata["external_baseline_execution_mode"], "openai-compatible-bridge")
+        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful-adapter")
+        self.assertFalse(graph.metadata.get("external_baseline_proxy_fallback", True))
         self.assertEqual(graph.metadata["stop_reason"], "baseline_ai-researcher_complete")
         self.assertEqual(graph.metadata["ai_researcher_proxy_candidate_count"], 2)
+
+    def test_virsci_benchmark_mode_records_no_go_metadata_before_raising(self) -> None:
+        instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="virsci",
+            io_mode="auto",
+        )
+        graph = IdeaGraph(
+            topic=instance.topic,
+            literature=list(instance.literature),
+            metadata=dict(instance.metadata),
+        )
+
+        with self.assertRaises(RuntimeError) as context:
+            _run_virsci(
+                graph,
+                {"enabled": True, "repo_path": "C:/missing/Virtual-Scientists"},
+                progress_callback=None,
+            )
+
+        self.assertIn("fixed-topic benchmark", str(context.exception).lower())
+        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "upstream-multi-agent")
+        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "exclude-until-fixed-topic-adapter")
+        self.assertFalse(graph.metadata.get("external_baseline_proxy_fallback", True))
 
     def test_ai_researcher_external_bridge_requires_openai_compatible_settings(self) -> None:
         instance = attach_baseline_metadata(

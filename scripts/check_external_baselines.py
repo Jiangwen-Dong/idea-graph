@@ -12,6 +12,20 @@ def _clean(value: Any) -> str:
     return " ".join(str(value).split()).strip()
 
 
+def _resolve_path(path_value: Any, *, base_dir: Path) -> Path:
+    raw = _clean(path_value)
+    if not raw:
+        return Path(".")
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    for ancestor in (base_dir, *base_dir.parents):
+        candidate = (ancestor / path).resolve()
+        if candidate.exists():
+            return candidate
+    return (base_dir / path).resolve()
+
+
 def _check_file(path: Path, issues: list[str], label: str) -> bool:
     if path.exists():
         return True
@@ -19,10 +33,10 @@ def _check_file(path: Path, issues: list[str], label: str) -> bool:
     return False
 
 
-def _ai_researcher_status(entry: dict[str, Any]) -> dict[str, Any]:
+def _ai_researcher_status(entry: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
     issues: list[str] = []
     mode = _clean(entry.get("execution_mode")).lower() or "upstream"
-    repo = Path(_clean(entry.get("repo_path")) or ".")
+    repo = _resolve_path(entry.get("repo_path"), base_dir=base_dir)
     ready = repo.exists()
     if not ready:
         issues.append(f"Missing AI-Researcher repo_path: {repo}")
@@ -44,15 +58,15 @@ def _ai_researcher_status(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _scipip_status(entry: dict[str, Any]) -> dict[str, Any]:
+def _scipip_status(entry: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
     issues: list[str] = []
-    repo = Path(_clean(entry.get("repo_path")) or ".")
+    repo = _resolve_path(entry.get("repo_path"), base_dir=base_dir)
     ready = repo.exists()
     if not ready:
         issues.append(f"Missing SciPIP repo_path: {repo}")
     if ready:
         ready = _check_file(repo / "src" / "generator.py", issues, "SciPIP generator.py") and ready
-    config_path = Path(_clean(entry.get("config_path")) or str(repo / "configs" / "datasets.yaml"))
+    config_path = _resolve_path(entry.get("config_path") or (repo / "configs" / "datasets.yaml"), base_dir=base_dir)
     if ready:
         ready = _check_file(config_path, issues, "SciPIP config_path") and ready
     return {
@@ -65,9 +79,9 @@ def _scipip_status(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _virsci_status(entry: dict[str, Any]) -> dict[str, Any]:
+def _virsci_status(entry: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
     issues: list[str] = []
-    repo = Path(_clean(entry.get("repo_path")) or ".")
+    repo = _resolve_path(entry.get("repo_path"), base_dir=base_dir)
     ready = repo.exists()
     if not ready:
         issues.append(f"Missing VirSci repo_path: {repo}")
@@ -88,15 +102,17 @@ def check_external_baseline_config(config_path: Path) -> dict[str, Any]:
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"{config_path} must contain a JSON object.")
+    resolved_config_path = config_path.resolve()
+    base_dir = resolved_config_path.parent
     baselines: list[dict[str, Any]] = []
     if isinstance(payload.get("ai-researcher"), dict):
-        baselines.append(_ai_researcher_status(payload["ai-researcher"]))
+        baselines.append(_ai_researcher_status(payload["ai-researcher"], base_dir=base_dir))
     if isinstance(payload.get("scipip"), dict):
-        baselines.append(_scipip_status(payload["scipip"]))
+        baselines.append(_scipip_status(payload["scipip"], base_dir=base_dir))
     if isinstance(payload.get("virsci"), dict):
-        baselines.append(_virsci_status(payload["virsci"]))
+        baselines.append(_virsci_status(payload["virsci"], base_dir=base_dir))
     return {
-        "config_path": str(config_path),
+        "config_path": str(resolved_config_path),
         "baselines": baselines,
         "ready_baselines": [row["baseline"] for row in baselines if row["enabled"] and row["ready"]],
     }
