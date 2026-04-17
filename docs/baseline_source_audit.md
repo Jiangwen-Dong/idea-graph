@@ -16,8 +16,8 @@ adapter.
 | `direct` | Controlled one-pass generation baseline | Not an external paper baseline | Implemented locally | Native benchmark protocol | Headline lower-bound control |
 | `self-refine` | Self-Refine: Iterative Refinement with Self-Feedback | `https://github.com/madaan/self-refine` | Not cloned; remote HEAD verified as `9a206d4` | Local paper-faithful reproduction of generate-feedback-refine loop | Headline controlled iterative baseline |
 | `ai-researcher` | Can LLMs Generate Novel Research Ideas? / AI-Researcher | `https://github.com/NoviScl/AI-Researcher` | `.tmp-baselines/AI-Researcher`, HEAD `e5dd05a` | Paper-faithful adapter or exact upstream path depending on provider/config | Headline if adapter status is disclosed |
-| `scipip` | SciPIP: An LLM-based Scientific Paper Idea Proposer | `https://github.com/cheerss/SciPIP` | `.tmp-baselines/SciPIP`, HEAD `a0a927a` | Upstream layout present; OpenAI-compatible bridge now implemented for benchmark packets | B0 passed; B1 pending |
-| `virsci` | Many Heads Are Better Than One / VirSci | `https://github.com/open-sciencelab/Virtual-Scientists` | `.tmp-baselines/Virtual-Scientists`, HEAD `07097fd` | Exact upstream remains benchmark-incompatible, but a fixed-topic bridge now exists | B0 passed; B1 pending |
+| `scipip` | SciPIP: An LLM-based Scientific Paper Idea Proposer | `https://github.com/cheerss/SciPIP` | `.tmp-baselines/SciPIP`, HEAD `a0a927a` | Upstream layout present; OpenAI-compatible bridge now implemented for benchmark packets | B1 passed; headline candidate with disclosure |
+| `virsci` | Many Heads Are Better Than One / VirSci | `https://github.com/open-sciencelab/Virtual-Scientists` | `.tmp-baselines/Virtual-Scientists`, HEAD `07097fd` | Exact upstream remains benchmark-incompatible, but a fixed-topic bridge now exists | B1 passed; appendix-only for now |
 | `ai-scientist` | The AI Scientist | `https://github.com/SakanaAI/AI-Scientist` | Not cloned; remote HEAD verified as `1de1dbc` | Full autonomous experiment/paper loop, not same idea-only task | Future supplementary only |
 
 ## Baseline-Specific Notes
@@ -80,7 +80,11 @@ Current gate:
 - a B1 smoke passes on the same paper-eval slice as the other baselines.
 
 Current status: bridge B0 passed on `AI_Idea_Bench_2025:13` and
-`liveideabench:0`; B1 is still pending.
+`liveideabench:0`, and bridge B1 passed on the 8-case slice
+`AI_Idea_Bench_2025:13,15,18,21` plus `liveideabench:0,23,47,70`. Mean overall
+score was `4.63`, mean benchmark alignment was `2.25`, and mean usage was about
+`2` calls / `3.3k` tokens per case. This is strong enough to keep SciPIP on the
+headline-candidate list with adapter disclosure.
 
 ### VirSci
 
@@ -99,7 +103,12 @@ headline baseline for our benchmark unless its native assets and entrypoints are
 used directly.
 
 Current status: bridge B0 passed on `AI_Idea_Bench_2025:13` and
-`liveideabench:0`; B1 is still pending.
+`liveideabench:0`, and bridge B1 passed on the 8-case slice
+`AI_Idea_Bench_2025:13,15,18,21` plus `liveideabench:0,23,47,70`. Mean overall
+score was `4.63`, mean benchmark alignment was `2.19`, and mean usage was about
+`4` calls / `6.2k` tokens per case. Because this bridge is the heaviest
+adaptation and does not clearly outperform the other external baselines, it is
+better kept appendix-only for now.
 
 ### AI Scientist
 

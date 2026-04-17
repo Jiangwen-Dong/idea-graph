@@ -61,6 +61,22 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         stop_when_mature=True,
         rationale="Exact literature-grounded AI-Researcher baseline under the shared benchmark-facing I/O contract.",
     ),
+    "scipip": ExperimentMethodPlan(
+        name="scipip",
+        baseline_name="scipip",
+        restarts=1,
+        max_rounds=1,
+        stop_when_mature=True,
+        rationale="Paper-faithful SciPIP bridge baseline under the shared benchmark-facing I/O contract.",
+    ),
+    "virsci": ExperimentMethodPlan(
+        name="virsci",
+        baseline_name="virsci",
+        restarts=1,
+        max_rounds=1,
+        stop_when_mature=True,
+        rationale="Paper-faithful fixed-topic VirSci bridge baseline under the shared benchmark-facing I/O contract.",
+    ),
     "scipip-proxy": ExperimentMethodPlan(
         name="scipip-proxy",
         baseline_name="scipip-proxy",

@@ -94,6 +94,30 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertGreater(len(instance.metadata["benchmark_input_packet"]["reference_packet"]), 0)
         self.assertEqual(instance.literature, self._instance().literature)
 
+    def test_main_method_plan_includes_scipip_and_virsci_bridges(self) -> None:
+        self.assertIn("scipip", MAIN_METHOD_PLANS)
+        self.assertIn("virsci", MAIN_METHOD_PLANS)
+
+        scipip_instance = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=MAIN_METHOD_PLANS["scipip"],
+        )
+        virsci_instance = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=MAIN_METHOD_PLANS["virsci"],
+        )
+
+        self.assertEqual(scipip_instance.metadata["method_name"], "scipip")
+        self.assertEqual(scipip_instance.metadata["runner_baseline_name"], "scipip")
+        self.assertEqual(scipip_instance.metadata["baseline_name"], "scipip")
+        self.assertGreater(len(scipip_instance.metadata["benchmark_input_packet"]["reference_packet"]), 0)
+
+        self.assertEqual(virsci_instance.metadata["method_name"], "virsci")
+        self.assertEqual(virsci_instance.metadata["runner_baseline_name"], "virsci")
+        self.assertEqual(virsci_instance.metadata["baseline_name"], "virsci")
+        self.assertGreater(len(virsci_instance.metadata["benchmark_input_packet"]["reference_packet"]), 0)
+        self.assertEqual(virsci_instance.literature, self._instance().literature)
+
     def test_no_reference_grounding_plan_strips_reference_packet_and_grounding(self) -> None:
         instance = prepare_instance_for_method_plan(
             self._instance(),

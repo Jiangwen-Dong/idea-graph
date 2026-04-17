@@ -90,7 +90,7 @@ def summarize_graph_usage(graph) -> dict[str, int]:
     llm_call_count = 0
 
     metadata = graph.metadata if isinstance(graph.metadata, dict) else {}
-    for trace_key in ("baseline_traces", "agent_traces"):
+    for trace_key in ("baseline_traces", "agent_traces", "external_baseline_traces"):
         trace_items = metadata.get(trace_key, [])
         if not isinstance(trace_items, list):
             continue

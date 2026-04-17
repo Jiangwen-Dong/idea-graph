@@ -8,7 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.run_quality_batch import aggregate_rows, format_markdown_summary, overall_aggregate_rows
+from scripts.run_quality_batch import (
+    aggregate_rows,
+    format_markdown_summary,
+    overall_aggregate_rows,
+    summarize_graph_usage,
+)
 
 
 class RunQualityBatchTests(unittest.TestCase):
@@ -51,6 +56,43 @@ class RunQualityBatchTests(unittest.TestCase):
                 "action_count": 24,
             },
         ]
+
+    def test_summarize_graph_usage_counts_external_baseline_traces(self) -> None:
+        graph = type(
+            "Graph",
+            (),
+            {
+                "metadata": {
+                    "external_baseline_traces": [
+                        {
+                            "raw_response": {
+                                "usage": {
+                                    "prompt_tokens": 1000,
+                                    "completion_tokens": 200,
+                                    "total_tokens": 1200,
+                                }
+                            }
+                        },
+                        {
+                            "raw_response": {
+                                "usage": {
+                                    "prompt_tokens": 1500,
+                                    "completion_tokens": 300,
+                                    "total_tokens": 1800,
+                                }
+                            }
+                        },
+                    ]
+                }
+            },
+        )()
+
+        usage = summarize_graph_usage(graph)
+
+        self.assertEqual(usage["llm_call_count"], 2)
+        self.assertEqual(usage["prompt_tokens"], 2500)
+        self.assertEqual(usage["completion_tokens"], 500)
+        self.assertEqual(usage["total_tokens"], 3000)
 
     def test_aggregate_rows_tracks_rounds_actions_and_protocols(self) -> None:
         rows = self._sample_rows()
