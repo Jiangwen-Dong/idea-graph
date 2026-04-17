@@ -453,14 +453,18 @@ class RelationGraphRuntimeSelectorTests(unittest.TestCase):
         role_unknown_id = self.vocabularies.role_to_id["unknown"]
         edge_unknown_id = self.vocabularies.edge_type_to_id["unknown"]
         kind_unknown_id = self.vocabularies.candidate_kind_to_id["unknown"]
-        self.assertTrue(
-            torch.allclose(bundle.model.node_type_embed.weight[node_unknown_id], torch.zeros(16))
+        zero_vector = torch.zeros(
+            16,
+            device=bundle.model.node_type_embed.weight.device,
         )
         self.assertTrue(
-            torch.allclose(bundle.model.role_embed.weight[role_unknown_id], torch.zeros(16))
+            torch.allclose(bundle.model.node_type_embed.weight[node_unknown_id], zero_vector)
         )
         self.assertTrue(
-            torch.allclose(bundle.model.candidate_kind_embed.weight[kind_unknown_id], torch.zeros(16))
+            torch.allclose(bundle.model.role_embed.weight[role_unknown_id], zero_vector)
+        )
+        self.assertTrue(
+            torch.allclose(bundle.model.candidate_kind_embed.weight[kind_unknown_id], zero_vector)
         )
         for layer in bundle.model.layers:
             self.assertTrue(
