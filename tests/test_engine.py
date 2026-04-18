@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import torch
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -682,6 +684,69 @@ class EngineTests(unittest.TestCase):
         self.assertIn("state_snapshot", first_row)
         self.assertEqual(first_row["commit_supervision"]["source"], "maturity_snapshot")
         self.assertIn("label", first_row["commit_supervision"])
+
+    def test_parallel_runtime_stops_early_on_two_head_commit_signal(self) -> None:
+        class FreezeBackend:
+            name = "freeze-backend"
+
+            def generate_seed(self, graph, role):
+                raise RuntimeError("not used")
+
+            def choose_action(self, graph, round_name, role):
+                branch_id = next(branch.id for branch in graph.branches.values() if branch.role == role)
+                return ActionDecision(
+                    kind="freeze_branch",
+                    target_ids=[],
+                    payload={"branch_id": branch_id},
+                    rationale="freeze",
+                )
+
+            def synthesize_final_proposal(self, graph, subgraph):
+                raise RuntimeError("not used")
+
+        class TwoHeadRuntimeStub:
+            def build_runtime_batch(self, *, graph, candidate_specs, use_commit):
+                self.last_candidate_specs = [dict(spec) for spec in candidate_specs]
+                return SimpleNamespace(
+                    batch=object(),
+                    fallback_row_mask=torch.zeros(len(self.last_candidate_specs), dtype=torch.bool),
+                    diagnostics=(),
+                )
+
+            def runtime_token_status(self, runtime_batch):
+                return {"ok": True}
+
+            def score_runtime_batch(self, batch):
+                return [0.0 for _spec in self.last_candidate_specs]
+
+            def score_commit_graph(self, graph, *, snapshot=None):
+                return 0.95
+
+        graph = run_experiment(
+            topic="graph-based scientific ideation",
+            literature=["paper a", "paper b", "paper c", "paper d"],
+            collaboration_backend=FreezeBackend(),
+            runtime_controller=TwoHeadRuntimeStub(),
+            runtime_controller_metadata={
+                "kind": "relation_graph_two_head_critic",
+                "model_dir": "memory://stub-bundle",
+                "use_commit": True,
+                "tau_override": 0.05,
+                "config": RelationGraphRuntimeConfig(
+                    tau_override=0.05,
+                    gamma_commit=0.80,
+                    min_commit_round=1,
+                    use_commit=True,
+                ),
+            },
+            metadata={"runtime_protocol": "parallel_graph_v2"},
+            max_rounds=3,
+            stop_when_mature=True,
+        )
+
+        self.assertEqual(graph.metadata.get("executed_round_count"), 1)
+        self.assertTrue(graph.metadata.get("stopped_early"))
+        self.assertEqual(graph.metadata.get("stop_reason"), "commit_at_Round1")
 
     def test_run_experiment_records_default_runtime_protocol(self) -> None:
         graph = run_experiment(

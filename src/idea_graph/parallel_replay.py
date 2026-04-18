@@ -280,4 +280,7 @@ def build_post_round_commit_row(
             getattr(commit_check, "unresolved_contradiction_ratio", 0.0)
         ),
         "utility": float(getattr(commit_check, "utility", 0.0)),
+        "controller_kind": str(getattr(commit_check, "controller_kind", "") or ""),
+        "commit_probability": getattr(commit_check, "commit_probability", None),
+        "commit_threshold": getattr(commit_check, "commit_threshold", None),
     }

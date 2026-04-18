@@ -603,6 +603,8 @@ def _maybe_apply_low_signal_kind_swap_guard(
     selected_kind = str(selected_row.get("kind", "")).strip()
     if not heuristic_kind or not selected_kind or heuristic_kind == selected_kind:
         return policy_decision
+    if selected_kind == "skip":
+        return policy_decision
 
     heuristic_gain = _candidate_float(heuristic_row, "predicted_gain")
     selected_gain = _candidate_float(selected_row, "predicted_gain")

@@ -15,6 +15,7 @@ from .relation_graph_runtime_critic import (
     RelationGraphRuntimeConfig,
     load_relation_graph_runtime_bundle,
 )
+from .relation_graph_two_head_runtime_critic import load_relation_graph_two_head_runtime_bundle
 from .runtime_critic import TextCriticRuntimeConfig, load_pickled_text_critic_model
 
 
@@ -42,6 +43,11 @@ RELATION_GRAPH_CRITIC_MODEL_RELATIVE_DIR = (
     Path("outputs")
     / "graph_critic_models"
     / "development_pool_v3_relation_graph_sanitized_v1"
+)
+RELATION_GRAPH_TWO_HEAD_MODEL_RELATIVE_DIR = (
+    Path("outputs")
+    / "critic_models"
+    / "parallel_v2_twohead_repaired_boundary_st_full_e8_20260418"
 )
 
 
@@ -84,6 +90,10 @@ def _default_relation_graph_runtime_model_dir() -> Path:
     return (_default_graph_critic_models_root() / RELATION_GRAPH_CRITIC_MODEL_RELATIVE_DIR).resolve()
 
 
+def _default_relation_graph_two_head_runtime_model_dir() -> Path:
+    return (_default_graph_critic_models_root() / RELATION_GRAPH_TWO_HEAD_MODEL_RELATIVE_DIR).resolve()
+
+
 DEFAULT_TEXT_CRITIC_MODEL_PATH = _default_text_critic_model_path()
 
 
@@ -124,6 +134,14 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         description="Evolving Idea Graph multi-agent collaboration with a relation-graph runtime critic as a conservative edit reranker.",
         prompt_style="ours",
         runtime_controller="relation_graph_critic_rerank",
+    ),
+    "ours-eig-critic-graph-twohead": BaselineSpec(
+        name="ours-eig-critic-graph-twohead",
+        display_name="Ours (EIG + Two-Head Graph Critic)",
+        strategy="evolving_graph",
+        description="Parallel EIG with a shared-encoder two-head graph critic for edit selection and post-round commit control.",
+        prompt_style="ours",
+        runtime_controller="relation_graph_two_head_critic",
     ),
     "direct": BaselineSpec(
         name="direct",
@@ -261,6 +279,14 @@ def attach_baseline_metadata(
         metadata["runtime_controller_use_commit"] = False
         metadata["runtime_controller_tau_override"] = 0.05
         metadata["runtime_controller_model_dir"] = str(_default_relation_graph_runtime_model_dir())
+    elif baseline.runtime_controller == "relation_graph_two_head_critic":
+        metadata["runtime_controller_enabled"] = True
+        metadata["runtime_controller_kind"] = "relation_graph_two_head_critic"
+        metadata["runtime_controller_use_commit"] = True
+        metadata["runtime_controller_tau_override"] = 0.05
+        metadata["runtime_controller_gamma_commit"] = 0.60
+        metadata["runtime_controller_min_commit_round"] = 2
+        metadata["runtime_controller_model_dir"] = str(_default_relation_graph_two_head_runtime_model_dir())
     return instance.__class__(
         name=instance.name,
         topic=instance.topic,
@@ -1697,6 +1723,44 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
         )
         controller_metadata = {
             "kind": "relation_graph_critic_rerank",
+            "model_dir": str(model_dir.resolve()),
+            "model_path": str(model_dir.resolve()),
+            "use_commit": bool(config.use_commit),
+            "tau_override": float(config.tau_override),
+        }
+        graph.metadata["runtime_controller_loaded"] = controller_metadata
+        return runtime_bundle, {"config": config, **controller_metadata}
+
+    if runtime_kind == "relation_graph_two_head_critic":
+        model_dir = Path(
+            str(
+                graph.metadata.get("runtime_controller_model_dir")
+                or _default_relation_graph_two_head_runtime_model_dir()
+            )
+        )
+        if not model_dir.exists():
+            graph.metadata["runtime_controller_error"] = f"Missing runtime controller model directory at {model_dir}."
+            return None, None
+
+        runtime_bundle = load_relation_graph_two_head_runtime_bundle(model_dir)
+        config = RelationGraphRuntimeConfig(
+            tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
+            tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
+            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+            use_commit=bool(graph.metadata.get("runtime_controller_use_commit", True)),
+            guard_support_threshold=float(
+                graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
+            ),
+            guard_support_gain_floor=float(
+                graph.metadata.get("runtime_controller_guard_support_gain_floor", 0.10)
+            ),
+            guard_requires_contradiction_progress=bool(
+                graph.metadata.get("runtime_controller_guard_requires_contradiction_progress", False)
+            ),
+        )
+        controller_metadata = {
+            "kind": "relation_graph_two_head_critic",
             "model_dir": str(model_dir.resolve()),
             "model_path": str(model_dir.resolve()),
             "use_commit": bool(config.use_commit),

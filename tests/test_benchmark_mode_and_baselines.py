@@ -256,6 +256,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIn("virsci", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-text", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-graph", BASELINE_SPECS)
+        self.assertIn("ours-eig-critic-graph-twohead", BASELINE_SPECS)
         self.assertEqual(BASELINE_SPECS["ai-researcher"].strategy, "external")
         self.assertIn("ai-researcher-proxy", BASELINE_SPECS)
         self.assertIn("scipip-proxy", BASELINE_SPECS)
@@ -265,6 +266,10 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(
             BASELINE_SPECS["ours-eig-critic-graph"].runtime_controller,
             "relation_graph_critic_rerank",
+        )
+        self.assertEqual(
+            BASELINE_SPECS["ours-eig-critic-graph-twohead"].runtime_controller,
+            "relation_graph_two_head_critic",
         )
 
     def test_attach_baseline_metadata_enables_relation_graph_runtime_defaults(self) -> None:
@@ -279,6 +284,21 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertFalse(instance.metadata["runtime_controller_use_commit"])
         self.assertIn(
             "development_pool_v3_relation_graph_sanitized_v1",
+            instance.metadata["runtime_controller_model_dir"],
+        )
+
+    def test_attach_baseline_metadata_enables_two_head_relation_graph_runtime_defaults(self) -> None:
+        instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-graph-twohead",
+            io_mode="auto",
+        )
+
+        self.assertEqual(instance.metadata["baseline_runtime_controller"], "relation_graph_two_head_critic")
+        self.assertEqual(instance.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
+        self.assertTrue(instance.metadata["runtime_controller_use_commit"])
+        self.assertIn(
+            "parallel_v2_twohead_repaired_boundary_st_full_e8_20260418",
             instance.metadata["runtime_controller_model_dir"],
         )
 
@@ -374,6 +394,34 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         assert runtime_metadata is not None
         self.assertEqual(runtime_metadata["kind"], "relation_graph_critic_rerank")
         self.assertFalse(runtime_metadata["use_commit"])
+
+    def test_runtime_builder_loads_two_head_relation_graph_runtime_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_dir = Path(tmp_dir) / "two-head-runtime-model"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            sentinel_bundle = object()
+            graph = IdeaGraph(
+                topic="runtime test",
+                literature=[],
+                metadata={
+                    "runtime_controller_kind": "relation_graph_two_head_critic",
+                    "runtime_controller_model_dir": str(model_dir),
+                },
+            )
+            baseline = BASELINE_SPECS["ours-eig-critic-graph-twohead"]
+
+            with patch(
+                "idea_graph.baselines.load_relation_graph_two_head_runtime_bundle",
+                return_value=sentinel_bundle,
+            ) as mocked_loader:
+                runtime_controller, runtime_metadata = _maybe_build_runtime_controller(graph, baseline)
+
+        mocked_loader.assert_called_once_with(model_dir)
+        self.assertIs(runtime_controller, sentinel_bundle)
+        self.assertIsNotNone(runtime_metadata)
+        assert runtime_metadata is not None
+        self.assertEqual(runtime_metadata["kind"], "relation_graph_two_head_critic")
+        self.assertTrue(runtime_metadata["use_commit"])
 
     def test_controller_baseline_fails_closed_when_runtime_bundle_missing(self) -> None:
         instance = attach_baseline_metadata(

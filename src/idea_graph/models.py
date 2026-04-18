@@ -94,6 +94,9 @@ class ParallelCommitCheckRecord:
     support_coverage: float = 0.0
     unresolved_contradiction_ratio: float = 0.0
     utility: float = 0.0
+    controller_kind: str = ""
+    commit_probability: float | None = None
+    commit_threshold: float | None = None
 
 
 @dataclass(frozen=True)

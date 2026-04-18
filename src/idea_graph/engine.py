@@ -3384,7 +3384,7 @@ def run_experiment(
             )
             snapshot = maturity_snapshot(graph)
             graph.round_summaries.append((round_name, snapshot))
-            if snapshot.is_mature and graph.matured_at_round is None:
+            if result.post_round_commit.should_commit and graph.matured_at_round is None:
                 graph.matured_at_round = round_name
                 graph.metadata["maturity_stop_candidate"] = round_name
             emit_progress(
@@ -3405,6 +3405,7 @@ def run_experiment(
                     "selected_role_decision_count": len(result.selected_role_decisions),
                     "materialized_action_count": len(result.materialized_graph_actions),
                     "post_round_commit": bool(result.post_round_commit.should_commit),
+                    "post_round_commit_source": result.post_round_commit.source,
                     "support_coverage": snapshot.support_coverage,
                     "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
                     "utility": snapshot.utility,
@@ -3412,15 +3413,20 @@ def run_experiment(
                     "is_mature": snapshot.is_mature,
                 },
             )
-            if stop_when_mature and snapshot.is_mature:
+            if stop_when_mature and result.post_round_commit.should_commit:
                 graph.metadata["stopped_early"] = True
-                graph.metadata["stop_reason"] = f"mature_at_{round_name}"
+                stop_prefix = (
+                    "commit"
+                    if str(result.post_round_commit.source).strip() == "runtime_controller_commit"
+                    else "mature"
+                )
+                graph.metadata["stop_reason"] = f"{stop_prefix}_at_{round_name}"
                 emit_progress(
                     graph,
                     progress_callback,
                     stage="maturity_stop",
-                    message=f"{round_name} reached maturity, stopping early before additional rounds.",
-                    details={"round": round_name},
+                    message=f"{round_name} reached the post-round stop condition, stopping early before additional rounds.",
+                    details={"round": round_name, "source": result.post_round_commit.source},
                 )
                 break
             continue

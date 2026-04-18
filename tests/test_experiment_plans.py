@@ -80,6 +80,21 @@ class ExperimentPlanTests(unittest.TestCase):
             "eig_parallel_v2_heuristic",
         )
 
+    def test_main_method_plan_includes_two_head_graph_controller(self) -> None:
+        self.assertIn("ours-eig-critic-graph-twohead", MAIN_METHOD_PLANS)
+
+        instance = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=MAIN_METHOD_PLANS["ours-eig-critic-graph-twohead"],
+        )
+
+        self.assertEqual(instance.metadata["method_name"], "ours-eig-critic-graph-twohead")
+        self.assertEqual(instance.metadata["runner_baseline_name"], "ours-eig-critic-graph-twohead")
+        self.assertEqual(instance.metadata["baseline_name"], "ours-eig-critic-graph-twohead")
+        self.assertEqual(instance.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(instance.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
+        self.assertTrue(instance.metadata["runtime_controller_use_commit"])
+
     def test_main_method_plan_includes_exact_ai_researcher(self) -> None:
         self.assertIn("ai-researcher", MAIN_METHOD_PLANS)
 

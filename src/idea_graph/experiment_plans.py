@@ -105,11 +105,24 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
             "idea_graph_protocol_variant": "eig_parallel_v2_heuristic",
         },
     ),
+    "ours-eig-critic-graph-twohead": ExperimentMethodPlan(
+        name="ours-eig-critic-graph-twohead",
+        baseline_name="ours-eig-critic-graph-twohead",
+        restarts=1,
+        max_rounds=5,
+        stop_when_mature=True,
+        runtime_protocol="parallel_graph_v2",
+        rationale="Parallel EIG with a shared-encoder two-head graph critic for role-local edit control and post-round commit prediction.",
+        metadata_overrides={
+            "idea_graph_protocol_variant": "eig_parallel_v2_twohead_critic",
+        },
+    ),
 }
 
 
 ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
     "ours-eig": MAIN_METHOD_PLANS["ours-eig"],
+    "ours-eig-critic-graph-twohead": MAIN_METHOD_PLANS["ours-eig-critic-graph-twohead"],
     "ours-early-consensus": ExperimentMethodPlan(
         name="ours-early-consensus",
         baseline_name="ours-eig",
