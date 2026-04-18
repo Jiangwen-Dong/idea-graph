@@ -75,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write the planned run manifest without launching generation.",
     )
     parser.add_argument(
+        "--paper-baseline-name-override",
+        default=None,
+        help="Optional manifest label used instead of the default paper_baseline_name.",
+    )
+    parser.add_argument(
         "--runtime-controller-calibration-path",
         type=Path,
         default=None,
@@ -92,11 +97,17 @@ def _jsonl_lines(rows: list[dict[str, object]]) -> str:
     return "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
 
 
-def _planned_run_row(row: dict[str, object], *, baseline_name: str) -> dict[str, object]:
+def _planned_run_row(
+    row: dict[str, object],
+    *,
+    baseline_name: str,
+    paper_baseline_name_override: str | None,
+) -> dict[str, object]:
     run_row = build_run_manifest_row(
         row,
         baseline_name=baseline_name,
         run_dir="",
+        paper_baseline_name_override=paper_baseline_name_override,
     )
     run_row["dry_run"] = True
     return run_row
@@ -113,7 +124,13 @@ def main() -> None:
     for row in packet_rows:
         for baseline_name in args.baselines:
             if args.dry_run:
-                run_manifest_rows.append(_planned_run_row(row, baseline_name=baseline_name))
+                run_manifest_rows.append(
+                    _planned_run_row(
+                        row,
+                        baseline_name=baseline_name,
+                        paper_baseline_name_override=args.paper_baseline_name_override,
+                    )
+                )
             else:
                 run_manifest_rows.append(
                     execute_packet_run(
@@ -124,6 +141,7 @@ def main() -> None:
                         max_rounds=args.max_rounds,
                         native_eval=args.native_eval,
                         llm_config_path=args.llm_config,
+                        paper_baseline_name_override=args.paper_baseline_name_override,
                         runtime_controller_calibration_path=args.runtime_controller_calibration_path,
                         disable_runtime_calibration=args.disable_runtime_calibration,
                     )

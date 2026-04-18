@@ -184,6 +184,7 @@ def execute_packet_run(
     max_rounds: int,
     native_eval: bool,
     llm_config_path: str | Path | None,
+    paper_baseline_name_override: str | None = None,
     runtime_controller_calibration_path: str | Path | None = None,
     disable_runtime_calibration: bool = False,
 ) -> dict[str, Any]:
@@ -238,6 +239,7 @@ def execute_packet_run(
         row,
         baseline_name=baseline_name,
         run_dir=run_dir,
+        paper_baseline_name_override=paper_baseline_name_override,
     )
 
 
@@ -246,7 +248,12 @@ def build_run_manifest_row(
     *,
     baseline_name: str,
     run_dir: str | Path,
+    paper_baseline_name_override: str | None = None,
 ) -> dict[str, Any]:
+    paper_baseline_name = _normalize_str(
+        paper_baseline_name_override,
+        default=_paper_baseline_name(baseline_name),
+    )
     return {
         "group_id": _normalize_str(row.get("group_id")),
         "benchmark": _normalize_str(row.get("benchmark")),
@@ -254,7 +261,7 @@ def build_run_manifest_row(
         "partition_role": _normalize_str(row.get("partition_role")),
         "source_split": _normalize_str(row.get("source_split")),
         "baseline_name": canonical_baseline_name(baseline_name),
-        "paper_baseline_name": _paper_baseline_name(baseline_name),
+        "paper_baseline_name": paper_baseline_name,
         "run_dir": str(Path(run_dir)),
         "benchmark_index": _normalize_int(row.get("benchmark_index")),
         "row_index": _normalize_int(row.get("row_index")),
