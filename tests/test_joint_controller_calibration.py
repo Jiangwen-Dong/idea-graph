@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from idea_graph.baselines import BASELINE_SPECS, _maybe_build_runtime_controller
+from idea_graph.fs_utils import _windows_safe_path, ensure_dir, write_text_file
 from idea_graph.joint_controller_calibration import (
     JointControllerCalibration,
     JointControllerCalibrationError,
@@ -543,6 +545,107 @@ class JointControllerCalibrationTests(unittest.TestCase):
             self.assertEqual(payload["gamma_commit"], 0.82)
             self.assertTrue((prepared_dir / "edit_examples.jsonl").exists())
             self.assertTrue((prepared_dir / "commit_examples.jsonl").exists())
+
+    def test_build_joint_calibration_examples_reads_long_windows_run_paths(self) -> None:
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            root = Path(tmp_dir)
+            long_segment = "long-calibration-path-segment"
+            nested = root
+            while len(str(nested / "heuristic" / "summary.json")) < 285:
+                nested = nested / long_segment
+            heuristic_dir = nested / "heuristic"
+            critic_dir = nested / "critic"
+            ensure_dir(heuristic_dir)
+            ensure_dir(critic_dir)
+            write_text_file(
+                heuristic_dir / "summary.json",
+                json.dumps(
+                    {
+                        "benchmark_native_evaluation": {
+                            "summary": {"available_average_normalized_10": 5.0}
+                        }
+                    }
+                ),
+            )
+            write_text_file(
+                heuristic_dir / "graph.json",
+                json.dumps({"metadata": {"runtime_controller_log": []}}),
+            )
+            write_text_file(
+                critic_dir / "summary.json",
+                json.dumps(
+                    {
+                        "benchmark_native_evaluation": {
+                            "summary": {"available_average_normalized_10": 5.5}
+                        }
+                    }
+                ),
+            )
+            write_text_file(
+                critic_dir / "graph.json",
+                json.dumps(
+                    {
+                        "metadata": {
+                            "runtime_controller_log": [
+                                {
+                                    "round": "Round1",
+                                    "role": "MethodDesigner",
+                                    "selected_source": "critic",
+                                    "override_margin": 0.11,
+                                    "heuristic_candidate": {"candidate_id": "h", "kind": "skip"},
+                                    "selected_candidate": {"candidate_id": "c", "kind": "attach_evidence"},
+                                }
+                            ],
+                            "post_round_commit_rows": [
+                                {
+                                    "round_name": "Round1",
+                                    "commit_probability": 0.31,
+                                    "commit_supervision": {"available": True, "label": 0},
+                                },
+                                {
+                                    "round_name": "Round2",
+                                    "commit_probability": 0.81,
+                                    "commit_supervision": {"available": True, "label": 1},
+                                },
+                            ],
+                        }
+                    }
+                ),
+            )
+            run_manifest = root / "run_manifest.jsonl"
+            run_manifest.write_text(
+                json.dumps(
+                    {
+                        "group_id": "long-path",
+                        "baseline_name": "ours-eig",
+                        "run_dir": str(heuristic_dir),
+                        "instance_name": "long-instance",
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "group_id": "long-path",
+                        "baseline_name": "ours-eig-critic-graph-twohead",
+                        "run_dir": str(critic_dir),
+                        "instance_name": "long-instance",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            edit_examples, commit_examples = build_joint_calibration_examples_from_packet(
+                run_manifest_path=run_manifest,
+                heuristic_baseline="ours-eig",
+                critic_baseline="ours-eig-critic-graph-twohead",
+            )
+
+            self.assertEqual(len(edit_examples), 1)
+            self.assertEqual(len(commit_examples), 2)
+        finally:
+            shutil.rmtree(_windows_safe_path(tmp_dir), ignore_errors=True)
 
 
 if __name__ == "__main__":

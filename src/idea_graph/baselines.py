@@ -284,6 +284,8 @@ def attach_baseline_metadata(
     metadata["baseline_proxy"] = baseline.is_proxy
     metadata["baseline_proxy_target"] = baseline.proxy_target
     metadata["baseline_runtime_controller"] = baseline.runtime_controller
+    if baseline.strategy == "evolving_graph":
+        metadata["runtime_protocol"] = "parallel_graph_v2"
     for key in RUNTIME_CONTROLLER_METADATA_KEYS:
         metadata.pop(key, None)
 

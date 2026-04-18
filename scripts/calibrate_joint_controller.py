@@ -15,11 +15,12 @@ from idea_graph.joint_controller_calibration import (
     fit_joint_controller_calibration,
     write_joint_controller_calibration,
 )
+from idea_graph.fs_utils import read_text_file, write_text_file
 
 
 def _load_jsonl(path: str | Path) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    for line in read_text_file(path).splitlines():
         stripped = line.strip()
         if not stripped:
             continue
@@ -32,10 +33,9 @@ def _load_jsonl(path: str | Path) -> list[dict[str, object]]:
 
 def _write_jsonl(rows: list[dict[str, object]], path: str | Path) -> None:
     output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
+    write_text_file(
+        output_path,
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
-        encoding="utf-8",
     )
 
 

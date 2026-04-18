@@ -3,11 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from idea_graph.fs_utils import read_text_file, write_text_file
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(read_text_file(path))
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object.")
     return dict(payload)
@@ -15,7 +23,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in read_text_file(path).splitlines():
         stripped = line.strip()
         if not stripped:
             continue
@@ -110,10 +118,9 @@ def extract_edit_disagreements(
 
 
 def _write_jsonl(rows: list[dict[str, Any]], output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
+    write_text_file(
+        output_path,
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
-        encoding="utf-8",
     )
 
 

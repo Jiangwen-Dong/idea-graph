@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .fs_utils import read_text_file, write_text_file
+
 
 class JointControllerCalibrationError(ValueError):
     """Raised when frozen-dev controller calibration cannot be trusted."""
@@ -46,7 +48,7 @@ def _label(value: object) -> int:
 
 
 def _load_json_object(path: str | Path) -> dict[str, Any]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    payload = json.loads(read_text_file(path))
     if not isinstance(payload, dict):
         raise JointControllerCalibrationError(f"{path} must contain a JSON object.")
     return dict(payload)
@@ -54,7 +56,7 @@ def _load_json_object(path: str | Path) -> dict[str, Any]:
 
 def _load_jsonl_objects(path: str | Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for line_index, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+    for line_index, line in enumerate(read_text_file(path).splitlines(), start=1):
         stripped = line.strip()
         if not stripped:
             continue
@@ -345,7 +347,7 @@ def build_joint_calibration_examples_from_packet(
 
 
 def load_joint_controller_calibration(path: str | Path) -> JointControllerCalibration:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    payload = json.loads(read_text_file(path))
     if not isinstance(payload, dict):
         raise JointControllerCalibrationError("Calibration artifact must be a JSON object.")
     return JointControllerCalibration(
@@ -367,10 +369,9 @@ def write_joint_controller_calibration(
     path: str | Path,
 ) -> None:
     output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
+    write_text_file(
+        output_path,
         json.dumps(calibration.as_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
     )
 
 

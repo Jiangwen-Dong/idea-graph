@@ -301,6 +301,34 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             "parallel_v2_twohead_repaired_boundary_st_full_e8_20260418",
             instance.metadata["runtime_controller_model_dir"],
         )
+        self.assertEqual(instance.metadata["runtime_protocol"], "parallel_graph_v2")
+
+    def test_attach_baseline_metadata_uses_parallel_runtime_for_ours_eig_family(self) -> None:
+        eig_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig",
+            io_mode="auto",
+        )
+        text_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-text",
+            io_mode="auto",
+        )
+        graph_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-graph",
+            io_mode="auto",
+        )
+        twohead_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-graph-twohead",
+            io_mode="auto",
+        )
+
+        self.assertEqual(eig_instance.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(text_instance.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(graph_instance.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(twohead_instance.metadata["runtime_protocol"], "parallel_graph_v2")
 
     def test_attach_baseline_metadata_overwrites_stale_controller_fields_on_baseline_switch(self) -> None:
         text_instance = attach_baseline_metadata(
