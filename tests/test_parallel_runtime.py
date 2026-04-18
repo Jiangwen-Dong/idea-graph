@@ -149,6 +149,58 @@ def test_parallel_round_materializes_non_skip_actions_in_role_order() -> None:
     assert result.post_round_commit.round_name == "Round1"
 
 
+def test_parallel_runtime_logs_role_action_traces_for_usage_accounting() -> None:
+    class TraceBackend:
+        name = "trace-backend"
+
+        def generate_seed(self, graph, role):
+            raise RuntimeError("not used")
+
+        def choose_action(self, graph, round_name, role):
+            branch_id = next(branch.id for branch in graph.branches.values() if branch.role == role)
+            return ActionDecision(
+                kind="freeze_branch",
+                target_ids=[],
+                payload={"branch_id": branch_id},
+                rationale=f"{role} action",
+                trace={
+                    "raw_response": {
+                        "usage": {
+                            "prompt_tokens": 11,
+                            "completion_tokens": 7,
+                            "total_tokens": 18,
+                        }
+                    }
+                },
+            )
+
+        def synthesize_final_proposal(self, graph, subgraph):
+            raise RuntimeError("not used")
+
+    graph = IdeaGraph(topic="topic", literature=["paper a"])
+    build_seed_graphs(graph)
+    merge_seed_graphs(graph)
+
+    result = execute_parallel_role_round(
+        graph,
+        round_name="Round1",
+        collaboration_backend=TraceBackend(),
+        runtime_controller=None,
+        runtime_controller_metadata=None,
+        progress_callback=None,
+    )
+
+    traces = graph.metadata.get("agent_traces", [])
+    assert isinstance(traces, list)
+    round_action_traces = [trace for trace in traces if trace.get("stage") == "Round1_action"]
+    assert len(round_action_traces) == len(result.active_roles)
+    assert {trace.get("role") for trace in round_action_traces} == set(result.active_roles)
+    assert sum(
+        int(trace.get("raw_response", {}).get("usage", {}).get("total_tokens", 0))
+        for trace in round_action_traces
+    ) == 18 * len(result.active_roles)
+
+
 def test_parallel_runtime_uses_controller_for_role_local_edit_selection() -> None:
     class FreezeBackend:
         name = "freeze-backend"

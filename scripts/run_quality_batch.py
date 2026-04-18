@@ -4,8 +4,10 @@ import argparse
 import csv
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
 from pathlib import Path
+import re
 import statistics
 import sys
 from typing import Any
@@ -130,6 +132,47 @@ def mean_or_zero(values: list[float]) -> float:
     if not values:
         return 0.0
     return round(float(statistics.mean(values)), 3)
+
+
+def _slugify_batch_name(batch_name: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9._-]+", "-", str(batch_name).strip()).strip("-")
+    return text or "batch"
+
+
+def build_batch_dir(
+    output_dir: Path,
+    *,
+    timestamp: str,
+    batch_name: str,
+    max_full_path: int = 240,
+    reserved_filename: str = "overall_aggregate_rows.csv",
+) -> Path:
+    resolved_output_dir = output_dir.resolve(strict=False)
+    slug = _slugify_batch_name(batch_name)
+
+    def _candidate(name: str) -> Path:
+        return output_dir / f"{timestamp}-{name}"
+
+    def _projected_length(name: str) -> int:
+        return len(str(resolved_output_dir / f"{timestamp}-{name}" / reserved_filename))
+
+    if _projected_length(slug) <= max_full_path:
+        return _candidate(slug)
+
+    digest = hashlib.sha1(str(batch_name).encode("utf-8")).hexdigest()[:8]
+    candidate_name = f"{slug}-{digest}"
+    if _projected_length(candidate_name) <= max_full_path:
+        return _candidate(candidate_name)
+
+    min_length = len(digest)
+    while len(candidate_name) > min_length and _projected_length(candidate_name) > max_full_path:
+        candidate_name = candidate_name[: max(min_length, len(candidate_name) - 8)].rstrip("-")
+        if not candidate_name:
+            candidate_name = digest
+
+    if _projected_length(candidate_name) > max_full_path:
+        candidate_name = digest
+    return _candidate(candidate_name)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -517,7 +560,11 @@ def main() -> None:
         raise SystemExit(f"Unsupported method-plan name(s): {', '.join(missing)}")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    batch_dir = args.output_dir / f"{timestamp}-{args.batch_name}"
+    batch_dir = build_batch_dir(
+        args.output_dir,
+        timestamp=timestamp,
+        batch_name=args.batch_name,
+    )
     runs_root = batch_dir / "runs"
     runs_root.mkdir(parents=True, exist_ok=True)
 

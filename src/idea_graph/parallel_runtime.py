@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from .agent_backend import ActionDecision
+from .agent_backend import ActionDecision, append_agent_trace
 from .action_candidates import enumerate_edit_candidate_specs
 from .engine import (
     _record_runtime_controller_trace,
@@ -299,6 +299,13 @@ def execute_parallel_role_round(
             collaboration_backend,
             roles,
         )
+        for role, decision in raw_decisions:
+            append_agent_trace(
+                graph,
+                stage=f"{round_name}_action",
+                role=role,
+                trace=decision.trace,
+            )
         action_source = "parallel_llm"
         label_source = "parallel_runtime_logged_v1"
     raw_decisions, used_controller = _maybe_apply_runtime_controller(

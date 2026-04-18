@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.run_quality_batch import (
     aggregate_rows,
+    build_batch_dir,
     format_markdown_summary,
     overall_aggregate_rows,
     summarize_graph_usage,
@@ -94,6 +95,56 @@ class RunQualityBatchTests(unittest.TestCase):
         self.assertEqual(usage["completion_tokens"], 500)
         self.assertEqual(usage["total_tokens"], 3000)
 
+    def test_summarize_graph_usage_counts_parallel_round_action_traces(self) -> None:
+        graph = type(
+            "Graph",
+            (),
+            {
+                "metadata": {
+                    "agent_traces": [
+                        {
+                            "stage": "seed_generation",
+                            "role": "MechanismProposer",
+                            "raw_response": {
+                                "usage": {
+                                    "prompt_tokens": 100,
+                                    "completion_tokens": 20,
+                                    "total_tokens": 120,
+                                }
+                            },
+                        },
+                        {
+                            "stage": "Round1_action",
+                            "role": "MechanismProposer",
+                            "raw_response": {
+                                "usage": {
+                                    "prompt_tokens": 140,
+                                    "completion_tokens": 30,
+                                    "total_tokens": 170,
+                                }
+                            },
+                        },
+                    ],
+                    "final_synthesis_trace": {
+                        "raw_response": {
+                            "usage": {
+                                "prompt_tokens": 500,
+                                "completion_tokens": 80,
+                                "total_tokens": 580,
+                            }
+                        }
+                    },
+                }
+            },
+        )()
+
+        usage = summarize_graph_usage(graph)
+
+        self.assertEqual(usage["llm_call_count"], 3)
+        self.assertEqual(usage["prompt_tokens"], 740)
+        self.assertEqual(usage["completion_tokens"], 130)
+        self.assertEqual(usage["total_tokens"], 870)
+
     def test_aggregate_rows_tracks_rounds_actions_and_protocols(self) -> None:
         rows = self._sample_rows()
 
@@ -109,6 +160,18 @@ class RunQualityBatchTests(unittest.TestCase):
         self.assertEqual(overall[0]["mean_executed_round_count"], 4.5)
         self.assertEqual(overall[0]["mean_action_count"], 21.0)
         self.assertEqual(overall[0]["runtime_protocols"], ["parallel_graph_v2"])
+
+    def test_build_batch_dir_shortens_windows_unsafe_paths(self) -> None:
+        output_dir = ROOT / "outputs" / "controller_eval_packets" / "two_head_dev_a_matched_critic_only_20260418_fixed_usage"
+        batch_dir = build_batch_dir(
+            output_dir,
+            timestamp="20260418-160159",
+            batch_name="critic-twohead-dev-a-matched-8-fixed-usage",
+            max_full_path=240,
+        )
+
+        projected_output = batch_dir.resolve(strict=False) / "overall_aggregate_rows.csv"
+        self.assertLessEqual(len(str(projected_output)), 240)
 
     def test_format_markdown_summary_surfaces_parallel_protocol_and_affordability(self) -> None:
         rows = self._sample_rows()
