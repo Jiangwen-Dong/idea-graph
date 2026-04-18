@@ -117,6 +117,92 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         self.assertEqual(filtered[0]["row_index"], 163)
         self.assertEqual(filtered[0]["benchmark_keyword"], "galaxies")
 
+    def test_apply_runtime_controller_overrides_can_set_calibration_path(self) -> None:
+        from idea_graph.controller_eval_runtime import apply_runtime_controller_overrides
+        from idea_graph.instances import ExperimentInstance
+
+        instance = ExperimentInstance(
+            name="demo",
+            topic="topic",
+            literature=["paper"],
+            source_path="demo.json",
+            metadata={"runtime_controller_kind": "relation_graph_two_head_critic"},
+        )
+
+        updated = apply_runtime_controller_overrides(
+            instance,
+            runtime_controller_calibration_path=self.tmp_dir / "custom_calibration.json",
+            disable_runtime_calibration=False,
+        )
+
+        self.assertEqual(
+            updated.metadata["runtime_controller_calibration_path"],
+            str((self.tmp_dir / "custom_calibration.json").resolve()),
+        )
+        self.assertNotIn("runtime_controller_disable_calibration", updated.metadata)
+
+    def test_apply_runtime_controller_overrides_can_disable_calibration(self) -> None:
+        from idea_graph.controller_eval_runtime import apply_runtime_controller_overrides
+        from idea_graph.instances import ExperimentInstance
+
+        instance = ExperimentInstance(
+            name="demo",
+            topic="topic",
+            literature=["paper"],
+            source_path="demo.json",
+            metadata={
+                "runtime_controller_kind": "relation_graph_two_head_critic",
+                "runtime_controller_calibration_path": str(self.tmp_dir / "custom_calibration.json"),
+            },
+        )
+
+        updated = apply_runtime_controller_overrides(
+            instance,
+            runtime_controller_calibration_path=self.tmp_dir / "ignored.json",
+            disable_runtime_calibration=True,
+        )
+
+        self.assertTrue(updated.metadata["runtime_controller_disable_calibration"])
+        self.assertNotIn("runtime_controller_calibration_path", updated.metadata)
+
+    def test_apply_runtime_controller_overrides_resets_preapplied_calibration(self) -> None:
+        from idea_graph.controller_eval_runtime import apply_runtime_controller_overrides
+        from idea_graph.instances import ExperimentInstance
+
+        instance = ExperimentInstance(
+            name="demo",
+            topic="topic",
+            literature=["paper"],
+            source_path="demo.json",
+            metadata={
+                "runtime_controller_kind": "relation_graph_two_head_critic",
+                "runtime_controller_tau_override": 0.13,
+                "runtime_controller_tau_commit": 0.08,
+                "runtime_controller_gamma_commit": 0.74,
+                "runtime_controller_min_commit_round": 4,
+                "runtime_controller_guard_support_threshold": 0.75,
+                "runtime_controller_calibration_path": str(self.tmp_dir / "model-default.json"),
+                "runtime_controller_calibration_source": "model_dir_default",
+                "runtime_controller_calibration_version": "joint_controller_calibration_v1",
+            },
+        )
+
+        updated = apply_runtime_controller_overrides(
+            instance,
+            runtime_controller_calibration_path=None,
+            disable_runtime_calibration=True,
+        )
+
+        self.assertTrue(updated.metadata["runtime_controller_disable_calibration"])
+        self.assertEqual(updated.metadata["runtime_controller_tau_override"], 0.05)
+        self.assertEqual(updated.metadata["runtime_controller_tau_commit"], 0.08)
+        self.assertEqual(updated.metadata["runtime_controller_gamma_commit"], 0.60)
+        self.assertEqual(updated.metadata["runtime_controller_min_commit_round"], 2)
+        self.assertEqual(updated.metadata["runtime_controller_guard_support_threshold"], 0.66)
+        self.assertNotIn("runtime_controller_calibration_path", updated.metadata)
+        self.assertNotIn("runtime_controller_calibration_source", updated.metadata)
+        self.assertNotIn("runtime_controller_calibration_version", updated.metadata)
+
     def test_packet_row_to_benchmark_args_handles_aiib_and_liveideabench(self) -> None:
         from idea_graph.controller_eval_runtime import packet_row_to_benchmark_args
 

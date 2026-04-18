@@ -429,6 +429,34 @@ python scripts/calibrate_joint_controller.py `
   --source frozen_dev_joint_controller
 ```
 
+Status update on 2026-04-18:
+
+- The first 12-case `critic_uncalibrated` comparison was invalid for calibration judging because the packet runner still inherited the model-dir default artifact. The disable path has now been fixed with regression tests.
+- Focused verification after the fix:
+  - `python -m pytest tests/test_joint_controller_calibration.py tests/test_controller_eval_runner.py tests/test_benchmark_mode_and_baselines.py tests/test_parallel_runtime.py tests/test_relation_graph_two_head_runtime_critic.py -q`
+  - Result: `60 passed`
+- Clean refit packet:
+  - heuristic manifest: `C:\eig_p2v2_calib_dev12\heuristic_parallel\run_manifest.jsonl`
+  - raw critic manifest: `C:\eig_p2v2_calib_dev12_refit\critic_uncalibrated_raw\run_manifest.jsonl`
+  - calibrated critic manifest: `C:\eig_p2v2_calib_dev12_refit\critic_calibrated_refit\run_manifest.jsonl`
+  - fitted artifact: `C:\eig_p2v2_calib_dev12_refit\calibrations\dev12_joint_controller_calibration.json`
+- Refit artifact statistics:
+  - `126` edit examples
+  - `30` commit examples
+  - `tau_override=0.2464`
+  - `gamma_commit=0.6054`
+  - `min_commit_round=2`
+- Same-packet judgment summary:
+  - `heuristic_parallel`: mean score `8.0008`, mean rounds `4.5833`, mean tokens `119294.42`
+  - `critic_uncalibrated_raw`: mean score `7.9942`, mean rounds `3.5`, mean tokens `97570.17`
+  - `critic_calibrated_refit`: mean score `8.0967`, mean rounds `4.0`, mean tokens `108031.17`
+  - paired delta, calibrated vs raw: score `+0.1025`, rounds `+0.5`, tokens `+10461.0`
+  - paired delta, calibrated vs heuristic: score `+0.0958`, rounds `-0.5833`, tokens `-11263.25`
+- Interpretation:
+  - The refit frozen-dev calibration improves benchmark quality relative to the truly raw two-head critic on this 12-case packet.
+  - It does not dominate the raw critic on efficiency; it spends more rounds and tokens than the raw critic, but still stays below heuristic cost.
+  - Because the artifact was fit and judged on the same 12-case dev packet, this result is useful as a development gate only. It is not the final paper-facing evidence and must be re-validated on held-out paper-eval runs before we promote it.
+
 ## Self-Review
 
 - Spec coverage:

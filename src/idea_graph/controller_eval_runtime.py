@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .agent_backend import OpenAICompatibleCollaborationBackend
-from .baselines import attach_baseline_metadata, canonical_baseline_name, run_baseline_experiment
+from .baselines import (
+    attach_baseline_metadata,
+    canonical_baseline_name,
+    reset_two_head_runtime_controller_defaults,
+    run_baseline_experiment,
+)
 from .benchmark_scoring import evaluate_benchmark_native
 from .benchmarks import (
     ai_idea_bench_2025_instance_from_record,
@@ -141,6 +146,35 @@ def build_openai_backend(
     return settings, OpenAICompatibleCollaborationBackend(settings)
 
 
+def apply_runtime_controller_overrides(
+    instance: ExperimentInstance,
+    *,
+    runtime_controller_calibration_path: str | Path | None,
+    disable_runtime_calibration: bool,
+) -> ExperimentInstance:
+    metadata = dict(instance.metadata)
+    if disable_runtime_calibration:
+        if str(metadata.get("runtime_controller_kind", "")).strip() == "relation_graph_two_head_critic":
+            metadata = reset_two_head_runtime_controller_defaults(metadata)
+        else:
+            metadata.pop("runtime_controller_calibration_path", None)
+            metadata.pop("runtime_controller_calibration_source", None)
+            metadata.pop("runtime_controller_calibration_version", None)
+        metadata["runtime_controller_disable_calibration"] = True
+    elif runtime_controller_calibration_path is not None:
+        metadata["runtime_controller_calibration_path"] = str(
+            Path(runtime_controller_calibration_path).resolve()
+        )
+        metadata.pop("runtime_controller_disable_calibration", None)
+    return ExperimentInstance(
+        name=instance.name,
+        topic=instance.topic,
+        literature=list(instance.literature),
+        source_path=instance.source_path,
+        metadata=metadata,
+    )
+
+
 def execute_packet_run(
     row: Mapping[str, Any],
     *,
@@ -150,6 +184,8 @@ def execute_packet_run(
     max_rounds: int,
     native_eval: bool,
     llm_config_path: str | Path | None,
+    runtime_controller_calibration_path: str | Path | None = None,
+    disable_runtime_calibration: bool = False,
 ) -> dict[str, Any]:
     settings, backend = build_openai_backend(llm_config_path)
     if native_eval and settings is None:
@@ -157,6 +193,11 @@ def execute_packet_run(
 
     instance = load_benchmark_instance(row, benchmark_root_base=benchmark_root_base)
     instance = attach_baseline_metadata(instance, baseline_name=baseline_name, io_mode="auto")
+    instance = apply_runtime_controller_overrides(
+        instance,
+        runtime_controller_calibration_path=runtime_controller_calibration_path,
+        disable_runtime_calibration=disable_runtime_calibration,
+    )
 
     experiment_metadata = dict(instance.metadata)
     experiment_metadata["agent_backend"] = "openai-compatible" if backend is not None else "deterministic"

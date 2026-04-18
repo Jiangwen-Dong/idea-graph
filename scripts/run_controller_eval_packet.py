@@ -74,6 +74,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write the planned run manifest without launching generation.",
     )
+    parser.add_argument(
+        "--runtime-controller-calibration-path",
+        type=Path,
+        default=None,
+        help="Optional explicit joint controller calibration artifact for runtime-controller baselines.",
+    )
+    parser.add_argument(
+        "--disable-runtime-calibration",
+        action="store_true",
+        help="Disable automatic joint controller calibration loading for runtime-controller baselines.",
+    )
     return parser
 
 
@@ -113,6 +124,8 @@ def main() -> None:
                         max_rounds=args.max_rounds,
                         native_eval=args.native_eval,
                         llm_config_path=args.llm_config,
+                        runtime_controller_calibration_path=args.runtime_controller_calibration_path,
+                        disable_runtime_calibration=args.disable_runtime_calibration,
                     )
                 )
             write_text_file(args.output_root / "run_manifest.jsonl", _jsonl_lines(run_manifest_rows))

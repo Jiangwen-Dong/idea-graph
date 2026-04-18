@@ -148,6 +148,166 @@ class JointControllerCalibrationTests(unittest.TestCase):
             self.assertEqual(config.min_commit_round, 4)
             self.assertEqual(config.guard_support_threshold, 0.75)
 
+    def test_runtime_controller_loader_prefers_explicit_calibration_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            model_dir = root / "model"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            override_path = root / "override.json"
+            (model_dir / "joint_controller_calibration.json").write_text(
+                json.dumps(
+                    {
+                        "tau_override": 0.13,
+                        "tau_commit": 0.08,
+                        "gamma_commit": 0.74,
+                        "min_commit_round": 4,
+                        "guard_support_threshold": 0.75,
+                        "source": "model_dir_default",
+                        "version": "joint_controller_calibration_v1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            override_path.write_text(
+                json.dumps(
+                    {
+                        "tau_override": 0.07,
+                        "tau_commit": 0.08,
+                        "gamma_commit": 0.69,
+                        "min_commit_round": 3,
+                        "guard_support_threshold": 0.71,
+                        "source": "explicit_override",
+                        "version": "joint_controller_calibration_v1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            graph = IdeaGraph(
+                topic="topic",
+                literature=["paper"],
+                metadata={
+                    "runtime_controller_kind": "relation_graph_two_head_critic",
+                    "runtime_controller_model_dir": str(model_dir),
+                    "runtime_controller_use_commit": True,
+                    "runtime_controller_calibration_path": str(override_path),
+                },
+            )
+
+            with patch(
+                "idea_graph.baselines.load_relation_graph_two_head_runtime_bundle",
+                return_value=object(),
+            ):
+                _, controller_metadata = _maybe_build_runtime_controller(
+                    graph,
+                    BASELINE_SPECS["ours-eig-critic-graph-twohead"],
+                )
+
+            self.assertIsNotNone(controller_metadata)
+            config = controller_metadata["config"]
+            self.assertEqual(config.tau_override, 0.07)
+            self.assertEqual(config.gamma_commit, 0.69)
+            self.assertEqual(config.min_commit_round, 3)
+            self.assertEqual(config.guard_support_threshold, 0.71)
+
+    def test_runtime_controller_loader_can_disable_joint_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_dir = Path(tmp_dir)
+            (model_dir / "joint_controller_calibration.json").write_text(
+                json.dumps(
+                    {
+                        "tau_override": 0.13,
+                        "tau_commit": 0.08,
+                        "gamma_commit": 0.74,
+                        "min_commit_round": 4,
+                        "guard_support_threshold": 0.75,
+                        "source": "critic_dev",
+                        "version": "joint_controller_calibration_v1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            graph = IdeaGraph(
+                topic="topic",
+                literature=["paper"],
+                metadata={
+                    "runtime_controller_kind": "relation_graph_two_head_critic",
+                    "runtime_controller_model_dir": str(model_dir),
+                    "runtime_controller_use_commit": True,
+                    "runtime_controller_disable_calibration": True,
+                },
+            )
+
+            with patch(
+                "idea_graph.baselines.load_relation_graph_two_head_runtime_bundle",
+                return_value=object(),
+            ):
+                _, controller_metadata = _maybe_build_runtime_controller(
+                    graph,
+                    BASELINE_SPECS["ours-eig-critic-graph-twohead"],
+                )
+
+            self.assertIsNotNone(controller_metadata)
+            config = controller_metadata["config"]
+            self.assertEqual(config.tau_override, 0.05)
+            self.assertEqual(config.gamma_commit, 0.60)
+            self.assertEqual(config.min_commit_round, 2)
+            self.assertEqual(config.guard_support_threshold, 0.66)
+
+    def test_runtime_controller_loader_disable_resets_preapplied_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_dir = Path(tmp_dir)
+            calibration_path = model_dir / "joint_controller_calibration.json"
+            calibration_path.write_text(
+                json.dumps(
+                    {
+                        "tau_override": 0.13,
+                        "tau_commit": 0.08,
+                        "gamma_commit": 0.74,
+                        "min_commit_round": 4,
+                        "guard_support_threshold": 0.75,
+                        "source": "critic_dev",
+                        "version": "joint_controller_calibration_v1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            graph = IdeaGraph(
+                topic="topic",
+                literature=["paper"],
+                metadata={
+                    "runtime_controller_kind": "relation_graph_two_head_critic",
+                    "runtime_controller_model_dir": str(model_dir),
+                    "runtime_controller_use_commit": True,
+                    "runtime_controller_tau_override": 0.13,
+                    "runtime_controller_tau_commit": 0.08,
+                    "runtime_controller_gamma_commit": 0.74,
+                    "runtime_controller_min_commit_round": 4,
+                    "runtime_controller_guard_support_threshold": 0.75,
+                    "runtime_controller_calibration_path": str(calibration_path),
+                    "runtime_controller_calibration_source": "critic_dev",
+                    "runtime_controller_calibration_version": "joint_controller_calibration_v1",
+                    "runtime_controller_disable_calibration": True,
+                },
+            )
+
+            with patch(
+                "idea_graph.baselines.load_relation_graph_two_head_runtime_bundle",
+                return_value=object(),
+            ):
+                _, controller_metadata = _maybe_build_runtime_controller(
+                    graph,
+                    BASELINE_SPECS["ours-eig-critic-graph-twohead"],
+                )
+
+            self.assertIsNotNone(controller_metadata)
+            config = controller_metadata["config"]
+            self.assertEqual(config.tau_override, 0.05)
+            self.assertEqual(config.gamma_commit, 0.60)
+            self.assertEqual(config.min_commit_round, 2)
+            self.assertEqual(config.guard_support_threshold, 0.66)
+            self.assertNotIn("runtime_controller_calibration_source", graph.metadata)
+            self.assertNotIn("runtime_controller_calibration_version", graph.metadata)
+
     def test_calibration_cli_writes_joint_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

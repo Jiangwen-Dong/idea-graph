@@ -71,6 +71,7 @@ RUNTIME_CONTROLLER_METADATA_KEYS = (
     "runtime_controller_calibration_path",
     "runtime_controller_calibration_source",
     "runtime_controller_calibration_version",
+    "runtime_controller_disable_calibration",
     "runtime_controller_error",
     "runtime_controller_loaded",
 )
@@ -102,6 +103,24 @@ def _default_relation_graph_two_head_runtime_model_dir() -> Path:
 
 
 DEFAULT_TEXT_CRITIC_MODEL_PATH = _default_text_critic_model_path()
+TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS: dict[str, Any] = {
+    "runtime_controller_tau_override": 0.05,
+    "runtime_controller_tau_commit": 0.08,
+    "runtime_controller_gamma_commit": 0.60,
+    "runtime_controller_min_commit_round": 2,
+    "runtime_controller_guard_support_threshold": 0.66,
+    "runtime_controller_guard_support_gain_floor": 0.10,
+    "runtime_controller_guard_requires_contradiction_progress": False,
+}
+
+
+def reset_two_head_runtime_controller_defaults(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    updated = dict(metadata)
+    updated.update(TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS)
+    updated.pop("runtime_controller_calibration_path", None)
+    updated.pop("runtime_controller_calibration_source", None)
+    updated.pop("runtime_controller_calibration_version", None)
+    return updated
 
 
 def _apply_joint_runtime_calibration_from_model_dir(
@@ -115,6 +134,22 @@ def _apply_joint_runtime_calibration_from_model_dir(
     calibrated = apply_joint_controller_calibration(metadata, calibration)
     calibrated["runtime_controller_calibration_path"] = str(calibration_path.resolve())
     return calibrated
+
+
+def _apply_joint_runtime_calibration(
+    metadata: dict[str, Any],
+    model_dir: Path,
+) -> dict[str, Any]:
+    if bool(metadata.get("runtime_controller_disable_calibration", False)):
+        return reset_two_head_runtime_controller_defaults(metadata)
+    explicit_path = str(metadata.get("runtime_controller_calibration_path", "")).strip()
+    if explicit_path:
+        calibration_path = Path(explicit_path)
+        calibration = load_joint_controller_calibration(calibration_path)
+        calibrated = apply_joint_controller_calibration(metadata, calibration)
+        calibrated["runtime_controller_calibration_path"] = str(calibration_path.resolve())
+        return calibrated
+    return _apply_joint_runtime_calibration_from_model_dir(metadata, model_dir)
 
 
 BASELINE_ALIASES: dict[str, str] = {
@@ -305,11 +340,9 @@ def attach_baseline_metadata(
         metadata["runtime_controller_enabled"] = True
         metadata["runtime_controller_kind"] = "relation_graph_two_head_critic"
         metadata["runtime_controller_use_commit"] = True
-        metadata["runtime_controller_tau_override"] = 0.05
-        metadata["runtime_controller_gamma_commit"] = 0.60
-        metadata["runtime_controller_min_commit_round"] = 2
+        metadata.update(TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS)
         metadata["runtime_controller_model_dir"] = str(_default_relation_graph_two_head_runtime_model_dir())
-        metadata = _apply_joint_runtime_calibration_from_model_dir(
+        metadata = _apply_joint_runtime_calibration(
             metadata,
             Path(str(metadata["runtime_controller_model_dir"])),
         )
@@ -1768,9 +1801,15 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             graph.metadata["runtime_controller_error"] = f"Missing runtime controller model directory at {model_dir}."
             return None, None
 
-        graph.metadata.update(
-            _apply_joint_runtime_calibration_from_model_dir(dict(graph.metadata), model_dir)
-        )
+        calibrated_metadata = _apply_joint_runtime_calibration(dict(graph.metadata), model_dir)
+        for key in (
+            "runtime_controller_calibration_path",
+            "runtime_controller_calibration_source",
+            "runtime_controller_calibration_version",
+        ):
+            if key not in calibrated_metadata:
+                graph.metadata.pop(key, None)
+        graph.metadata.update(calibrated_metadata)
         runtime_bundle = load_relation_graph_two_head_runtime_bundle(model_dir)
         config = RelationGraphRuntimeConfig(
             tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
