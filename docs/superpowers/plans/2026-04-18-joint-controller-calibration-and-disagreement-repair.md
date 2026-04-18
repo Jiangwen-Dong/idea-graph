@@ -374,11 +374,67 @@ git add scripts/extract_edit_disagreement_subset.py tests/test_extract_edit_disa
 git commit -m "feat: add disagreement extraction for controller repair"
 ```
 
+## Task 4: Packet-Derived Joint Calibration Examples
+
+**Files:**
+- Modify: `src/idea_graph/joint_controller_calibration.py`
+- Modify: `scripts/calibrate_joint_controller.py`
+- Modify: `tests/test_joint_controller_calibration.py`
+
+- [x] **Step 1: Add packet extraction tests**
+
+The tests cover paired heuristic/critic run alignment, weak edit labels based on frozen-dev paired outcome deltas, skip-aware edit metadata, and post-round commit examples with logged commit probabilities.
+
+- [x] **Step 2: Implement packet-to-example extraction**
+
+`build_joint_calibration_examples_from_packet(...)` now returns:
+
+- `edit_examples`: one row per logged controller edit decision, including `override_margin`, `selected_source`, heuristic/selected candidate kinds, skip flags, final paired native-score delta, and a weak binary override label.
+- `commit_examples`: one row per logged post-round commit state with `commit_probability`, round index, commit label, maturity features, and paired native-score context.
+
+The edit label is intentionally conservative: only actual critic overrides in runs that match or beat the paired heuristic run become positive examples. Heuristic-selected decisions and overrides from worse critic runs remain negative. This makes the first calibration artifact auditable rather than claiming the edit head is globally optimal.
+
+- [x] **Step 3: Extend the calibration CLI**
+
+`scripts/calibrate_joint_controller.py` now supports two modes:
+
+- Prepared mode: `--edit-examples ... --commit-examples ... --output-path ...`
+- Packet mode: `--run-manifest ... --output-path ... --prepared-output-dir ...`
+
+Packet mode writes auditable `edit_examples.jsonl` and `commit_examples.jsonl` when `--prepared-output-dir` is supplied, then fits the same `joint_controller_calibration.json` artifact.
+
+- [ ] **Step 4: Fit the first real frozen-dev artifact**
+
+This requires fresh critic-only dev runs whose `graph.json` files include `metadata.runtime_controller_log` and `metadata.post_round_commit_rows`. The older four-case smoke packet is insufficient because its critic graphs do not contain `runtime_controller_log`.
+
+Suggested command after `DASHSCOPE_API_KEY` is available:
+
+```powershell
+python scripts/run_controller_eval_packet.py `
+  --packet-manifest outputs/controller_eval_packets/two_head_dev_gate_20260418/critic_dev_smoke_4_full.jsonl `
+  --baselines ours-eig-critic-graph-twohead `
+  --llm-config configs/openai_compatible.example.json `
+  --output-root outputs/controller_eval_packets/two_head_dev_gate_20260418_rerun_calibration `
+  --max-rounds 5 `
+  --native-eval
+```
+
+Then merge the fresh critic rows with the saved heuristic rows, fit:
+
+```powershell
+python scripts/calibrate_joint_controller.py `
+  --run-manifest outputs/controller_eval_packets/two_head_dev_gate_20260418_rerun_calibration/merged_run_manifest.jsonl `
+  --output-path outputs/critic_models/parallel_v2_twohead_repaired_boundary_st_full_e8_20260418/joint_controller_calibration.json `
+  --prepared-output-dir outputs/controller_eval_packets/two_head_dev_gate_20260418_rerun_calibration/joint_controller_calibration `
+  --source frozen_dev_joint_controller
+```
+
 ## Self-Review
 
 - Spec coverage:
   - joint edit+commit calibration: Task 1 and Task 2
   - disagreement-driven edit repair subset: Task 3
+  - packet-derived joint example preparation: Task 4
   - reviewer-safe frozen-dev wording: Task 3
 - Placeholder scan:
   - no `TODO` / `TBD` placeholders remain
