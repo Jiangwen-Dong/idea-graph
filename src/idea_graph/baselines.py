@@ -9,6 +9,10 @@ from typing import Any, Callable
 from .agent_backend import OpenAICompatibleCollaborationBackend
 from .benchmark_mode import apply_io_mode
 from .engine import emit_progress, run_experiment
+from .joint_controller_calibration import (
+    apply_joint_controller_calibration,
+    load_joint_controller_calibration,
+)
 from .literature_grounding import build_literature_grounding
 from .models import FinalProposal, IdeaGraph
 from .relation_graph_runtime_critic import (
@@ -64,6 +68,9 @@ RUNTIME_CONTROLLER_METADATA_KEYS = (
     "runtime_controller_guard_requires_contradiction_progress",
     "runtime_controller_model_path",
     "runtime_controller_model_dir",
+    "runtime_controller_calibration_path",
+    "runtime_controller_calibration_source",
+    "runtime_controller_calibration_version",
     "runtime_controller_error",
     "runtime_controller_loaded",
 )
@@ -95,6 +102,19 @@ def _default_relation_graph_two_head_runtime_model_dir() -> Path:
 
 
 DEFAULT_TEXT_CRITIC_MODEL_PATH = _default_text_critic_model_path()
+
+
+def _apply_joint_runtime_calibration_from_model_dir(
+    metadata: dict[str, Any],
+    model_dir: Path,
+) -> dict[str, Any]:
+    calibration_path = model_dir / "joint_controller_calibration.json"
+    if not calibration_path.exists():
+        return metadata
+    calibration = load_joint_controller_calibration(calibration_path)
+    calibrated = apply_joint_controller_calibration(metadata, calibration)
+    calibrated["runtime_controller_calibration_path"] = str(calibration_path.resolve())
+    return calibrated
 
 
 BASELINE_ALIASES: dict[str, str] = {
@@ -287,6 +307,10 @@ def attach_baseline_metadata(
         metadata["runtime_controller_gamma_commit"] = 0.60
         metadata["runtime_controller_min_commit_round"] = 2
         metadata["runtime_controller_model_dir"] = str(_default_relation_graph_two_head_runtime_model_dir())
+        metadata = _apply_joint_runtime_calibration_from_model_dir(
+            metadata,
+            Path(str(metadata["runtime_controller_model_dir"])),
+        )
     return instance.__class__(
         name=instance.name,
         topic=instance.topic,
@@ -1742,6 +1766,9 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             graph.metadata["runtime_controller_error"] = f"Missing runtime controller model directory at {model_dir}."
             return None, None
 
+        graph.metadata.update(
+            _apply_joint_runtime_calibration_from_model_dir(dict(graph.metadata), model_dir)
+        )
         runtime_bundle = load_relation_graph_two_head_runtime_bundle(model_dir)
         config = RelationGraphRuntimeConfig(
             tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),

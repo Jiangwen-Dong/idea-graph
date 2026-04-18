@@ -86,7 +86,7 @@ Recommended critic-specific ablations:
 - learned two-head parallel EIG
   shared graph encoder plus edit/action and commit heads
 - calibrated learned two-head parallel EIG
-  learned edit/action selection plus dev-calibrated commit threshold
+  learned edit/action selection plus frozen-dev joint controller calibration
 - older `ours-eig-critic-text` and `ours-eig-critic-graph`
   historical sequential/controller ablations, not the active forward path
 
