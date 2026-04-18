@@ -39,9 +39,11 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         stop_reason: str,
         executed_round_count: int,
         runtime_log: list[dict[str, object]] | None = None,
+        usage_rows: list[dict[str, int]] | None = None,
     ) -> Path:
         run_dir = self.tmp_dir / name
         run_dir.mkdir(parents=True, exist_ok=True)
+        usage_rows = usage_rows or []
         summary_payload = {
             "instance_name": instance_name,
             "executed_round_count": executed_round_count,
@@ -78,6 +80,15 @@ class ControllerEvalRunnerTests(unittest.TestCase):
                 "executed_round_count": executed_round_count,
                 "benchmark": benchmark,
                 "partition_role": partition_role,
+                "agent_traces": [
+                    {"role": f"Role{index}", "usage": usage}
+                    for index, usage in enumerate(usage_rows)
+                ],
+                "final_synthesis_trace": (
+                    {"usage": {"prompt_tokens": 13, "completion_tokens": 7, "total_tokens": 20}}
+                    if usage_rows
+                    else {}
+                ),
             },
         }
         write_text_file(run_dir / "summary.json", json.dumps(summary_payload, indent=2))
@@ -250,6 +261,10 @@ class ControllerEvalRunnerTests(unittest.TestCase):
             native_score=7.0,
             stop_reason="max_rounds_reached",
             executed_round_count=5,
+            usage_rows=[
+                {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+                {"prompt_tokens": 70, "completion_tokens": 10, "total_tokens": 80},
+            ],
         )
         dev_graph = self._make_run_dir(
             name="dev-graph",
@@ -260,6 +275,9 @@ class ControllerEvalRunnerTests(unittest.TestCase):
             native_score=8.0,
             stop_reason="mature_at_Round4",
             executed_round_count=4,
+            usage_rows=[
+                {"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 40},
+            ],
             runtime_log=[
                 {
                     "round": "Round1",
@@ -348,9 +366,24 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         self.assertEqual(pooled["instance_count"], 2)
         self.assertEqual(diagnostic["instance_count"], 1)
         self.assertEqual(primary["baseline_metrics"]["ours-eig"]["mean_score"], 7.0)
+        self.assertEqual(primary["baseline_metrics"]["ours-eig"]["mean_executed_round_count"], 5.0)
+        self.assertEqual(primary["baseline_metrics"]["ours-eig"]["mean_llm_call_count"], 3.0)
+        self.assertEqual(primary["baseline_metrics"]["ours-eig"]["mean_total_tokens"], 220.0)
         self.assertEqual(
             primary["baseline_metrics"]["ours-eig-graph-critic"]["mean_score"],
             8.0,
+        )
+        self.assertEqual(
+            primary["baseline_metrics"]["ours-eig-graph-critic"]["mean_executed_round_count"],
+            4.0,
+        )
+        self.assertEqual(
+            primary["baseline_metrics"]["ours-eig-graph-critic"]["mean_llm_call_count"],
+            2.0,
+        )
+        self.assertEqual(
+            primary["baseline_metrics"]["ours-eig-graph-critic"]["mean_total_tokens"],
+            60.0,
         )
         self.assertEqual(
             primary["paired_against_ours_eig"]["ours-eig-graph-critic"]["mean_delta"],

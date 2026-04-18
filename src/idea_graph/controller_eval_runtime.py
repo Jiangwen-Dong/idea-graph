@@ -289,6 +289,33 @@ def _extract_native_score(summary_payload: Mapping[str, Any]) -> float | None:
         return None
 
 
+def _iter_token_usage_payloads(payload: Any) -> list[Mapping[str, Any]]:
+    if isinstance(payload, Mapping):
+        if {
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+        }.issubset(payload.keys()):
+            return [payload]
+        rows: list[Mapping[str, Any]] = []
+        for value in payload.values():
+            rows.extend(_iter_token_usage_payloads(value))
+        return rows
+    if isinstance(payload, list):
+        rows = []
+        for item in payload:
+            rows.extend(_iter_token_usage_payloads(item))
+        return rows
+    return []
+
+
+def _token_total(payload: Mapping[str, Any]) -> float:
+    try:
+        return float(payload.get("total_tokens", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _load_run_payload(manifest_row: Mapping[str, Any]) -> dict[str, Any]:
     run_dir = Path(_normalize_str(manifest_row.get("run_dir")))
     summary_payload = json.loads(read_text_file(run_dir / "summary.json"))
@@ -302,6 +329,7 @@ def _load_run_payload(manifest_row: Mapping[str, Any]) -> dict[str, Any]:
     runtime_log = graph_metadata.get("runtime_controller_log", [])
     if not isinstance(runtime_log, list):
         runtime_log = []
+    usage_payloads = _iter_token_usage_payloads(graph_payload)
     return {
         "manifest_row": dict(manifest_row),
         "summary_payload": summary_payload,
@@ -310,6 +338,10 @@ def _load_run_payload(manifest_row: Mapping[str, Any]) -> dict[str, Any]:
         "actions": list(actions),
         "runtime_log": list(runtime_log),
         "native_score": _extract_native_score(summary_payload),
+        "executed_round_count": _normalize_int(summary_payload.get("executed_round_count"), default=0)
+        or 0,
+        "llm_call_count": len(usage_payloads),
+        "total_tokens": sum(_token_total(row) for row in usage_payloads),
     }
 
 
@@ -351,18 +383,33 @@ def _instance_key(payload: Mapping[str, Any]) -> str:
 
 def _aggregate_scores(payloads: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, float]]:
     grouped: dict[str, list[float]] = {}
+    rounds_grouped: dict[str, list[float]] = {}
+    calls_grouped: dict[str, list[float]] = {}
+    tokens_grouped: dict[str, list[float]] = {}
     for payload in payloads:
         baseline_name = _normalize_str(payload["manifest_row"].get("paper_baseline_name"))
         native_score = payload.get("native_score")
         if native_score is None:
             continue
         grouped.setdefault(baseline_name, []).append(float(native_score))
+        rounds_grouped.setdefault(baseline_name, []).append(
+            float(payload.get("executed_round_count", 0.0) or 0.0)
+        )
+        calls_grouped.setdefault(baseline_name, []).append(
+            float(payload.get("llm_call_count", 0.0) or 0.0)
+        )
+        tokens_grouped.setdefault(baseline_name, []).append(
+            float(payload.get("total_tokens", 0.0) or 0.0)
+        )
     metrics: dict[str, dict[str, float]] = {}
     for baseline_name, scores in sorted(grouped.items()):
         metrics[baseline_name] = {
             "instance_count": len(scores),
             "mean_score": _mean(scores),
             "median_score": _median(scores),
+            "mean_executed_round_count": _mean(rounds_grouped.get(baseline_name, [])),
+            "mean_llm_call_count": _mean(calls_grouped.get(baseline_name, [])),
+            "mean_total_tokens": _mean(tokens_grouped.get(baseline_name, [])),
         }
     return metrics
 
@@ -527,7 +574,10 @@ def format_packet_summary_markdown(summary: Mapping[str, Any]) -> str:
                         continue
                     lines.append(
                         f"  - `{baseline_name}`: mean `{metrics.get('mean_score', 0.0)}`, "
-                        f"median `{metrics.get('median_score', 0.0)}`"
+                        f"median `{metrics.get('median_score', 0.0)}`, "
+                        f"rounds `{metrics.get('mean_executed_round_count', 0.0)}`, "
+                        f"calls `{metrics.get('mean_llm_call_count', 0.0)}`, "
+                        f"tokens `{metrics.get('mean_total_tokens', 0.0)}`"
                     )
             paired = payload.get("paired_against_ours_eig", {}) if isinstance(payload, Mapping) else {}
             if isinstance(paired, Mapping) and paired:
