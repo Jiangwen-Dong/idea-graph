@@ -262,6 +262,75 @@ def test_parallel_runtime_uses_controller_for_role_local_edit_selection() -> Non
     assert graph.metadata["runtime_controller_log"][0]["controller_kind"] == "relation_graph_critic_rerank"
 
 
+def test_parallel_runtime_no_edit_uses_heuristic_edits_but_learned_commit() -> None:
+    class FreezeBackend:
+        name = "freeze-backend"
+
+        def generate_seed(self, graph, role):
+            raise RuntimeError("not used")
+
+        def choose_action(self, graph, round_name, role):
+            branch_id = next(branch.id for branch in graph.branches.values() if branch.role == role)
+            return ActionDecision(
+                kind="freeze_branch",
+                target_ids=[],
+                payload={"branch_id": branch_id},
+                rationale="backend selected freeze",
+            )
+
+        def synthesize_final_proposal(self, graph, subgraph):
+            raise RuntimeError("not used")
+
+    class SkipEditCommitController:
+        def build_runtime_batch(self, *, graph, candidate_specs, use_commit):
+            self.last_candidate_specs = [dict(spec) for spec in candidate_specs]
+            return SimpleNamespace(
+                batch=object(),
+                fallback_row_mask=torch.zeros(len(self.last_candidate_specs), dtype=torch.bool),
+                diagnostics=(),
+            )
+
+        def runtime_token_status(self, runtime_batch):
+            return {"ok": True}
+
+        def score_runtime_batch(self, batch):
+            return [
+                10.0 if str(spec.get("kind")) == "skip" else 0.0
+                for spec in self.last_candidate_specs
+            ]
+
+        def score_commit_graph(self, graph, *, snapshot=None):
+            return 0.91
+
+    graph = IdeaGraph(topic="topic", literature=["paper a"])
+    build_seed_graphs(graph)
+    merge_seed_graphs(graph)
+
+    result = execute_parallel_role_round(
+        graph,
+        round_name="Round2",
+        collaboration_backend=FreezeBackend(),
+        runtime_controller=SkipEditCommitController(),
+        runtime_controller_metadata={
+            "kind": "relation_graph_two_head_critic",
+            "config": RelationGraphRuntimeConfig(
+                use_edit=False,
+                use_commit=True,
+                min_commit_round=2,
+                gamma_commit=0.80,
+            ),
+        },
+        progress_callback=None,
+    )
+
+    assert result.active_roles
+    assert result.post_round_commit.source == "runtime_controller_commit"
+    assert result.post_round_commit.should_commit is True
+    assert any(decision.kind != "skip" for decision in result.selected_role_decisions)
+    assert result.materialized_graph_actions
+    assert not graph.metadata.get("runtime_controller_log")
+
+
 def test_parallel_runtime_uses_two_head_commit_score_after_round() -> None:
     class FreezeBackend:
         name = "freeze-backend"

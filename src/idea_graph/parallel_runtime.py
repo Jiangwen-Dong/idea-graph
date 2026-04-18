@@ -131,6 +131,8 @@ def _maybe_apply_runtime_controller(
     controller_config = runtime_controller_metadata.get("config")
     if controller_config is None:
         return raw_decisions, False
+    if not bool(getattr(controller_config, "use_edit", True)):
+        return raw_decisions, False
 
     controller_kind = str(runtime_controller_metadata.get("kind", "")).strip() or "text_critic_rerank"
     controlled_decisions: list[tuple[str, ActionDecision]] = []

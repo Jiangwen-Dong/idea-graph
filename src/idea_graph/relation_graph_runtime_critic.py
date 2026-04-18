@@ -33,6 +33,7 @@ class RelationGraphRuntimeConfig:
     tau_commit: float = 0.08
     gamma_commit: float = 0.60
     min_commit_round: int = 2
+    use_edit: bool = True
     use_commit: bool = False
     guard_support_threshold: float = 0.66
     guard_support_gain_floor: float = 0.10

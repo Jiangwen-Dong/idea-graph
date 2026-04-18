@@ -94,6 +94,56 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertEqual(instance.metadata["runtime_protocol"], "parallel_graph_v2")
         self.assertEqual(instance.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
         self.assertTrue(instance.metadata["runtime_controller_use_commit"])
+        self.assertTrue(instance.metadata["runtime_controller_disable_calibration"])
+        self.assertNotIn("runtime_controller_calibration_path", instance.metadata)
+
+    def test_ablation_method_plan_includes_controller_variants(self) -> None:
+        expected = {
+            "ours-eig-critic-calibrated",
+            "ours-eig-critic-no-commit",
+            "ours-eig-critic-no-edit",
+        }
+        self.assertTrue(expected.issubset(ABLATION_METHOD_PLANS))
+
+        calibrated = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=ABLATION_METHOD_PLANS["ours-eig-critic-calibrated"],
+        )
+        self.assertEqual(calibrated.metadata["method_name"], "ours-eig-critic-calibrated")
+        self.assertEqual(calibrated.metadata["runner_baseline_name"], "ours-eig-critic-calibrated")
+        self.assertEqual(calibrated.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(calibrated.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
+        self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
+        self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
+        self.assertFalse(calibrated.metadata.get("runtime_controller_disable_calibration", False))
+        self.assertIn("runtime_controller_calibration_path", calibrated.metadata)
+        self.assertTrue(
+            str(calibrated.metadata["runtime_controller_calibration_path"]).replace("\\", "/").endswith(
+                "data/splits/parallel_v2/frozen_dev_joint_controller_calibration.json"
+            )
+        )
+
+        no_commit = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=ABLATION_METHOD_PLANS["ours-eig-critic-no-commit"],
+        )
+        self.assertEqual(no_commit.metadata["method_name"], "ours-eig-critic-no-commit")
+        self.assertEqual(no_commit.metadata["runner_baseline_name"], "ours-eig-critic-no-commit")
+        self.assertTrue(no_commit.metadata["runtime_controller_use_edit"])
+        self.assertFalse(no_commit.metadata["runtime_controller_use_commit"])
+        self.assertTrue(no_commit.metadata["runtime_controller_disable_calibration"])
+        self.assertNotIn("runtime_controller_calibration_path", no_commit.metadata)
+
+        no_edit = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=ABLATION_METHOD_PLANS["ours-eig-critic-no-edit"],
+        )
+        self.assertEqual(no_edit.metadata["method_name"], "ours-eig-critic-no-edit")
+        self.assertEqual(no_edit.metadata["runner_baseline_name"], "ours-eig-critic-no-edit")
+        self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
+        self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
+        self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
+        self.assertIn("runtime_controller_calibration_path", no_edit.metadata)
 
     def test_main_method_plan_includes_exact_ai_researcher(self) -> None:
         self.assertIn("ai-researcher", MAIN_METHOD_PLANS)

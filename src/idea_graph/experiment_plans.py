@@ -123,6 +123,42 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
 ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
     "ours-eig": MAIN_METHOD_PLANS["ours-eig"],
     "ours-eig-critic-graph-twohead": MAIN_METHOD_PLANS["ours-eig-critic-graph-twohead"],
+    "ours-eig-critic-calibrated": ExperimentMethodPlan(
+        name="ours-eig-critic-calibrated",
+        baseline_name="ours-eig-critic-calibrated",
+        restarts=1,
+        max_rounds=5,
+        stop_when_mature=True,
+        runtime_protocol="parallel_graph_v2",
+        rationale="Parallel EIG with the two-head graph critic and frozen-dev controller calibration.",
+        metadata_overrides={
+            "idea_graph_protocol_variant": "eig_parallel_v2_twohead_calibrated",
+        },
+    ),
+    "ours-eig-critic-no-commit": ExperimentMethodPlan(
+        name="ours-eig-critic-no-commit",
+        baseline_name="ours-eig-critic-no-commit",
+        restarts=1,
+        max_rounds=5,
+        stop_when_mature=False,
+        runtime_protocol="parallel_graph_v2",
+        rationale="Parallel EIG where the graph critic selects edits, but stopping is fixed-horizon.",
+        metadata_overrides={
+            "idea_graph_protocol_variant": "eig_parallel_v2_twohead_no_commit",
+        },
+    ),
+    "ours-eig-critic-no-edit": ExperimentMethodPlan(
+        name="ours-eig-critic-no-edit",
+        baseline_name="ours-eig-critic-no-edit",
+        restarts=1,
+        max_rounds=5,
+        stop_when_mature=True,
+        runtime_protocol="parallel_graph_v2",
+        rationale="Parallel EIG where heuristic role-local edits are retained and the learned commit head controls stopping.",
+        metadata_overrides={
+            "idea_graph_protocol_variant": "eig_parallel_v2_twohead_no_edit",
+        },
+    ),
     "ours-early-consensus": ExperimentMethodPlan(
         name="ours-early-consensus",
         baseline_name="ours-eig",

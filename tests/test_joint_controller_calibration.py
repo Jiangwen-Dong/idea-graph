@@ -248,6 +248,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
 
             self.assertIsNotNone(controller_metadata)
             config = controller_metadata["config"]
+            self.assertTrue(config.use_edit)
             self.assertEqual(config.tau_override, 0.05)
             self.assertEqual(config.gamma_commit, 0.60)
             self.assertEqual(config.min_commit_round, 2)
@@ -301,6 +302,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
 
             self.assertIsNotNone(controller_metadata)
             config = controller_metadata["config"]
+            self.assertTrue(config.use_edit)
             self.assertEqual(config.tau_override, 0.05)
             self.assertEqual(config.gamma_commit, 0.60)
             self.assertEqual(config.min_commit_round, 2)

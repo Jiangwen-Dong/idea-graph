@@ -18,6 +18,12 @@ remain under ignored `outputs/` or external artifact roots.
 The critic train/dev split is used for heuristic-teacher replay collection,
 two-head critic training, checkpoint selection, and commit-head calibration.
 
+- `frozen_dev_joint_controller_calibration.json` is the tracked frozen-dev
+  calibration artifact used by the self-contained
+  `ours-eig-critic-calibrated` and `ours-eig-critic-no-edit` launch paths.
+  The raw `ours-eig-critic-graph-twohead` controller explicitly disables this
+  calibration so the raw/calibrated comparison does not depend on CLI flags.
+
 ## Paper Eval
 
 - `paper_eval_v2_registry.jsonl` contains the frozen 256-sample paper-eval

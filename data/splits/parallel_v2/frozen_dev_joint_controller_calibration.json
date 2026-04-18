@@ -1,0 +1,9 @@
+{
+  "tau_override": 0.068,
+  "tau_commit": 0.08,
+  "gamma_commit": 0.6563,
+  "min_commit_round": 2,
+  "guard_support_threshold": 0.66,
+  "source": "frozen_dev_joint_controller",
+  "version": "joint_controller_calibration_v1"
+}

@@ -69,6 +69,10 @@ Current experiment status:
   - `128` AI Idea Bench 2025 groups
   - `128` LiveIdeaBench groups
   - zero overlap with critic train/dev in the tracked audit
+- The tracked frozen-dev controller calibration artifact is:
+  `data/splits/parallel_v2/frozen_dev_joint_controller_calibration.json`
+  - `ours-eig-critic-graph-twohead` explicitly disables calibration
+  - `ours-eig-critic-calibrated` and `ours-eig-critic-no-edit` resolve this artifact without CLI overrides
 - The older sequential and text-critic artifacts remain useful historical
   ablations, but new method development should use parallel-v2 unless an older
   result is being reproduced intentionally.
@@ -120,6 +124,8 @@ python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ai-researcher-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline virsci-proxy
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-eig --runtime-protocol parallel_graph_v2
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-eig-critic-graph-twohead --runtime-protocol parallel_graph_v2
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 13 --baseline ours-eig-critic-calibrated --runtime-protocol parallel_graph_v2
 ```
 
 The `*-proxy` baselines are diagnostic local approximations. They are useful

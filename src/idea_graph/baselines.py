@@ -53,11 +53,18 @@ RELATION_GRAPH_TWO_HEAD_MODEL_RELATIVE_DIR = (
     / "critic_models"
     / "parallel_v2_twohead_repaired_boundary_st_full_e8_20260418"
 )
+TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH = (
+    Path("data")
+    / "splits"
+    / "parallel_v2"
+    / "frozen_dev_joint_controller_calibration.json"
+)
 
 
 RUNTIME_CONTROLLER_METADATA_KEYS = (
     "runtime_controller_enabled",
     "runtime_controller_kind",
+    "runtime_controller_use_edit",
     "runtime_controller_use_commit",
     "runtime_controller_tau_override",
     "runtime_controller_tau_commit",
@@ -102,8 +109,13 @@ def _default_relation_graph_two_head_runtime_model_dir() -> Path:
     return (_default_graph_critic_models_root() / RELATION_GRAPH_TWO_HEAD_MODEL_RELATIVE_DIR).resolve()
 
 
+def _default_joint_controller_calibration_path() -> Path:
+    return (ROOT / TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH).resolve()
+
+
 DEFAULT_TEXT_CRITIC_MODEL_PATH = _default_text_critic_model_path()
 TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS: dict[str, Any] = {
+    "runtime_controller_use_edit": True,
     "runtime_controller_tau_override": 0.05,
     "runtime_controller_tau_commit": 0.08,
     "runtime_controller_gamma_commit": 0.60,
@@ -195,6 +207,30 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         display_name="Ours (EIG + Two-Head Graph Critic)",
         strategy="evolving_graph",
         description="Parallel EIG with a shared-encoder two-head graph critic for edit selection and post-round commit control.",
+        prompt_style="ours",
+        runtime_controller="relation_graph_two_head_critic",
+    ),
+    "ours-eig-critic-calibrated": BaselineSpec(
+        name="ours-eig-critic-calibrated",
+        display_name="Ours (EIG + Calibrated Two-Head Graph Critic)",
+        strategy="evolving_graph",
+        description="Parallel EIG with a shared-encoder two-head graph critic and tracked frozen-dev controller calibration.",
+        prompt_style="ours",
+        runtime_controller="relation_graph_two_head_critic",
+    ),
+    "ours-eig-critic-no-commit": BaselineSpec(
+        name="ours-eig-critic-no-commit",
+        display_name="Ours (EIG + Two-Head Graph Critic, No Commit)",
+        strategy="evolving_graph",
+        description="Parallel EIG with learned edit selection but fixed-horizon stopping.",
+        prompt_style="ours",
+        runtime_controller="relation_graph_two_head_critic",
+    ),
+    "ours-eig-critic-no-edit": BaselineSpec(
+        name="ours-eig-critic-no-edit",
+        display_name="Ours (EIG + Two-Head Graph Critic, No Edit)",
+        strategy="evolving_graph",
+        description="Parallel EIG with heuristic role-local edits and learned post-round commit control.",
         prompt_style="ours",
         runtime_controller="relation_graph_two_head_critic",
     ),
@@ -327,12 +363,14 @@ def attach_baseline_metadata(
     if baseline.runtime_controller == "text_critic_rerank":
         metadata["runtime_controller_enabled"] = True
         metadata["runtime_controller_kind"] = "text_critic_rerank"
+        metadata["runtime_controller_use_edit"] = True
         metadata["runtime_controller_use_commit"] = False
         metadata["runtime_controller_tau_override"] = 0.05
         metadata["runtime_controller_model_path"] = str(_default_text_critic_model_path())
     elif baseline.runtime_controller == "relation_graph_critic_rerank":
         metadata["runtime_controller_enabled"] = True
         metadata["runtime_controller_kind"] = "relation_graph_critic_rerank"
+        metadata["runtime_controller_use_edit"] = True
         metadata["runtime_controller_use_commit"] = False
         metadata["runtime_controller_tau_override"] = 0.05
         metadata["runtime_controller_model_dir"] = str(_default_relation_graph_runtime_model_dir())
@@ -342,6 +380,19 @@ def attach_baseline_metadata(
         metadata["runtime_controller_use_commit"] = True
         metadata.update(TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS)
         metadata["runtime_controller_model_dir"] = str(_default_relation_graph_two_head_runtime_model_dir())
+        if baseline.name in {"ours-eig-critic-graph-twohead", "ours-eig-critic-no-commit"}:
+            metadata["runtime_controller_disable_calibration"] = True
+        if baseline.name == "ours-eig-critic-calibrated":
+            metadata["runtime_controller_calibration_path"] = str(
+                _default_joint_controller_calibration_path()
+            )
+        if baseline.name == "ours-eig-critic-no-commit":
+            metadata["runtime_controller_use_commit"] = False
+        if baseline.name == "ours-eig-critic-no-edit":
+            metadata["runtime_controller_use_edit"] = False
+            metadata["runtime_controller_calibration_path"] = str(
+                _default_joint_controller_calibration_path()
+            )
         metadata = _apply_joint_runtime_calibration(
             metadata,
             Path(str(metadata["runtime_controller_model_dir"])),
@@ -1769,6 +1820,7 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
             gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
             min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+            use_edit=bool(graph.metadata.get("runtime_controller_use_edit", True)),
             use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
             guard_support_threshold=float(
                 graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
@@ -1816,6 +1868,7 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
             gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
             min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+            use_edit=bool(graph.metadata.get("runtime_controller_use_edit", True)),
             use_commit=bool(graph.metadata.get("runtime_controller_use_commit", True)),
             guard_support_threshold=float(
                 graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)

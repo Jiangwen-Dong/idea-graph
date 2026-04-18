@@ -557,6 +557,53 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         self.assertEqual(len(manifest_rows), 1)
         self.assertEqual(manifest_rows[0]["paper_baseline_name"], "ours-eig-critic-calibrated")
 
+    def test_runner_cli_dry_run_supports_self_contained_calibrated_controller_baseline(self) -> None:
+        packet_path = self.tmp_dir / "packet.jsonl"
+        self._write_jsonl(
+            packet_path,
+            [
+                {
+                    "group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-111",
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "instance_name": "ai-idea-bench-2025-111",
+                    "partition_role": "critic_dev",
+                    "source_split": "validation",
+                    "benchmark_index": 111,
+                }
+            ],
+        )
+
+        output_root = self.tmp_dir / "runner_output_calibrated"
+        script_path = ROOT / "scripts" / "run_controller_eval_packet.py"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script_path),
+                "--packet-manifest",
+                str(packet_path),
+                "--baselines",
+                "ours-eig-critic-calibrated",
+                "--output-root",
+                str(output_root),
+                "--max-rounds",
+                "5",
+                "--dry-run",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+        manifest_rows = [
+            json.loads(line)
+            for line in (output_root / "run_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(manifest_rows), 1)
+        self.assertEqual(manifest_rows[0]["baseline_name"], "ours-eig-critic-calibrated")
+        self.assertEqual(manifest_rows[0]["paper_baseline_name"], "ours-eig-critic-calibrated")
+
 
 if __name__ == "__main__":
     unittest.main()

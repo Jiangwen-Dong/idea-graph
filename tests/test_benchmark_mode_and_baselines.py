@@ -257,6 +257,9 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIn("ours-eig-critic-text", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-graph", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-graph-twohead", BASELINE_SPECS)
+        self.assertIn("ours-eig-critic-calibrated", BASELINE_SPECS)
+        self.assertIn("ours-eig-critic-no-commit", BASELINE_SPECS)
+        self.assertIn("ours-eig-critic-no-edit", BASELINE_SPECS)
         self.assertEqual(BASELINE_SPECS["ai-researcher"].strategy, "external")
         self.assertIn("ai-researcher-proxy", BASELINE_SPECS)
         self.assertIn("scipip-proxy", BASELINE_SPECS)
@@ -296,12 +299,50 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
 
         self.assertEqual(instance.metadata["baseline_runtime_controller"], "relation_graph_two_head_critic")
         self.assertEqual(instance.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
+        self.assertTrue(instance.metadata["runtime_controller_use_edit"])
         self.assertTrue(instance.metadata["runtime_controller_use_commit"])
+        self.assertTrue(instance.metadata["runtime_controller_disable_calibration"])
+        self.assertNotIn("runtime_controller_calibration_path", instance.metadata)
         self.assertIn(
             "parallel_v2_twohead_repaired_boundary_st_full_e8_20260418",
             instance.metadata["runtime_controller_model_dir"],
         )
         self.assertEqual(instance.metadata["runtime_protocol"], "parallel_graph_v2")
+
+    def test_attach_baseline_metadata_enables_self_contained_two_head_controller_variants(self) -> None:
+        calibrated = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-calibrated",
+            io_mode="auto",
+        )
+        no_commit = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-no-commit",
+            io_mode="auto",
+        )
+        no_edit = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-no-edit",
+            io_mode="auto",
+        )
+
+        self.assertEqual(calibrated.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
+        self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
+        self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
+        self.assertFalse(calibrated.metadata.get("runtime_controller_disable_calibration", False))
+        self.assertTrue(Path(calibrated.metadata["runtime_controller_calibration_path"]).is_file())
+        self.assertAlmostEqual(calibrated.metadata["runtime_controller_tau_override"], 0.068)
+        self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.6563)
+
+        self.assertTrue(no_commit.metadata["runtime_controller_use_edit"])
+        self.assertFalse(no_commit.metadata["runtime_controller_use_commit"])
+        self.assertTrue(no_commit.metadata["runtime_controller_disable_calibration"])
+        self.assertNotIn("runtime_controller_calibration_path", no_commit.metadata)
+
+        self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
+        self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
+        self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
+        self.assertTrue(Path(no_edit.metadata["runtime_controller_calibration_path"]).is_file())
 
     def test_attach_baseline_metadata_uses_parallel_runtime_for_ours_eig_family(self) -> None:
         eig_instance = attach_baseline_metadata(
