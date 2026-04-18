@@ -14,6 +14,7 @@ from .critic_dataset import (
     make_group_id,
     package_labels_from_manifest_row,
 )
+from .commit_label_repair import OutcomeGroundedCommitConfig, score_and_relabel_commit_rows
 from .fs_utils import read_text_file, write_text_file
 from .models import Branch, Edge, GraphAction, IdeaGraph, Node, Provenance
 
@@ -953,6 +954,7 @@ def _two_head_readme_text(dataset_name: str) -> str:
             "- commit_state_manifest.jsonl",
             "- split_manifest.jsonl",
             "- dataset_stats.json",
+            "- commit_label_audit.json",
             "",
         ]
     )
@@ -965,12 +967,56 @@ def build_parallel_two_head_dataset_from_export(
     dataset_name: str,
     validation_fraction: float = 0.2,
     split_overrides_path: Path | None = None,
+    commit_label_mode: str = "logged",
+    commit_margin: float = 0.15,
+    continue_margin: float = 0.35,
 ) -> ParallelTwoHeadDatasetBuildResult:
     manifest_rows = _load_optional_jsonl(Path(g1_dataset_dir) / "run_manifest.jsonl")
     parallel_rows = _load_optional_jsonl(Path(g1_dataset_dir) / "parallel_edit_examples.jsonl")
     commit_rows = _load_optional_jsonl(Path(g1_dataset_dir) / "post_round_commit_examples.jsonl")
+    normalized_commit_label_mode = str(commit_label_mode).strip().replace("-", "_") or "logged"
+    if normalized_commit_label_mode not in {"logged", "outcome_grounded"}:
+        raise ValueError(
+            "commit_label_mode must be either 'logged' or 'outcome_grounded'."
+        )
+    commit_label_audit: dict[str, Any]
+    if normalized_commit_label_mode == "outcome_grounded":
+        commit_rows, commit_label_audit = score_and_relabel_commit_rows(
+            commit_rows,
+            g1_dataset_dir=Path(g1_dataset_dir),
+            config=OutcomeGroundedCommitConfig(
+                commit_margin=commit_margin,
+                continue_margin=continue_margin,
+            ),
+        )
+        commit_rows_for_training = [
+            row for row in commit_rows if bool(_as_object_dict(row.get("commit_supervision")).get("available", False))
+        ]
+    else:
+        commit_rows_for_training = commit_rows
+        commit_label_audit = {
+            "commit_label_mode": "logged",
+            "input_commit_state_count": len(commit_rows),
+            "available_commit_state_count": len(commit_rows_for_training),
+            "original_positive_count": sum(
+                1
+                for row in commit_rows
+                if _safe_int(_as_object_dict(row.get("commit_supervision")).get("label")) == 1
+            ),
+            "repaired_positive_count": sum(
+                1
+                for row in commit_rows_for_training
+                if _safe_int(_as_object_dict(row.get("commit_supervision")).get("label")) == 1
+            ),
+            "repaired_continue_count": sum(
+                1
+                for row in commit_rows_for_training
+                if _safe_int(_as_object_dict(row.get("commit_supervision")).get("label")) == 0
+            ),
+            "ambiguous_drop_count": 0,
+        }
     split_override_rows = _load_optional_jsonl(Path(split_overrides_path)) if split_overrides_path else []
-    group_rows = build_group_manifest(manifest_rows, [*parallel_rows, *commit_rows])
+    group_rows = build_group_manifest(manifest_rows, [*parallel_rows, *commit_rows_for_training])
     split_rows = assign_group_splits(
         group_rows,
         validation_fraction=validation_fraction,
@@ -983,7 +1029,7 @@ def build_parallel_two_head_dataset_from_export(
         split_rows=split_rows,
     )
     packaged_commit_rows, commit_state_manifest = build_parallel_commit_dataset_rows(
-        commit_rows=commit_rows,
+        commit_rows=commit_rows_for_training,
         manifest_rows=manifest_rows,
         split_rows=split_rows,
     )
@@ -991,6 +1037,10 @@ def build_parallel_two_head_dataset_from_export(
         "edit_state_count": len(edit_state_manifest),
         "edit_candidate_count": len(edit_rows),
         "commit_state_count": len(commit_state_manifest),
+        "commit_label_mode": normalized_commit_label_mode,
+        "commit_input_state_count": int(commit_label_audit.get("input_commit_state_count", len(commit_rows))),
+        "commit_available_state_count": int(commit_label_audit.get("available_commit_state_count", len(commit_state_manifest))),
+        "commit_ambiguous_drop_count": int(commit_label_audit.get("ambiguous_drop_count", 0)),
         "commit_positive_count": sum(1 for row in packaged_commit_rows if _safe_int(row.get("commit_label")) == 1),
         "commit_continue_count": sum(1 for row in packaged_commit_rows if _safe_int(row.get("commit_label")) == 0),
         "split_counts": {
@@ -1014,6 +1064,10 @@ def build_parallel_two_head_dataset_from_export(
     write_text_file(
         dataset_dir / "dataset_stats.json",
         json.dumps(dataset_stats, indent=2, ensure_ascii=False, default=str),
+    )
+    write_text_file(
+        dataset_dir / "commit_label_audit.json",
+        json.dumps(commit_label_audit, indent=2, ensure_ascii=False, default=str),
     )
     write_text_file(dataset_dir / "README.md", _two_head_readme_text(dataset_name))
 

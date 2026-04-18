@@ -40,6 +40,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    print(
+        json.dumps(
+            {
+                "event": "dataset_build_start",
+                "dataset_dir": str(args.dataset_dir.resolve()),
+                "g1_dataset_dir": str(args.g1_dataset_dir.resolve()),
+                "text_backend": args.text_backend,
+                "text_model_name": None if args.text_backend == "hash" else args.text_model_name,
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
     backend = (
         HashTextEmbeddingBackend(dim=args.embedding_dim)
         if args.text_backend == "hash"
@@ -49,6 +62,27 @@ def main() -> None:
         dataset_dir=args.dataset_dir,
         g1_dataset_dir=args.g1_dataset_dir,
         text_backend=backend,
+    )
+    print(
+        json.dumps(
+            {
+                "event": "training_start",
+                "dataset_dir": str(args.dataset_dir.resolve()),
+                "g1_dataset_dir": str(args.g1_dataset_dir.resolve()),
+                "text_backend": args.text_backend,
+                "text_model_name": None if args.text_backend == "hash" else args.text_model_name,
+                "edit_train_example_count": len(dataset.edit_train_examples),
+                "edit_validation_example_count": len(dataset.edit_dev_examples),
+                "commit_train_example_count": len(dataset.commit_train_examples),
+                "commit_validation_example_count": len(dataset.commit_dev_examples),
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "hidden_dim": args.hidden_dim,
+                "learning_rate": args.lr,
+            },
+            indent=2,
+        ),
+        flush=True,
     )
     artifacts = train_relation_graph_two_head_critic(
         dataset=dataset,
@@ -80,7 +114,8 @@ def main() -> None:
                 "commit": artifacts.commit_metrics,
             },
             indent=2,
-        )
+        ),
+        flush=True,
     )
 
 

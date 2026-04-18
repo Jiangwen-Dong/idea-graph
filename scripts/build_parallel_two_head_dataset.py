@@ -39,6 +39,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-name", type=_dataset_name_arg, required=True)
     parser.add_argument("--validation-fraction", type=float, default=0.2)
     parser.add_argument("--split-overrides-path", type=Path, default=None)
+    parser.add_argument(
+        "--commit-label-mode",
+        choices=["logged", "outcome-grounded", "outcome_grounded"],
+        default="logged",
+    )
+    parser.add_argument("--commit-margin", type=float, default=0.15)
+    parser.add_argument("--continue-margin", type=float, default=0.35)
     return parser
 
 
@@ -50,6 +57,9 @@ def main() -> None:
         dataset_name=args.dataset_name,
         validation_fraction=args.validation_fraction,
         split_overrides_path=args.split_overrides_path,
+        commit_label_mode=args.commit_label_mode,
+        commit_margin=args.commit_margin,
+        continue_margin=args.continue_margin,
     )
     print(f"Dataset directory: {result.dataset_dir}")
     print(f"Edit state count: {result.edit_state_count}")

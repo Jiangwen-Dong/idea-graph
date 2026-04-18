@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from tempfile import mkdtemp
 import unittest
+import json
 
 import numpy as np
 
@@ -106,6 +107,52 @@ class RelationGraphTwoHeadTrainTests(unittest.TestCase):
         self.assertTrue((self.tmp_dir / "model_output" / "model.pt").exists())
         self.assertTrue((self.tmp_dir / "model_output" / "edit_metrics.json").exists())
         self.assertTrue((self.tmp_dir / "model_output" / "commit_metrics.json").exists())
+
+    def test_train_relation_graph_two_head_critic_writes_epoch_progress_log(self) -> None:
+        dataset = RelationGraphTwoHeadDataset(
+            edit_train_examples=[
+                _edit_example(state_id="train-state", candidate_id="c0", label=1, split="train"),
+                _edit_example(state_id="train-state", candidate_id="c1", label=0, split="train"),
+            ],
+            edit_dev_examples=[
+                _edit_example(state_id="dev-state", candidate_id="c0", label=1, split="validation"),
+                _edit_example(state_id="dev-state", candidate_id="c1", label=0, split="validation"),
+            ],
+            commit_train_examples=[_commit_example(state_id="commit-train", label=0, split="train")],
+            commit_dev_examples=[_commit_example(state_id="commit-dev", label=1, split="validation")],
+            metadata={
+                "node_type_count": 4,
+                "role_count": 4,
+                "edge_type_count": 4,
+                "candidate_kind_count": 4,
+            },
+        )
+
+        output_dir = self.tmp_dir / "model_output"
+        train_relation_graph_two_head_critic(
+            dataset=dataset,
+            output_dir=output_dir,
+            hidden_dim=16,
+            batch_size=1,
+            epochs=2,
+            learning_rate=1e-3,
+            text_backend_name="hash",
+        )
+
+        progress_path = output_dir / "training_progress.jsonl"
+        self.assertTrue(progress_path.exists())
+        rows = [
+            json.loads(line)
+            for line in progress_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["epoch"], 1)
+        self.assertIn("edit_mean_reciprocal_rank", rows[0])
+        self.assertIn("commit_accuracy", rows[0])
+        self.assertIn("commit_f1", rows[0])
+        self.assertIn("commit_average_precision", rows[0])
+        self.assertIn("model_selection_score", rows[0])
 
 
 if __name__ == "__main__":

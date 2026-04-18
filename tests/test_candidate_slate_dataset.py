@@ -5,6 +5,7 @@ import shutil
 import sys
 from pathlib import Path
 from tempfile import mkdtemp
+from unittest.mock import patch
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1084,6 +1085,183 @@ class CandidateSlateDatasetTests(unittest.TestCase):
         self.assertTrue(all(str(row["before_state_snapshot"]).startswith("parallel_state_snapshots/") for row in edit_rows))
         self.assertEqual(stats["edit_state_count"], 2)
         self.assertEqual(stats["commit_positive_count"], 1)
+
+    def test_build_parallel_two_head_dataset_from_export_can_use_outcome_grounded_commit_labels(self) -> None:
+        output_dir = self.tmp_dir / "out_parallel_two_head_repaired"
+        g1_dataset_dir = self.tmp_dir / "g1_parallel_two_head_repaired"
+        g1_dataset_dir.mkdir(parents=True, exist_ok=True)
+        (g1_dataset_dir / "parallel_state_snapshots").mkdir(parents=True, exist_ok=True)
+        (g1_dataset_dir / "post_round_commit_state_snapshots").mkdir(parents=True, exist_ok=True)
+
+        manifest_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-02",
+                "has_local_eval": True,
+                "has_native_eval": True,
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+            },
+        ]
+        parallel_rows = [
+            {
+                "state_id": "run-a::parallel::Round1::MechanismProposer",
+                "candidate_id": "run-a::parallel::Round1::MechanismProposer::candidate:0000",
+                "candidate_index": 0,
+                "candidate_count": 1,
+                "selected_candidate_id": "run-a::parallel::Round1::MechanismProposer::candidate:0000",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "run_dir": "run-a",
+                "parallel_state_index": 0,
+                "round_name": "Round1",
+                "role": "MechanismProposer",
+                "state_kind": "parallel_pre_action",
+                "state_text": "nodes=1;edges=0;contradictions=0",
+                "before_state_snapshot": "parallel_state_snapshots/run-a-parallel-state-000.json",
+                "before_state_node_count": 1,
+                "before_state_edge_count": 0,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 0,
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "parallel_selected_role_decision",
+                "candidate_kind": "skip",
+                "candidate_target_ids": [],
+                "candidate_payload": {},
+                "candidate_source": "parallel_teacher",
+                "candidate_text": "Skip this round.",
+                "is_logged_selected": True,
+            }
+        ]
+        commit_rows = [
+            {
+                "run_dir": "run-a",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-01",
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+                "post_round_state_index": 0,
+                "state_id": "run-a::parallel::Round1::post_round_commit",
+                "round_name": "Round1",
+                "role": "CommitController",
+                "state_kind": "parallel_post_round",
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "maturity_snapshot",
+                "state_text": "nodes=2;edges=1;contradictions=0",
+                "before_state_snapshot": "post_round_commit_state_snapshots/run-a-post-round-state-000.json",
+                "before_state_node_count": 2,
+                "before_state_edge_count": 1,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 1,
+                "before_state_action_count": 1,
+                "commit_supervision": {"available": True, "label": 0, "source": "maturity_snapshot"},
+            },
+            {
+                "run_dir": "run-c",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "aiib-02",
+                "baseline_name": "ours-eig",
+                "topic": "Parallel test topic",
+                "post_round_state_index": 0,
+                "state_id": "run-c::parallel::Round1::post_round_commit",
+                "round_name": "Round1",
+                "role": "CommitController",
+                "state_kind": "parallel_post_round",
+                "runtime_protocol": "parallel_graph_v2",
+                "label_source": "maturity_snapshot",
+                "state_text": "nodes=3;edges=2;contradictions=0",
+                "before_state_snapshot": "post_round_commit_state_snapshots/run-c-post-round-state-000.json",
+                "before_state_node_count": 3,
+                "before_state_edge_count": 2,
+                "before_state_contradiction_count": 0,
+                "before_state_support_edge_count": 1,
+                "before_state_action_count": 1,
+                "commit_supervision": {"available": True, "label": 1, "source": "maturity_snapshot"},
+            },
+        ]
+
+        write_text_file(
+            g1_dataset_dir / "run_manifest.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in manifest_rows),
+        )
+        write_text_file(
+            g1_dataset_dir / "parallel_edit_examples.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in parallel_rows),
+        )
+        write_text_file(
+            g1_dataset_dir / "post_round_commit_examples.jsonl",
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in commit_rows),
+        )
+        write_text_file(
+            g1_dataset_dir / "parallel_state_snapshots" / "run-a-parallel-state-000.json",
+            json.dumps({"node_count": 1, "edge_count": 0, "contradiction_count": 0, "support_edge_count": 0, "nodes": {}, "edges": []}),
+        )
+        write_text_file(
+            g1_dataset_dir / "post_round_commit_state_snapshots" / "run-a-post-round-state-000.json",
+            json.dumps({"node_count": 2, "edge_count": 1, "contradiction_count": 0, "support_edge_count": 1, "action_count": 1, "nodes": {}, "edges": []}),
+        )
+        write_text_file(
+            g1_dataset_dir / "post_round_commit_state_snapshots" / "run-c-post-round-state-000.json",
+            json.dumps({"node_count": 3, "edge_count": 2, "contradiction_count": 0, "support_edge_count": 1, "action_count": 1, "nodes": {}, "edges": []}),
+        )
+
+        repaired_rows = [
+            {
+                **commit_rows[0],
+                "label_source": "outcome_grounded_local_eval",
+                "commit_supervision": {"available": True, "label": 1, "source": "outcome_grounded_local_eval"},
+                "outcome_local_overall": 6.8,
+            },
+            {
+                **commit_rows[1],
+                "label_source": "outcome_grounded_local_eval",
+                "commit_supervision": {"available": False, "label": 0, "source": "outcome_grounded_local_eval"},
+                "outcome_local_overall": 6.4,
+            },
+        ]
+        repair_audit = {
+            "input_commit_state_count": 2,
+            "available_commit_state_count": 1,
+            "repaired_positive_count": 1,
+            "repaired_continue_count": 0,
+            "ambiguous_drop_count": 1,
+        }
+
+        with patch(
+            "idea_graph.candidate_slate_dataset.score_and_relabel_commit_rows",
+            return_value=(repaired_rows, repair_audit),
+        ) as repair_mock:
+            result = build_parallel_two_head_dataset_from_export(
+                g1_dataset_dir=g1_dataset_dir,
+                output_dir=output_dir,
+                dataset_name="parallel-two-head-repaired",
+                commit_label_mode="outcome_grounded",
+            )
+
+        repair_mock.assert_called_once()
+        self.assertEqual(result.commit_state_count, 1)
+        commit_rows_out = [
+            json.loads(line)
+            for line in (result.dataset_dir / "commit_head_rows.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        audit = json.loads((result.dataset_dir / "commit_label_audit.json").read_text(encoding="utf-8"))
+        stats = json.loads((result.dataset_dir / "dataset_stats.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(commit_rows_out), 1)
+        self.assertEqual(commit_rows_out[0]["commit_label"], 1)
+        self.assertEqual(audit["ambiguous_drop_count"], 1)
+        self.assertEqual(stats["commit_state_count"], 1)
+        self.assertEqual(stats["commit_ambiguous_drop_count"], 1)
 
 
 if __name__ == "__main__":
