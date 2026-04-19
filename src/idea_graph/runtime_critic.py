@@ -20,13 +20,17 @@ from .text_critic import _strip_leaky_segments
 @dataclass(frozen=True)
 class TextCriticRuntimeConfig:
     tau_override: float = 0.05
+    tau_override_by_round: Mapping[int | str, float] | None = None
     tau_commit: float = 0.08
     gamma_commit: float = 0.60
+    gamma_commit_by_round: Mapping[int | str, float] | None = None
     min_commit_round: int = 2
     use_commit: bool = False
     guard_support_threshold: float = 0.66
     guard_support_gain_floor: float = 0.10
     guard_requires_contradiction_progress: bool = False
+    guard_commit_support_threshold: float = 0.0
+    guard_commit_utility_floor: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -197,13 +201,17 @@ def select_text_critic_candidate(
         config=SafeCriticPolicyConfig(
             min_commit_round=int(config.min_commit_round),
             tau_override=float(config.tau_override),
+            tau_override_by_round=dict(config.tau_override_by_round or {}),
             tau_commit=float(config.tau_commit),
             gamma_commit=float(config.gamma_commit),
+            gamma_commit_by_round=dict(config.gamma_commit_by_round or {}),
             guard_support_threshold=float(config.guard_support_threshold),
             guard_support_gain_floor=float(config.guard_support_gain_floor),
             guard_requires_contradiction_progress=bool(
                 config.guard_requires_contradiction_progress
             ),
+            guard_commit_support_threshold=float(config.guard_commit_support_threshold),
+            guard_commit_utility_floor=float(config.guard_commit_utility_floor),
         ),
     )
     selected_spec = dict(scored_lookup[policy_decision.selected_candidate_id])

@@ -97,6 +97,7 @@ class ParallelCommitCheckRecord:
     controller_kind: str = ""
     commit_probability: float | None = None
     commit_threshold: float | None = None
+    commit_guard_reason: str = ""
 
 
 @dataclass(frozen=True)

@@ -4,11 +4,13 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .agent_backend import OpenAICompatibleCollaborationBackend
 from .benchmark_mode import apply_io_mode
 from .engine import emit_progress, run_experiment
+from .fixed_control_policy import load_fixed_control_policy
+from .random_control_policy import RandomControlPolicy
 from .joint_controller_calibration import (
     apply_joint_controller_calibration,
     load_joint_controller_calibration,
@@ -59,6 +61,12 @@ TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH = (
     / "parallel_v2"
     / "frozen_dev_joint_controller_calibration.json"
 )
+FIXED_CONTROL_POLICY_RELATIVE_PATH = (
+    Path("data")
+    / "splits"
+    / "parallel_v2"
+    / "fixed_control_policy.json"
+)
 
 
 RUNTIME_CONTROLLER_METADATA_KEYS = (
@@ -67,20 +75,27 @@ RUNTIME_CONTROLLER_METADATA_KEYS = (
     "runtime_controller_use_edit",
     "runtime_controller_use_commit",
     "runtime_controller_tau_override",
+    "runtime_controller_tau_override_by_round",
     "runtime_controller_tau_commit",
     "runtime_controller_gamma_commit",
+    "runtime_controller_gamma_commit_by_round",
     "runtime_controller_min_commit_round",
     "runtime_controller_guard_support_threshold",
     "runtime_controller_guard_support_gain_floor",
     "runtime_controller_guard_requires_contradiction_progress",
+    "runtime_controller_guard_commit_support_threshold",
+    "runtime_controller_guard_commit_utility_floor",
     "runtime_controller_model_path",
     "runtime_controller_model_dir",
+    "runtime_controller_policy_path",
+    "runtime_controller_random_seed",
     "runtime_controller_calibration_path",
     "runtime_controller_calibration_source",
     "runtime_controller_calibration_version",
     "runtime_controller_disable_calibration",
     "runtime_controller_error",
     "runtime_controller_loaded",
+    "max_rounds_hint",
 )
 
 
@@ -113,16 +128,24 @@ def _default_joint_controller_calibration_path() -> Path:
     return (ROOT / TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH).resolve()
 
 
+def _default_fixed_control_policy_path() -> Path:
+    return (ROOT / FIXED_CONTROL_POLICY_RELATIVE_PATH).resolve()
+
+
 DEFAULT_TEXT_CRITIC_MODEL_PATH = _default_text_critic_model_path()
 TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS: dict[str, Any] = {
     "runtime_controller_use_edit": True,
     "runtime_controller_tau_override": 0.05,
+    "runtime_controller_tau_override_by_round": {},
     "runtime_controller_tau_commit": 0.08,
     "runtime_controller_gamma_commit": 0.60,
+    "runtime_controller_gamma_commit_by_round": {},
     "runtime_controller_min_commit_round": 2,
     "runtime_controller_guard_support_threshold": 0.66,
     "runtime_controller_guard_support_gain_floor": 0.10,
     "runtime_controller_guard_requires_contradiction_progress": False,
+    "runtime_controller_guard_commit_support_threshold": 0.0,
+    "runtime_controller_guard_commit_utility_floor": 0.0,
 }
 
 
@@ -133,6 +156,21 @@ def reset_two_head_runtime_controller_defaults(metadata: Mapping[str, Any]) -> d
     updated.pop("runtime_controller_calibration_source", None)
     updated.pop("runtime_controller_calibration_version", None)
     return updated
+
+
+def _coerce_round_float_map(value: object) -> dict[str, float]:
+    if not isinstance(value, Mapping):
+        return {}
+    normalized: dict[str, float] = {}
+    for key, item in value.items():
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        try:
+            normalized[str(int(key_text))] = float(item)
+        except (TypeError, ValueError):
+            continue
+    return normalized
 
 
 def _apply_joint_runtime_calibration_from_model_dir(
@@ -233,6 +271,22 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         description="Parallel EIG with heuristic role-local edits and learned post-round commit control.",
         prompt_style="ours",
         runtime_controller="relation_graph_two_head_critic",
+    ),
+    "ours-eig-fixed-control": BaselineSpec(
+        name="ours-eig-fixed-control",
+        display_name="Ours (Fixed Control)",
+        strategy="evolving_graph",
+        description="Parallel EIG with a frozen role-and-round edit policy and fixed five-round horizon.",
+        prompt_style="ours",
+        runtime_controller="fixed_control",
+    ),
+    "ours-eig-random-control": BaselineSpec(
+        name="ours-eig-random-control",
+        display_name="Ours (Random Control)",
+        strategy="evolving_graph",
+        description="Parallel EIG with seeded random action selection from each legal role-local slate and fixed five-round horizon.",
+        prompt_style="ours",
+        runtime_controller="random_control",
     ),
     "direct": BaselineSpec(
         name="direct",
@@ -397,6 +451,20 @@ def attach_baseline_metadata(
             metadata,
             Path(str(metadata["runtime_controller_model_dir"])),
         )
+    elif baseline.runtime_controller == "fixed_control":
+        metadata["runtime_controller_enabled"] = True
+        metadata["runtime_controller_kind"] = "fixed_control"
+        metadata["runtime_controller_use_edit"] = True
+        metadata["runtime_controller_use_commit"] = False
+        metadata["runtime_controller_policy_path"] = str(_default_fixed_control_policy_path())
+        metadata["max_rounds_hint"] = 5
+    elif baseline.runtime_controller == "random_control":
+        metadata["runtime_controller_enabled"] = True
+        metadata["runtime_controller_kind"] = "random_control"
+        metadata["runtime_controller_use_edit"] = True
+        metadata["runtime_controller_use_commit"] = False
+        metadata["runtime_controller_random_seed"] = 0
+        metadata["max_rounds_hint"] = 5
     return instance.__class__(
         name=instance.name,
         topic=instance.topic,
@@ -1780,8 +1848,14 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
         model = load_pickled_text_critic_model(str(model_path))
         config = TextCriticRuntimeConfig(
             tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
+            tau_override_by_round=_coerce_round_float_map(
+                graph.metadata.get("runtime_controller_tau_override_by_round", {})
+            ),
             tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
             gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            gamma_commit_by_round=_coerce_round_float_map(
+                graph.metadata.get("runtime_controller_gamma_commit_by_round", {})
+            ),
             min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
             use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
             guard_support_threshold=float(
@@ -1792,6 +1866,12 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             ),
             guard_requires_contradiction_progress=bool(
                 graph.metadata.get("runtime_controller_guard_requires_contradiction_progress", False)
+            ),
+            guard_commit_support_threshold=float(
+                graph.metadata.get("runtime_controller_guard_commit_support_threshold", 0.0)
+            ),
+            guard_commit_utility_floor=float(
+                graph.metadata.get("runtime_controller_guard_commit_utility_floor", 0.0)
             ),
         )
         controller_metadata = {
@@ -1817,8 +1897,14 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
         runtime_bundle = load_relation_graph_runtime_bundle(model_dir)
         config = RelationGraphRuntimeConfig(
             tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
+            tau_override_by_round=_coerce_round_float_map(
+                graph.metadata.get("runtime_controller_tau_override_by_round", {})
+            ),
             tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
             gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            gamma_commit_by_round=_coerce_round_float_map(
+                graph.metadata.get("runtime_controller_gamma_commit_by_round", {})
+            ),
             min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
             use_edit=bool(graph.metadata.get("runtime_controller_use_edit", True)),
             use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
@@ -1830,6 +1916,12 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             ),
             guard_requires_contradiction_progress=bool(
                 graph.metadata.get("runtime_controller_guard_requires_contradiction_progress", False)
+            ),
+            guard_commit_support_threshold=float(
+                graph.metadata.get("runtime_controller_guard_commit_support_threshold", 0.0)
+            ),
+            guard_commit_utility_floor=float(
+                graph.metadata.get("runtime_controller_guard_commit_utility_floor", 0.0)
             ),
         )
         controller_metadata = {
@@ -1865,8 +1957,14 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
         runtime_bundle = load_relation_graph_two_head_runtime_bundle(model_dir)
         config = RelationGraphRuntimeConfig(
             tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.05)),
+            tau_override_by_round=_coerce_round_float_map(
+                graph.metadata.get("runtime_controller_tau_override_by_round", {})
+            ),
             tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
             gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            gamma_commit_by_round=_coerce_round_float_map(
+                graph.metadata.get("runtime_controller_gamma_commit_by_round", {})
+            ),
             min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
             use_edit=bool(graph.metadata.get("runtime_controller_use_edit", True)),
             use_commit=bool(graph.metadata.get("runtime_controller_use_commit", True)),
@@ -1879,6 +1977,12 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             guard_requires_contradiction_progress=bool(
                 graph.metadata.get("runtime_controller_guard_requires_contradiction_progress", False)
             ),
+            guard_commit_support_threshold=float(
+                graph.metadata.get("runtime_controller_guard_commit_support_threshold", 0.0)
+            ),
+            guard_commit_utility_floor=float(
+                graph.metadata.get("runtime_controller_guard_commit_utility_floor", 0.0)
+            ),
         )
         controller_metadata = {
             "kind": "relation_graph_two_head_critic",
@@ -1889,6 +1993,41 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
         }
         graph.metadata["runtime_controller_loaded"] = controller_metadata
         return runtime_bundle, {"config": config, **controller_metadata}
+
+    if runtime_kind == "fixed_control":
+        policy_path = Path(
+            str(
+                graph.metadata.get("runtime_controller_policy_path")
+                or _default_fixed_control_policy_path()
+            )
+        )
+        if not policy_path.exists():
+            graph.metadata["runtime_controller_error"] = f"Missing fixed control policy at {policy_path}."
+            return None, None
+
+        controller = load_fixed_control_policy(policy_path)
+        config = RelationGraphRuntimeConfig(use_edit=True, use_commit=False)
+        controller_metadata = {
+            "kind": "fixed_control",
+            "policy_path": str(policy_path.resolve()),
+            "use_commit": False,
+        }
+        graph.metadata["runtime_controller_loaded"] = controller_metadata
+        return controller, {"config": config, **controller_metadata}
+
+    if runtime_kind == "random_control":
+        base_seed = int(graph.metadata.get("runtime_controller_random_seed", 0) or 0)
+        restart_offset = int(graph.metadata.get("batch_restart", 0) or 0)
+        seed = base_seed + restart_offset
+        controller = RandomControlPolicy(seed=seed)
+        config = RelationGraphRuntimeConfig(use_edit=True, use_commit=False)
+        controller_metadata = {
+            "kind": "random_control",
+            "seed": seed,
+            "use_commit": False,
+        }
+        graph.metadata["runtime_controller_loaded"] = controller_metadata
+        return controller, {"config": config, **controller_metadata}
 
     graph.metadata["runtime_controller_error"] = f"Unsupported runtime controller kind '{runtime_kind}'."
     return None, None

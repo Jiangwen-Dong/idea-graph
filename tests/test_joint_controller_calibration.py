@@ -19,6 +19,7 @@ from idea_graph.fs_utils import _windows_safe_path, ensure_dir, write_text_file
 from idea_graph.joint_controller_calibration import (
     JointControllerCalibration,
     JointControllerCalibrationError,
+    _attach_snapshot_feedback_to_commit_examples,
     apply_joint_controller_calibration,
     build_joint_calibration_examples_from_packet,
     fit_joint_controller_calibration,
@@ -28,6 +29,51 @@ from idea_graph.models import IdeaGraph
 
 
 class JointControllerCalibrationTests(unittest.TestCase):
+    def test_attach_snapshot_feedback_to_commit_examples_relabels_rounds(self) -> None:
+        commit_examples = [
+            {
+                "run_dir": "run-a",
+                "group_id": "g1",
+                "state_id": "run-a::round2",
+                "post_round_state_index": 0,
+                "round_name": "Round2",
+                "round_index": 2,
+                "state_snapshot": {"nodes": {}, "edges": [], "branches": []},
+                "commit_probability": 0.62,
+                "label": 1,
+                "support_coverage": 0.45,
+                "unresolved_contradiction_ratio": 0.20,
+                "utility": 6.1,
+            },
+            {
+                "run_dir": "run-a",
+                "group_id": "g1",
+                "state_id": "run-a::round3",
+                "post_round_state_index": 1,
+                "round_name": "Round3",
+                "round_index": 3,
+                "state_snapshot": {"nodes": {}, "edges": [], "branches": []},
+                "commit_probability": 0.84,
+                "label": 1,
+                "support_coverage": 0.88,
+                "unresolved_contradiction_ratio": 0.00,
+                "utility": 7.6,
+            },
+        ]
+
+        with patch(
+            "idea_graph.joint_controller_calibration._score_commit_example_local_overall",
+            side_effect=[6.1, 7.6],
+        ):
+            repaired = _attach_snapshot_feedback_to_commit_examples(commit_examples)
+
+        self.assertEqual(repaired[0]["outcome_feedback_label"], 0)
+        self.assertEqual(repaired[1]["outcome_feedback_label"], 1)
+        self.assertAlmostEqual(repaired[0]["future_best_local_overall"], 7.6)
+        self.assertAlmostEqual(repaired[1]["future_best_local_overall"], 7.6)
+        self.assertAlmostEqual(repaired[0]["future_improvement"], 1.5)
+        self.assertAlmostEqual(repaired[1]["future_improvement"], 0.0)
+
     def test_fit_joint_controller_calibration_picks_joint_thresholds(self) -> None:
         calibration = fit_joint_controller_calibration(
             edit_examples=[
@@ -45,6 +91,92 @@ class JointControllerCalibrationTests(unittest.TestCase):
         self.assertGreaterEqual(calibration.tau_override, 0.05)
         self.assertGreaterEqual(calibration.gamma_commit, 0.70)
         self.assertGreaterEqual(calibration.min_commit_round, 2)
+        self.assertEqual(calibration.tau_override_by_round, {})
+
+    def test_fit_joint_controller_calibration_emits_round_specific_edit_thresholds(self) -> None:
+        calibration = fit_joint_controller_calibration(
+            edit_examples=[
+                {"override_margin": 0.04, "label": 0, "round_index": 2},
+                {"override_margin": 0.14, "label": 1, "round_index": 2},
+                {"override_margin": 0.03, "label": 0, "round_index": 4},
+                {"override_margin": 0.32, "label": 1, "round_index": 4},
+            ],
+            commit_examples=[
+                {"commit_probability": 0.45, "round_index": 2, "label": 0},
+                {"commit_probability": 0.82, "round_index": 3, "label": 1},
+            ],
+        )
+
+        self.assertEqual(calibration.tau_override_by_round, {2: 0.14, 4: 0.32})
+
+    def test_fit_joint_controller_calibration_uses_feedback_grounded_commit_labels(self) -> None:
+        calibration = fit_joint_controller_calibration(
+            edit_examples=[
+                {"override_margin": 0.02, "label": 0},
+                {"override_margin": 0.11, "label": 1},
+            ],
+            commit_examples=[
+                {
+                    "commit_probability": 0.42,
+                    "round_index": 2,
+                    "label": 0,
+                    "final_native_delta": 0.30,
+                },
+                {
+                    "commit_probability": 0.72,
+                    "round_index": 3,
+                    "label": 1,
+                    "final_native_delta": -0.25,
+                },
+                {
+                    "commit_probability": 0.88,
+                    "round_index": 3,
+                    "label": 1,
+                    "final_native_delta": 0.20,
+                },
+            ],
+            source="feedback_dev",
+        )
+
+        self.assertEqual(calibration.gamma_commit, 0.88)
+        self.assertEqual(calibration.gamma_commit_by_round, {3: 0.88})
+        self.assertEqual(calibration.source, "feedback_dev")
+
+    def test_fit_joint_controller_calibration_keeps_snapshot_feedback_commit_floor(self) -> None:
+        calibration = fit_joint_controller_calibration(
+            edit_examples=[
+                {"override_margin": 0.02, "label": 0},
+                {"override_margin": 0.11, "label": 1},
+            ],
+            commit_examples=[
+                {
+                    "commit_probability": 0.22,
+                    "round_index": 2,
+                    "label": 0,
+                    "outcome_feedback_label": 1,
+                    "outcome_feedback_status": "commit_competitive_and_structured",
+                },
+                {
+                    "commit_probability": 0.58,
+                    "round_index": 3,
+                    "label": 1,
+                    "outcome_feedback_label": 0,
+                    "outcome_feedback_status": "continue_before_positive_boundary",
+                },
+                {
+                    "commit_probability": 0.86,
+                    "round_index": 3,
+                    "label": 1,
+                    "outcome_feedback_label": 1,
+                    "outcome_feedback_status": "commit_competitive_and_structured",
+                },
+            ],
+            source="snapshot_feedback_dev",
+        )
+
+        self.assertEqual(calibration.min_commit_round, 3)
+        self.assertNotIn(2, calibration.gamma_commit_by_round)
+        self.assertEqual(calibration.gamma_commit_by_round, {3: 0.86})
 
     def test_fit_joint_controller_calibration_rejects_single_class_commit_labels(self) -> None:
         with self.assertRaises(JointControllerCalibrationError):
@@ -60,6 +192,10 @@ class JointControllerCalibrationTests(unittest.TestCase):
             gamma_commit=0.73,
             min_commit_round=3,
             guard_support_threshold=0.72,
+            tau_override_by_round={2: 0.14, 4: 0.32},
+            gamma_commit_by_round={3: 0.88},
+            guard_commit_support_threshold=0.50,
+            guard_commit_utility_floor=6.50,
             source="critic_dev",
             version="joint_controller_calibration_v1",
         )
@@ -77,6 +213,10 @@ class JointControllerCalibrationTests(unittest.TestCase):
         self.assertEqual(applied["runtime_controller_gamma_commit"], 0.73)
         self.assertEqual(applied["runtime_controller_min_commit_round"], 3)
         self.assertEqual(applied["runtime_controller_guard_support_threshold"], 0.72)
+        self.assertEqual(applied["runtime_controller_tau_override_by_round"], {"2": 0.14, "4": 0.32})
+        self.assertEqual(applied["runtime_controller_gamma_commit_by_round"], {"3": 0.88})
+        self.assertEqual(applied["runtime_controller_guard_commit_support_threshold"], 0.50)
+        self.assertEqual(applied["runtime_controller_guard_commit_utility_floor"], 6.50)
 
     def test_load_joint_controller_calibration_reads_json_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -85,6 +225,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
                 json.dumps(
                     {
                         "tau_override": 0.09,
+                        "tau_override_by_round": {"2": 0.14},
                         "tau_commit": 0.08,
                         "gamma_commit": 0.71,
                         "min_commit_round": 3,
@@ -99,6 +240,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
             calibration = load_joint_controller_calibration(path)
 
             self.assertEqual(calibration.tau_override, 0.09)
+            self.assertEqual(calibration.tau_override_by_round, {2: 0.14})
             self.assertEqual(calibration.gamma_commit, 0.71)
 
     def test_runtime_controller_loader_applies_joint_calibration_artifact(self) -> None:
@@ -108,6 +250,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
                 json.dumps(
                     {
                         "tau_override": 0.13,
+                        "tau_override_by_round": {"2": 0.17, "4": 0.34},
                         "tau_commit": 0.08,
                         "gamma_commit": 0.74,
                         "min_commit_round": 4,
@@ -144,6 +287,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
             self.assertIsNotNone(controller_metadata)
             config = controller_metadata["config"]
             self.assertEqual(config.tau_override, 0.13)
+            self.assertEqual(config.tau_override_by_round, {"2": 0.17, "4": 0.34})
             self.assertEqual(config.gamma_commit, 0.74)
             self.assertEqual(config.min_commit_round, 4)
             self.assertEqual(config.guard_support_threshold, 0.75)
@@ -427,11 +571,19 @@ class JointControllerCalibrationTests(unittest.TestCase):
                                 {
                                     "round_name": "Round1",
                                     "commit_probability": 0.41,
+                                    "state_snapshot": {"nodes": {}, "edges": [], "branches": []},
+                                    "support_coverage": 0.40,
+                                    "unresolved_contradiction_ratio": 0.20,
+                                    "utility": 6.0,
                                     "commit_supervision": {"available": True, "label": 0},
                                 },
                                 {
                                     "round_name": "Round2",
                                     "commit_probability": 0.78,
+                                    "state_snapshot": {"nodes": {}, "edges": [], "branches": []},
+                                    "support_coverage": 0.88,
+                                    "unresolved_contradiction_ratio": 0.00,
+                                    "utility": 7.5,
                                     "commit_supervision": {"available": True, "label": 1},
                                 },
                             ],
@@ -464,11 +616,15 @@ class JointControllerCalibrationTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            edit_examples, commit_examples = build_joint_calibration_examples_from_packet(
-                run_manifest_path=run_manifest,
-                heuristic_baseline="ours-eig",
-                critic_baseline="ours-eig-critic-graph-twohead",
-            )
+            with patch(
+                "idea_graph.joint_controller_calibration._score_commit_example_local_overall",
+                side_effect=[6.0, 7.5],
+            ):
+                edit_examples, commit_examples = build_joint_calibration_examples_from_packet(
+                    run_manifest_path=run_manifest,
+                    heuristic_baseline="ours-eig",
+                    critic_baseline="ours-eig-critic-graph-twohead",
+                )
 
             self.assertEqual(len(edit_examples), 2)
             self.assertEqual(edit_examples[0]["group_id"], "g1")
@@ -483,8 +639,10 @@ class JointControllerCalibrationTests(unittest.TestCase):
             self.assertEqual(len(commit_examples), 2)
             self.assertEqual(commit_examples[0]["round_index"], 1)
             self.assertEqual(commit_examples[0]["label"], 0)
+            self.assertEqual(commit_examples[0]["outcome_feedback_label"], 0)
             self.assertEqual(commit_examples[1]["round_index"], 2)
             self.assertEqual(commit_examples[1]["label"], 1)
+            self.assertEqual(commit_examples[1]["outcome_feedback_label"], 1)
             self.assertAlmostEqual(commit_examples[1]["commit_probability"], 0.78)
 
     def test_build_joint_calibration_examples_from_packet_marks_bad_overrides_negative(self) -> None:

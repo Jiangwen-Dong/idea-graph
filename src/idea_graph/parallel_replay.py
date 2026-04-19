@@ -283,4 +283,5 @@ def build_post_round_commit_row(
         "controller_kind": str(getattr(commit_check, "controller_kind", "") or ""),
         "commit_probability": getattr(commit_check, "commit_probability", None),
         "commit_threshold": getattr(commit_check, "commit_threshold", None),
+        "commit_guard_reason": str(getattr(commit_check, "commit_guard_reason", "") or ""),
     }

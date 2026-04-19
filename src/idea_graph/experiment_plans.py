@@ -159,6 +159,30 @@ ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
             "idea_graph_protocol_variant": "eig_parallel_v2_twohead_no_edit",
         },
     ),
+    "ours-eig-fixed-control": ExperimentMethodPlan(
+        name="ours-eig-fixed-control",
+        baseline_name="ours-eig-fixed-control",
+        restarts=1,
+        max_rounds=5,
+        stop_when_mature=False,
+        runtime_protocol="parallel_graph_v2",
+        rationale="Parallel EIG with a frozen role-and-round edit policy and fixed five-round stopping.",
+        metadata_overrides={
+            "idea_graph_protocol_variant": "eig_parallel_v2_fixed_control",
+        },
+    ),
+    "ours-eig-random-control": ExperimentMethodPlan(
+        name="ours-eig-random-control",
+        baseline_name="ours-eig-random-control",
+        restarts=3,
+        max_rounds=5,
+        stop_when_mature=False,
+        runtime_protocol="parallel_graph_v2",
+        rationale="Parallel EIG with seeded random legal action selection and fixed five-round stopping.",
+        metadata_overrides={
+            "idea_graph_protocol_variant": "eig_parallel_v2_random_control",
+        },
+    ),
     "ours-early-consensus": ExperimentMethodPlan(
         name="ours-early-consensus",
         baseline_name="ours-eig",

@@ -80,6 +80,32 @@ class CriticPolicyTests(unittest.TestCase):
         self.assertEqual(decision.selected_candidate_id, "critic-best")
         self.assertFalse(decision.used_heuristic_fallback)
 
+    def test_override_uses_round_specific_threshold(self) -> None:
+        round2_decision = choose_critic_action(
+            state=self._state(round_index=2),
+            critic_candidates=[self._candidate("critic-best", score=0.72)],
+            heuristic_candidate=self._candidate("heuristic-best", score=0.60),
+            config=SafeCriticPolicyConfig(
+                tau_override=0.05,
+                tau_override_by_round={2: 0.15},
+            ),
+        )
+        round3_decision = choose_critic_action(
+            state=self._state(round_index=3),
+            critic_candidates=[self._candidate("critic-best", score=0.72)],
+            heuristic_candidate=self._candidate("heuristic-best", score=0.60),
+            config=SafeCriticPolicyConfig(
+                tau_override=0.05,
+                tau_override_by_round={2: 0.15},
+            ),
+        )
+
+        self.assertEqual(round2_decision.selected_candidate_id, "heuristic-best")
+        self.assertTrue(round2_decision.used_heuristic_fallback)
+        self.assertEqual(round2_decision.fallback_reason, "override_margin_below_threshold")
+        self.assertEqual(round3_decision.selected_candidate_id, "critic-best")
+        self.assertFalse(round3_decision.used_heuristic_fallback)
+
     def test_commit_selected_when_margin_and_confidence_are_high_enough(self) -> None:
         decision = choose_critic_action(
             state=self._state(round_index=3),
@@ -92,6 +118,38 @@ class CriticPolicyTests(unittest.TestCase):
         )
         self.assertEqual(decision.selected_candidate_id, "commit")
         self.assertTrue(decision.commit_allowed)
+
+    def test_commit_uses_round_specific_confidence_threshold(self) -> None:
+        round3_decision = choose_critic_action(
+            state=self._state(round_index=3),
+            critic_candidates=[
+                self._candidate("commit", score=0.94, is_commit=True, confidence=0.90),
+                self._candidate("critic-edit", score=0.76),
+            ],
+            heuristic_candidate=self._candidate("heuristic-edit", score=0.70),
+            config=SafeCriticPolicyConfig(
+                min_commit_round=2,
+                gamma_commit=0.60,
+                gamma_commit_by_round={3: 0.95, 4: 0.80},
+            ),
+        )
+        round4_decision = choose_critic_action(
+            state=self._state(round_index=4),
+            critic_candidates=[
+                self._candidate("commit", score=0.94, is_commit=True, confidence=0.90),
+                self._candidate("critic-edit", score=0.76),
+            ],
+            heuristic_candidate=self._candidate("heuristic-edit", score=0.70),
+            config=SafeCriticPolicyConfig(
+                min_commit_round=2,
+                gamma_commit=0.60,
+                gamma_commit_by_round={3: 0.95, 4: 0.80},
+            ),
+        )
+
+        self.assertEqual(round3_decision.selected_candidate_id, "critic-edit")
+        self.assertEqual(round3_decision.fallback_reason, "commit_confidence_below_round_threshold")
+        self.assertEqual(round4_decision.selected_candidate_id, "commit")
 
     def test_blocks_fragile_maturity_jump_without_support_gain(self) -> None:
         decision = choose_critic_action(

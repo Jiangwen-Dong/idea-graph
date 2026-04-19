@@ -12,6 +12,7 @@ from .critic_policy import (
     SafeCriticPolicyConfig,
     ScoredCandidate,
     choose_critic_action,
+    commit_threshold_for_round,
 )
 from .models import IdeaGraph
 from .relation_graph_critic_data import (
@@ -30,14 +31,18 @@ from .relation_graph_critic_model import RelationGraphCritic
 @dataclass(frozen=True)
 class RelationGraphRuntimeConfig:
     tau_override: float = 0.05
+    tau_override_by_round: Mapping[int | str, float] | None = None
     tau_commit: float = 0.08
     gamma_commit: float = 0.60
+    gamma_commit_by_round: Mapping[int | str, float] | None = None
     min_commit_round: int = 2
     use_edit: bool = True
     use_commit: bool = False
     guard_support_threshold: float = 0.66
     guard_support_gain_floor: float = 0.10
     guard_requires_contradiction_progress: bool = False
+    guard_commit_support_threshold: float = 0.0
+    guard_commit_utility_floor: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -770,13 +775,17 @@ def select_relation_graph_critic_candidate(
     policy_config = SafeCriticPolicyConfig(
         min_commit_round=int(config.min_commit_round),
         tau_override=float(config.tau_override),
+        tau_override_by_round=dict(config.tau_override_by_round or {}),
         tau_commit=float(config.tau_commit),
         gamma_commit=float(config.gamma_commit),
+        gamma_commit_by_round=dict(config.gamma_commit_by_round or {}),
         guard_support_threshold=float(config.guard_support_threshold),
         guard_support_gain_floor=float(config.guard_support_gain_floor),
         guard_requires_contradiction_progress=bool(
             config.guard_requires_contradiction_progress
         ),
+        guard_commit_support_threshold=float(config.guard_commit_support_threshold),
+        guard_commit_utility_floor=float(config.guard_commit_utility_floor),
     )
     policy_decision = choose_critic_action(
         state={

@@ -260,6 +260,8 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIn("ours-eig-critic-calibrated", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-no-commit", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-no-edit", BASELINE_SPECS)
+        self.assertIn("ours-eig-fixed-control", BASELINE_SPECS)
+        self.assertIn("ours-eig-random-control", BASELINE_SPECS)
         self.assertEqual(BASELINE_SPECS["ai-researcher"].strategy, "external")
         self.assertIn("ai-researcher-proxy", BASELINE_SPECS)
         self.assertIn("scipip-proxy", BASELINE_SPECS)
@@ -273,6 +275,14 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(
             BASELINE_SPECS["ours-eig-critic-graph-twohead"].runtime_controller,
             "relation_graph_two_head_critic",
+        )
+        self.assertEqual(
+            BASELINE_SPECS["ours-eig-fixed-control"].runtime_controller,
+            "fixed_control",
+        )
+        self.assertEqual(
+            BASELINE_SPECS["ours-eig-random-control"].runtime_controller,
+            "random_control",
         )
 
     def test_attach_baseline_metadata_enables_relation_graph_runtime_defaults(self) -> None:
@@ -344,6 +354,32 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
         self.assertTrue(Path(no_edit.metadata["runtime_controller_calibration_path"]).is_file())
 
+    def test_attach_baseline_metadata_enables_fixed_and_random_control_variants(self) -> None:
+        fixed = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-fixed-control",
+            io_mode="auto",
+        )
+        random = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-random-control",
+            io_mode="auto",
+        )
+
+        self.assertEqual(fixed.metadata["baseline_name"], "ours-eig-fixed-control")
+        self.assertEqual(fixed.metadata["runtime_controller_kind"], "fixed_control")
+        self.assertTrue(fixed.metadata["runtime_controller_use_edit"])
+        self.assertFalse(fixed.metadata["runtime_controller_use_commit"])
+        self.assertEqual(fixed.metadata["max_rounds_hint"], 5)
+        self.assertTrue(Path(fixed.metadata["runtime_controller_policy_path"]).is_file())
+
+        self.assertEqual(random.metadata["baseline_name"], "ours-eig-random-control")
+        self.assertEqual(random.metadata["runtime_controller_kind"], "random_control")
+        self.assertTrue(random.metadata["runtime_controller_use_edit"])
+        self.assertFalse(random.metadata["runtime_controller_use_commit"])
+        self.assertEqual(random.metadata["max_rounds_hint"], 5)
+        self.assertEqual(random.metadata["runtime_controller_random_seed"], 0)
+
     def test_attach_baseline_metadata_uses_parallel_runtime_for_ours_eig_family(self) -> None:
         eig_instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
@@ -365,11 +401,23 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             baseline_name="ours-eig-critic-graph-twohead",
             io_mode="auto",
         )
+        fixed_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-fixed-control",
+            io_mode="auto",
+        )
+        random_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-random-control",
+            io_mode="auto",
+        )
 
         self.assertEqual(eig_instance.metadata["runtime_protocol"], "parallel_graph_v2")
         self.assertEqual(text_instance.metadata["runtime_protocol"], "parallel_graph_v2")
         self.assertEqual(graph_instance.metadata["runtime_protocol"], "parallel_graph_v2")
         self.assertEqual(twohead_instance.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(fixed_instance.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(random_instance.metadata["runtime_protocol"], "parallel_graph_v2")
 
     def test_attach_baseline_metadata_overwrites_stale_controller_fields_on_baseline_switch(self) -> None:
         text_instance = attach_baseline_metadata(
@@ -491,6 +539,92 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         assert runtime_metadata is not None
         self.assertEqual(runtime_metadata["kind"], "relation_graph_two_head_critic")
         self.assertTrue(runtime_metadata["use_commit"])
+
+    def test_runtime_builder_loads_fixed_control_policy_from_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            policy_path = Path(tmp_dir) / "fixed_control_policy.json"
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "Round1": {
+                            "MechanismProposer": ["attach_evidence", "add_support_edge", "skip"],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            graph = IdeaGraph(
+                topic="runtime test",
+                literature=[],
+                metadata={
+                    "runtime_controller_kind": "fixed_control",
+                    "runtime_controller_policy_path": str(policy_path),
+                },
+            )
+            baseline = BASELINE_SPECS["ours-eig-fixed-control"]
+
+            runtime_controller, runtime_metadata = _maybe_build_runtime_controller(graph, baseline)
+
+        self.assertIsNotNone(runtime_controller)
+        self.assertIsNotNone(runtime_metadata)
+        assert runtime_controller is not None
+        assert runtime_metadata is not None
+        selected = runtime_controller.choose(
+            round_name="Round1",
+            role="MechanismProposer",
+            candidate_specs=[
+                {"candidate_id": "c0", "kind": "add_support_edge"},
+                {"candidate_id": "c1", "kind": "attach_evidence"},
+                {"candidate_id": "c2", "kind": "skip"},
+            ],
+        )
+        self.assertEqual(selected["candidate_id"], "c1")
+        self.assertEqual(runtime_metadata["kind"], "fixed_control")
+        self.assertEqual(runtime_metadata["policy_path"], str(policy_path.resolve()))
+        self.assertFalse(runtime_metadata["use_commit"])
+
+    def test_runtime_builder_loads_random_control_policy_with_seed(self) -> None:
+        graph = IdeaGraph(
+            topic="runtime test",
+            literature=[],
+            metadata={
+                "runtime_controller_kind": "random_control",
+                "runtime_controller_random_seed": 7,
+                "batch_restart": 2,
+            },
+        )
+        baseline = BASELINE_SPECS["ours-eig-random-control"]
+
+        runtime_controller, runtime_metadata = _maybe_build_runtime_controller(graph, baseline)
+
+        self.assertIsNotNone(runtime_controller)
+        self.assertIsNotNone(runtime_metadata)
+        assert runtime_controller is not None
+        assert runtime_metadata is not None
+        first_pick = runtime_controller.choose(
+            round_name="Round1",
+            role="MechanismProposer",
+            candidate_specs=[
+                {"candidate_id": "c0", "kind": "add_support_edge"},
+                {"candidate_id": "c1", "kind": "attach_evidence"},
+                {"candidate_id": "c2", "kind": "skip"},
+            ],
+        )
+        second_controller, _ = _maybe_build_runtime_controller(graph, baseline)
+        assert second_controller is not None
+        second_pick = second_controller.choose(
+            round_name="Round1",
+            role="MechanismProposer",
+            candidate_specs=[
+                {"candidate_id": "c0", "kind": "add_support_edge"},
+                {"candidate_id": "c1", "kind": "attach_evidence"},
+                {"candidate_id": "c2", "kind": "skip"},
+            ],
+        )
+        self.assertEqual(first_pick["candidate_id"], second_pick["candidate_id"])
+        self.assertEqual(runtime_metadata["kind"], "random_control")
+        self.assertEqual(runtime_metadata["seed"], 9)
+        self.assertFalse(runtime_metadata["use_commit"])
 
     def test_controller_baseline_fails_closed_when_runtime_bundle_missing(self) -> None:
         instance = attach_baseline_metadata(

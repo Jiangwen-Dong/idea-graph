@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, Mapping
 
 from .agent_backend import ActionDecision, append_agent_trace
 from .action_candidates import enumerate_edit_candidate_specs
@@ -22,6 +22,7 @@ from .models import (
 from .parallel_replay import build_parallel_edit_rows, build_post_round_commit_row
 from .parallel_role_executor import collect_parallel_role_decisions
 from .relation_graph_runtime_critic import select_relation_graph_critic_candidate
+from .critic_policy import commit_threshold_for_round
 from .runtime_critic import select_text_critic_candidate
 from .role_activation import active_roles_for_round
 
@@ -159,6 +160,82 @@ def _maybe_apply_runtime_controller(
             continue
         heuristic_candidate_id = str(valid_candidates[0].get("candidate_id", "")).strip()
         controller_decision = None
+        if controller_kind in {"fixed_control", "random_control"}:
+            choose_candidate = getattr(runtime_controller, "choose", None)
+            if not callable(choose_candidate):
+                controlled_decisions.append((role, decision))
+                continue
+            try:
+                selected_raw = choose_candidate(
+                    round_name=round_name,
+                    role=role,
+                    candidate_specs=valid_candidates,
+                )
+            except TypeError:
+                selected_raw = choose_candidate(
+                    round_name=round_name,
+                    role=role,
+                    candidates=valid_candidates,
+                )
+            selected_mapping = dict(selected_raw) if isinstance(selected_raw, Mapping) else {}
+            selected_candidate_id = str(selected_mapping.get("candidate_id", "")).strip()
+            selected_candidate = next(
+                (
+                    dict(candidate)
+                    for candidate in valid_candidates
+                    if str(candidate.get("candidate_id", "")).strip() == selected_candidate_id
+                ),
+                None,
+            )
+            if selected_candidate is None:
+                selected_kind = str(selected_mapping.get("kind", "")).strip()
+                selected_candidate = next(
+                    (
+                        dict(candidate)
+                        for candidate in valid_candidates
+                        if str(candidate.get("kind", "")).strip() == selected_kind
+                    ),
+                    dict(valid_candidates[0]),
+                )
+            selected_candidate_id = str(selected_candidate.get("candidate_id", "")).strip()
+            selected_source = f"{controller_kind}_policy"
+            scored_candidates = [
+                {
+                    **candidate,
+                    "critic_score": 1.0
+                    if str(candidate.get("candidate_id", "")).strip() == selected_candidate_id
+                    else 0.0,
+                    "controller_kind": controller_kind,
+                }
+                for candidate in valid_candidates
+            ]
+            selected_candidate = {
+                **selected_candidate,
+                "critic_score": 1.0,
+                "controller_kind": controller_kind,
+                "controller_selected_source": selected_source,
+                "controller_override_margin": None,
+                "controller_used_heuristic_fallback": False,
+                "controller_fallback_reason": "",
+                "controller_fallback_candidate_ids": (),
+            }
+            _record_runtime_controller_trace(
+                graph,
+                round_name=round_name,
+                role=role,
+                controller_kind=controller_kind,
+                heuristic_candidate=dict(valid_candidates[0]),
+                selected_candidate=selected_candidate,
+                controller_decision={
+                    "selected_source": selected_source,
+                    "override_margin": None,
+                    "used_heuristic_fallback": False,
+                },
+                scored_candidates=scored_candidates,
+            )
+            controlled_decisions.append((role, _action_decision_from_candidate(selected_candidate)))
+            used_controller = True
+            continue
         if controller_kind == "text_critic_rerank":
             controller_decision = select_text_critic_candidate(
                 snapshot,
@@ -242,9 +319,21 @@ def _runtime_commit_check(
         and bool(getattr(controller_config, "use_commit", False))
         and _round_index(round_name) >= int(getattr(controller_config, "min_commit_round", 0))
     ):
+        round_index = _round_index(round_name)
         probability = float(score_commit_graph(graph, snapshot=post_round_snapshot))
-        threshold = float(getattr(controller_config, "gamma_commit", 0.60))
-        should_commit = probability >= threshold
+        threshold = commit_threshold_for_round(
+            round_index=round_index,
+            default_threshold=float(getattr(controller_config, "gamma_commit", 0.60)),
+            thresholds_by_round=getattr(controller_config, "gamma_commit_by_round", None),
+        )
+        guard_reason = ""
+        support_threshold = float(getattr(controller_config, "guard_commit_support_threshold", 0.0))
+        utility_floor = float(getattr(controller_config, "guard_commit_utility_floor", 0.0))
+        if probability >= threshold and support_threshold > 0.0 and float(post_round_snapshot.support_coverage) < support_threshold:
+            guard_reason = "support_below_commit_guard"
+        elif probability >= threshold and utility_floor > 0.0 and float(post_round_snapshot.utility) < utility_floor:
+            guard_reason = "utility_below_commit_guard"
+        should_commit = probability >= threshold and not guard_reason
         return ParallelCommitCheckRecord(
             round_name=round_name,
             state_kind="parallel_post_round",
@@ -256,6 +345,7 @@ def _runtime_commit_check(
             controller_kind=controller_kind,
             commit_probability=probability,
             commit_threshold=threshold,
+            commit_guard_reason=guard_reason,
         )
 
     return ParallelCommitCheckRecord(

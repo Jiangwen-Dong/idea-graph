@@ -102,6 +102,8 @@ class ExperimentPlanTests(unittest.TestCase):
             "ours-eig-critic-calibrated",
             "ours-eig-critic-no-commit",
             "ours-eig-critic-no-edit",
+            "ours-eig-fixed-control",
+            "ours-eig-random-control",
         }
         self.assertTrue(expected.issubset(ABLATION_METHOD_PLANS))
 
@@ -144,6 +146,34 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
         self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
         self.assertIn("runtime_controller_calibration_path", no_edit.metadata)
+
+        fixed = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=ABLATION_METHOD_PLANS["ours-eig-fixed-control"],
+        )
+        self.assertEqual(fixed.metadata["method_name"], "ours-eig-fixed-control")
+        self.assertEqual(fixed.metadata["runner_baseline_name"], "ours-eig-fixed-control")
+        self.assertEqual(fixed.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(fixed.metadata["runtime_controller_kind"], "fixed_control")
+        self.assertFalse(fixed.metadata["runtime_controller_use_commit"])
+        self.assertEqual(fixed.metadata["method_plan"]["max_rounds"], 5)
+        self.assertFalse(fixed.metadata["method_plan"]["stop_when_mature"])
+        self.assertTrue(fixed.metadata["runtime_controller_policy_path"].replace("\\", "/").endswith(
+            "data/splits/parallel_v2/fixed_control_policy.json"
+        ))
+
+        random = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=ABLATION_METHOD_PLANS["ours-eig-random-control"],
+        )
+        self.assertEqual(random.metadata["method_name"], "ours-eig-random-control")
+        self.assertEqual(random.metadata["runner_baseline_name"], "ours-eig-random-control")
+        self.assertEqual(random.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(random.metadata["runtime_controller_kind"], "random_control")
+        self.assertFalse(random.metadata["runtime_controller_use_commit"])
+        self.assertEqual(random.metadata["method_plan"]["max_rounds"], 5)
+        self.assertFalse(random.metadata["method_plan"]["stop_when_mature"])
+        self.assertEqual(random.metadata["runtime_controller_random_seed"], 0)
 
     def test_main_method_plan_includes_exact_ai_researcher(self) -> None:
         self.assertIn("ai-researcher", MAIN_METHOD_PLANS)

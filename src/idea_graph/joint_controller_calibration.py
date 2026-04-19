@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .commit_label_repair import relabel_scored_commit_rows
 from .fs_utils import read_text_file, write_text_file
 
 
@@ -20,6 +21,10 @@ class JointControllerCalibration:
     min_commit_round: int
     guard_support_threshold: float
     source: str
+    tau_override_by_round: dict[int, float] = field(default_factory=dict)
+    gamma_commit_by_round: dict[int, float] = field(default_factory=dict)
+    guard_commit_support_threshold: float = 0.0
+    guard_commit_utility_floor: float = 0.0
     version: str = "joint_controller_calibration_v1"
 
     def as_dict(self) -> dict[str, object]:
@@ -45,6 +50,147 @@ def _label(value: object) -> int:
     if label not in {0, 1}:
         raise JointControllerCalibrationError("Calibration labels must be binary 0/1 values.")
     return label
+
+
+def _round_float_map(value: object) -> dict[int, float]:
+    if not isinstance(value, Mapping):
+        return {}
+    normalized: dict[int, float] = {}
+    for key, item in value.items():
+        try:
+            normalized[int(str(key).strip())] = float(item)
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def _feedback_commit_label(example: Mapping[str, object]) -> int:
+    explicit_feedback = example.get("feedback_label", example.get("outcome_feedback_label"))
+    if explicit_feedback is not None:
+        return _label(explicit_feedback)
+    label = _label(example.get("label"))
+    final_native_delta = example.get("final_native_delta")
+    if final_native_delta is None:
+        return label
+    try:
+        delta = float(final_native_delta)
+    except (TypeError, ValueError):
+        return label
+    if label == 0:
+        return 0
+    return 1 if delta >= 0.0 else 0
+
+
+def _as_object_dict(value: object) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
+
+
+def _score_commit_example_local_overall(example: Mapping[str, object]) -> float:
+    from .candidate_slate_dataset import graph_from_state_snapshot
+    from .engine import select_final_subgraph, synthesize_proposal
+    from .evaluation import evaluate_graph
+
+    snapshot = _as_object_dict(example.get("state_snapshot"))
+    if not snapshot:
+        raise JointControllerCalibrationError("Commit example is missing an inline state_snapshot.")
+    literature = [
+        str(item).strip()
+        for item in example.get("literature", [])
+        if str(item).strip()
+    ] if isinstance(example.get("literature"), list) else []
+    graph = graph_from_state_snapshot(
+        snapshot,
+        topic=str(example.get("topic", "")).strip(),
+        literature=literature,
+        role="CommitController",
+        round_name=str(example.get("round_name", "")).strip(),
+    )
+    graph.metadata["benchmark"] = str(example.get("benchmark", "")).strip()
+    graph.metadata["instance_name"] = str(example.get("instance_name", "")).strip()
+    graph.final_subgraph = select_final_subgraph(graph)
+    graph.final_proposal = synthesize_proposal(graph, graph.final_subgraph)
+    evaluation = evaluate_graph(graph)
+    return float(evaluation.overall_score)
+
+
+def _attach_snapshot_feedback_to_commit_examples(
+    commit_examples: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    rows = [dict(example) for example in commit_examples]
+    scored_rows: list[dict[str, object]] = []
+    scored_keys: list[tuple[str, int, str]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row.get("state_snapshot"), Mapping):
+            continue
+        row_key = (
+            str(row.get("run_dir", row.get("group_id", ""))).strip(),
+            int(row.get("post_round_state_index", index) or index),
+            str(row.get("state_id", row.get("round_name", index))).strip(),
+        )
+        scored_row = dict(row)
+        scored_row.setdefault(
+            "commit_supervision",
+            {
+                "available": True,
+                "label": _label(scored_row.get("label")),
+                "source": str(scored_row.get("label_source", "logged_commit")).strip()
+                or "logged_commit",
+            },
+        )
+        try:
+            scored_row["outcome_local_overall"] = _score_commit_example_local_overall(scored_row)
+        except Exception as exc:
+            rows[index]["outcome_feedback_available"] = False
+            rows[index]["outcome_scoring_error"] = str(exc)
+            continue
+        scored_rows.append(scored_row)
+        scored_keys.append(row_key)
+
+    if not scored_rows:
+        return rows
+
+    repaired_rows, _audit = relabel_scored_commit_rows(scored_rows)
+    repaired_by_key: dict[tuple[str, int, str], dict[str, object]] = {}
+    for row_key, repaired_row in zip(scored_keys, repaired_rows, strict=True):
+        repaired_by_key[row_key] = dict(repaired_row)
+
+    for index, row in enumerate(rows):
+        row_key = (
+            str(row.get("run_dir", row.get("group_id", ""))).strip(),
+            int(row.get("post_round_state_index", index) or index),
+            str(row.get("state_id", row.get("round_name", index))).strip(),
+        )
+        repaired = repaired_by_key.get(row_key)
+        if repaired is None:
+            continue
+        feedback = _as_object_dict(repaired.get("outcome_grounded_commit_label"))
+        supervision = _as_object_dict(repaired.get("commit_supervision"))
+        row["outcome_local_overall"] = repaired.get("outcome_local_overall", 0.0)
+        row["outcome_feedback_available"] = bool(feedback.get("available", False))
+        row["outcome_feedback_label"] = (
+            _label(feedback.get("label")) if bool(feedback.get("available", False)) else 0
+        )
+        row["outcome_feedback_status"] = str(feedback.get("status", "")).strip()
+        row["future_best_local_overall"] = _as_float(
+            feedback.get("future_best_local_overall", row.get("outcome_local_overall", 0.0)),
+            key="future_best_local_overall",
+        )
+        row["episode_best_local_overall"] = _as_float(
+            feedback.get("episode_best_local_overall", row.get("outcome_local_overall", 0.0)),
+            key="episode_best_local_overall",
+        )
+        row["future_improvement"] = _as_float(
+            feedback.get("future_improvement", 0.0),
+            key="future_improvement",
+        )
+        row["positive_signal_count"] = _as_int(
+            feedback.get("positive_signal_count", 0),
+            key="positive_signal_count",
+        )
+        row["outcome_feedback_logged_label"] = supervision.get("logged_label", row.get("label"))
+    return rows
 
 
 def _load_json_object(path: str | Path) -> dict[str, Any]:
@@ -162,29 +308,73 @@ def fit_joint_controller_calibration(
         )
         for example in edit_examples
     ]
+    edit_pairs_by_round: dict[int, list[tuple[float, int]]] = {}
+    for example, pair in zip(edit_examples, edit_pairs, strict=True):
+        round_index = _as_int(example.get("round_index", 0), key="round_index")
+        if round_index <= 0:
+            continue
+        edit_pairs_by_round.setdefault(round_index, []).append(pair)
     commit_pairs = [
         (
             _as_float(example.get("commit_probability"), key="commit_probability"),
-            _label(example.get("label")),
+            _feedback_commit_label(example),
         )
         for example in commit_examples
     ]
     positive_commit_rounds = [
         _as_int(example.get("round_index"), key="round_index")
         for example in commit_examples
-        if _label(example.get("label")) == 1
+        if _feedback_commit_label(example) == 1
     ]
     if not positive_commit_rounds:
         raise JointControllerCalibrationError(
             "Commit calibration requires both positive and negative labels."
         )
 
+    has_snapshot_feedback = any(
+        "outcome_feedback_label" in example or "outcome_feedback_status" in example
+        for example in commit_examples
+    )
+    min_commit_round = max(1, min(positive_commit_rounds))
+    if has_snapshot_feedback:
+        min_commit_round = max(3, min_commit_round)
+
+    tau_override_by_round: dict[int, float] = {}
+    for round_index, round_pairs in sorted(edit_pairs_by_round.items()):
+        labels = {label for _, label in round_pairs}
+        if labels != {0, 1}:
+            continue
+        tau_override_by_round[int(round_index)] = round(
+            _best_threshold(round_pairs, positive_tie_break="high"),
+            4,
+        )
+
+    commit_pairs_by_round: dict[int, list[tuple[float, int]]] = {}
+    for example, pair in zip(commit_examples, commit_pairs, strict=True):
+        round_index = _as_int(example.get("round_index"), key="round_index")
+        if round_index <= 0 or round_index < min_commit_round:
+            continue
+        commit_pairs_by_round.setdefault(round_index, []).append(pair)
+    gamma_commit_by_round: dict[int, float] = {}
+    for round_index, round_pairs in sorted(commit_pairs_by_round.items()):
+        labels = {label for _, label in round_pairs}
+        if labels != {0, 1}:
+            continue
+        gamma_commit_by_round[int(round_index)] = round(
+            _best_threshold(round_pairs, positive_tie_break="high"),
+            4,
+        )
+
     return JointControllerCalibration(
         tau_override=round(_best_threshold(edit_pairs, positive_tie_break="high"), 4),
         tau_commit=0.08,
         gamma_commit=round(_best_threshold(commit_pairs, positive_tie_break="high"), 4),
-        min_commit_round=max(1, min(positive_commit_rounds)),
+        min_commit_round=min_commit_round,
         guard_support_threshold=0.66,
+        tau_override_by_round=tau_override_by_round,
+        gamma_commit_by_round=gamma_commit_by_round,
+        guard_commit_support_threshold=0.0,
+        guard_commit_utility_floor=0.0,
         source=str(source).strip() or "critic_dev",
     )
 
@@ -305,7 +495,13 @@ def build_joint_calibration_examples_from_packet(
 
         raw_commit_rows = metadata.get("post_round_commit_rows", [])
         if isinstance(raw_commit_rows, list):
-            for row in raw_commit_rows:
+            graph_topic = str(critic_graph.get("topic", "")).strip()
+            graph_literature = [
+                str(item).strip()
+                for item in critic_graph.get("literature", [])
+                if str(item).strip()
+            ] if isinstance(critic_graph.get("literature"), list) else []
+            for state_index, row in enumerate(raw_commit_rows):
                 if not isinstance(row, Mapping):
                     continue
                 commit_supervision = row.get("commit_supervision", {})
@@ -317,12 +513,20 @@ def build_joint_calibration_examples_from_packet(
                 if probability is None:
                     continue
                 round_name = str(row.get("round_name", "")).strip()
-                commit_examples.append(
-                    {
+                commit_example: dict[str, object] = {
                         "group_id": group_id,
+                        "run_dir": str(critic_run_dir),
                         "instance_name": instance_name,
                         "round_name": round_name,
                         "round_index": _round_index(round_name),
+                        "post_round_state_index": state_index,
+                        "state_id": str(row.get("state_id", "")).strip()
+                        or f"{group_id}::{round_name}::post_round_commit",
+                        "benchmark": str(
+                            row.get("benchmark", metadata.get("benchmark", ""))
+                        ).strip(),
+                        "topic": str(row.get("topic", graph_topic)).strip(),
+                        "literature": graph_literature,
                         "commit_probability": _as_float(probability, key="commit_probability"),
                         "label": _label(commit_supervision.get("label")),
                         "label_source": str(
@@ -341,9 +545,12 @@ def build_joint_calibration_examples_from_packet(
                         "critic_final_native_average": critic_native,
                         "final_native_delta": final_native_delta,
                     }
-                )
+                state_snapshot = row.get("state_snapshot")
+                if isinstance(state_snapshot, Mapping):
+                    commit_example["state_snapshot"] = dict(state_snapshot)
+                commit_examples.append(commit_example)
 
-    return edit_examples, commit_examples
+    return edit_examples, _attach_snapshot_feedback_to_commit_examples(commit_examples)
 
 
 def load_joint_controller_calibration(path: str | Path) -> JointControllerCalibration:
@@ -358,6 +565,16 @@ def load_joint_controller_calibration(path: str | Path) -> JointControllerCalibr
         guard_support_threshold=_as_float(
             payload.get("guard_support_threshold"),
             key="guard_support_threshold",
+        ),
+        tau_override_by_round=_round_float_map(payload.get("tau_override_by_round")),
+        gamma_commit_by_round=_round_float_map(payload.get("gamma_commit_by_round")),
+        guard_commit_support_threshold=_as_float(
+            payload.get("guard_commit_support_threshold", 0.0),
+            key="guard_commit_support_threshold",
+        ),
+        guard_commit_utility_floor=_as_float(
+            payload.get("guard_commit_utility_floor", 0.0),
+            key="guard_commit_utility_floor",
         ),
         source=str(payload.get("source", "")).strip() or "critic_dev",
         version=str(payload.get("version", "")).strip() or "joint_controller_calibration_v1",
@@ -381,10 +598,22 @@ def apply_joint_controller_calibration(
 ) -> dict[str, object]:
     updated = dict(metadata)
     updated["runtime_controller_tau_override"] = float(calibration.tau_override)
+    updated["runtime_controller_tau_override_by_round"] = {
+        str(key): float(value) for key, value in calibration.tau_override_by_round.items()
+    }
     updated["runtime_controller_tau_commit"] = float(calibration.tau_commit)
     updated["runtime_controller_gamma_commit"] = float(calibration.gamma_commit)
+    updated["runtime_controller_gamma_commit_by_round"] = {
+        str(key): float(value) for key, value in calibration.gamma_commit_by_round.items()
+    }
     updated["runtime_controller_min_commit_round"] = int(calibration.min_commit_round)
     updated["runtime_controller_guard_support_threshold"] = float(calibration.guard_support_threshold)
+    updated["runtime_controller_guard_commit_support_threshold"] = float(
+        calibration.guard_commit_support_threshold
+    )
+    updated["runtime_controller_guard_commit_utility_floor"] = float(
+        calibration.guard_commit_utility_floor
+    )
     updated["runtime_controller_calibration_source"] = calibration.source
     updated["runtime_controller_calibration_version"] = calibration.version
     return updated
