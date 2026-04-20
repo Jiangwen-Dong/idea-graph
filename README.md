@@ -19,13 +19,11 @@ internal research logs.
 - Baseline adapters and controller variants used by the research prototype
 - Public configuration examples in `configs/`
 - Unit tests in `tests/`
-- A synthetic toy input in `data/sample_instance.json`
 
 ## What Is Not Included
 
 - `outputs/`: generated runs, tables, logs, and paper-evaluation results
-- `data/benchmarks/`: downloaded benchmark files and paper assets
-- `data/splits/`: private train/dev/evaluation split registries
+- `data/`: local benchmark downloads, split registries, and user-supplied inputs
 - `docs/`: internal plans, execution logs, and project records
 - `models/`, `checkpoints/`, and serialized critic artifacts
 - Any API keys or provider-specific private configs
@@ -47,21 +45,37 @@ release.
 
 ## Quick Start
 
-Run the deterministic toy example:
+Run the pipeline on your own JSON instance:
 
 ```bash
-python scripts/run_pipeline.py
+python scripts/run_pipeline.py --input /path/to/instance.json
 ```
 
-This uses `data/sample_instance.json` and writes local artifacts under
-`outputs/`, which is ignored by Git.
+The input JSON should contain the fields `name`, `topic`, and `literature`.
+A minimal example looks like:
 
-Run a specific local baseline on the toy input:
+```json
+{
+  "name": "my-idea",
+  "topic": "Collaborative scientific ideation over typed idea graphs",
+  "literature": [
+    "Prior systems often decide too early over whole drafts.",
+    "Structured state can preserve partial claims and dependencies."
+  ],
+  "metadata": {
+    "source": "local"
+  }
+}
+```
+
+Runs write artifacts under `outputs/`, which is ignored by Git.
+
+Run a specific local baseline on your JSON input:
 
 ```bash
-python scripts/run_pipeline.py --baseline direct
-python scripts/run_pipeline.py --baseline self-refine
-python scripts/run_pipeline.py --baseline ours-eig --runtime-protocol parallel_graph_v2
+python scripts/run_pipeline.py --input /path/to/instance.json --baseline direct
+python scripts/run_pipeline.py --input /path/to/instance.json --baseline self-refine
+python scripts/run_pipeline.py --input /path/to/instance.json --baseline ours-eig --runtime-protocol parallel_graph_v2
 ```
 
 ## OpenAI-Compatible Backend
@@ -86,8 +100,8 @@ as `DASHSCOPE_API_KEY` or `OPENAI_API_KEY`, not a literal key.
 
 ## Benchmarks
 
-Benchmark data is not committed. To run benchmark loaders locally, download the
-official files into ignored local directories:
+Benchmark data is not committed. By default, the fetch scripts download the
+official files into ignored local paths under `data/benchmarks/`:
 
 ```bash
 python scripts/fetch_ai_idea_bench_2025.py
@@ -101,8 +115,17 @@ python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 
 python scripts/run_pipeline.py --benchmark liveideabench --benchmark-index 0
 ```
 
-Large paper archives and benchmark assets remain local under `data/benchmarks/`.
-Do not commit them.
+If you want the runner to fetch missing benchmark metadata automatically, use:
+
+```bash
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 0 --download-if-missing
+python scripts/run_pipeline.py --benchmark liveideabench --benchmark-index 0 --download-if-missing
+```
+
+If you prefer a different local cache location, override it with
+`--benchmark-root /path/to/benchmarks`.
+
+Large paper archives and benchmark assets remain local. Do not commit them.
 
 ## Learned Controllers And Private Artifacts
 
@@ -142,7 +165,7 @@ Before pushing, check:
 
 ```bash
 git status --short
-git ls-files outputs data/benchmarks data/splits docs
+git ls-files outputs data docs models checkpoints
 ```
 
 The second command should not list files for a code-only public push. Keep API

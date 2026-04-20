@@ -43,8 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input",
         type=Path,
-        default=ROOT / "data" / "sample_instance.json",
-        help="Path to a JSON instance file.",
+        default=None,
+        help="Path to a JSON instance file. Required unless --benchmark is provided.",
     )
     parser.add_argument(
         "--benchmark",
@@ -277,6 +277,10 @@ def main() -> None:
         )
     else:
         benchmark_root = None
+        if args.input is None:
+            raise SystemExit(
+                "No input instance was provided. Use --input <instance.json> or select --benchmark."
+            )
         instance = load_instance(args.input)
 
     instance = attach_baseline_metadata(

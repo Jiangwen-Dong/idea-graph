@@ -13,9 +13,8 @@ outputs/
 # Local editor state
 .vscode/
 
-# Datasets, split registries, private docs, and experiment records
-data/benchmarks/
-data/splits/
+# Datasets, split registries, local inputs, and experiment records
+data/
 docs/
 
 # Model checkpoints and learned private artifacts
