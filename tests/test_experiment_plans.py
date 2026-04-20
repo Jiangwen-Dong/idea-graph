@@ -99,6 +99,7 @@ class ExperimentPlanTests(unittest.TestCase):
 
     def test_ablation_method_plan_includes_controller_variants(self) -> None:
         expected = {
+            "ours-eig-critic-text",
             "ours-eig-critic-calibrated",
             "ours-eig-critic-no-commit",
             "ours-eig-critic-no-edit",
@@ -106,6 +107,17 @@ class ExperimentPlanTests(unittest.TestCase):
             "ours-eig-random-control",
         }
         self.assertTrue(expected.issubset(ABLATION_METHOD_PLANS))
+
+        text = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=ABLATION_METHOD_PLANS["ours-eig-critic-text"],
+        )
+        self.assertEqual(text.metadata["method_name"], "ours-eig-critic-text")
+        self.assertEqual(text.metadata["runner_baseline_name"], "ours-eig-critic-text")
+        self.assertEqual(text.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertEqual(text.metadata["runtime_controller_kind"], "text_critic_rerank")
+        self.assertTrue(text.metadata["runtime_controller_use_edit"])
+        self.assertFalse(text.metadata["runtime_controller_use_commit"])
 
         calibrated = prepare_instance_for_method_plan(
             self._instance(),
@@ -118,12 +130,8 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
         self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
         self.assertFalse(calibrated.metadata.get("runtime_controller_disable_calibration", False))
-        self.assertIn("runtime_controller_calibration_path", calibrated.metadata)
-        self.assertTrue(
-            str(calibrated.metadata["runtime_controller_calibration_path"]).replace("\\", "/").endswith(
-                "data/splits/parallel_v2/frozen_dev_joint_controller_calibration.json"
-            )
-        )
+        self.assertTrue(calibrated.metadata.get("runtime_controller_calibration_missing", False))
+        self.assertNotIn("runtime_controller_calibration_path", calibrated.metadata)
 
         no_commit = prepare_instance_for_method_plan(
             self._instance(),
@@ -145,7 +153,8 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
         self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
         self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
-        self.assertIn("runtime_controller_calibration_path", no_edit.metadata)
+        self.assertTrue(no_edit.metadata.get("runtime_controller_calibration_missing", False))
+        self.assertNotIn("runtime_controller_calibration_path", no_edit.metadata)
 
         fixed = prepare_instance_for_method_plan(
             self._instance(),
@@ -159,7 +168,7 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertEqual(fixed.metadata["method_plan"]["max_rounds"], 5)
         self.assertFalse(fixed.metadata["method_plan"]["stop_when_mature"])
         self.assertTrue(fixed.metadata["runtime_controller_policy_path"].replace("\\", "/").endswith(
-            "data/splits/parallel_v2/fixed_control_policy.json"
+            "configs/fixed_control_policy.example.json"
         ))
 
         random = prepare_instance_for_method_plan(

@@ -1,12 +1,35 @@
 __pycache__/
 *.pyc
+
+# Local runtime artifacts and caches
 outputs/
-data/benchmarks/
-.vscode/
 .pytest_cache/
 .worktrees/
 .tmp-tests/
 .tmp-baselines/
 .tmp-external-baseline-runs/
+*.log
+
+# Local editor state
+.vscode/
+
+# Datasets, split registries, private docs, and experiment records
+data/benchmarks/
+data/splits/
+docs/
+
+# Model checkpoints and learned private artifacts
+models/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.pkl
+*.bin
+*.safetensors
+
+# Local credentials and private provider configs
+configs/joint_controller_calibration.json
 configs/external_baselines.qwen.json
-docs/archive/worktree-patches/
+configs/*local*.json
+configs/*private*.json

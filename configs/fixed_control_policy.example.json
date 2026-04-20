@@ -1,0 +1,47 @@
+{
+  "Round1": [
+    "add_support_edge",
+    "add_dependency_edge",
+    "add_contradiction_edge",
+    "mark_overlap",
+    "attach_evidence",
+    "propose_repair",
+    "freeze_branch"
+  ],
+  "Round2": [
+    "add_dependency_edge",
+    "attach_evidence",
+    "add_support_edge",
+    "add_contradiction_edge",
+    "mark_overlap",
+    "propose_repair",
+    "freeze_branch"
+  ],
+  "Round3": [
+    "propose_repair",
+    "attach_evidence",
+    "add_support_edge",
+    "add_contradiction_edge",
+    "add_dependency_edge",
+    "mark_overlap",
+    "freeze_branch"
+  ],
+  "Round4": [
+    "attach_evidence",
+    "add_dependency_edge",
+    "add_support_edge",
+    "add_contradiction_edge",
+    "mark_overlap",
+    "propose_repair",
+    "freeze_branch"
+  ],
+  "Round5": [
+    "add_contradiction_edge",
+    "propose_repair",
+    "attach_evidence",
+    "add_support_edge",
+    "add_dependency_edge",
+    "mark_overlap",
+    "freeze_branch"
+  ]
+}

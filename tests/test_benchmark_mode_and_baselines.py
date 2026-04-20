@@ -320,39 +320,85 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(instance.metadata["runtime_protocol"], "parallel_graph_v2")
 
     def test_attach_baseline_metadata_enables_self_contained_two_head_controller_variants(self) -> None:
-        calibrated = attach_baseline_metadata(
-            self._ai_idea_bench_instance(),
-            baseline_name="ours-eig-critic-calibrated",
-            io_mode="auto",
-        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            calibration_path = Path(tmp_dir) / "joint_controller_calibration.json"
+            calibration_path.write_text(
+                json.dumps(
+                    {
+                        "tau_override": 0.068,
+                        "tau_commit": 0.08,
+                        "gamma_commit": 0.6563,
+                        "min_commit_round": 2,
+                        "guard_support_threshold": 0.66,
+                        "source": "unit_test",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "idea_graph.baselines.TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH",
+                calibration_path,
+            ):
+                calibrated = attach_baseline_metadata(
+                    self._ai_idea_bench_instance(),
+                    baseline_name="ours-eig-critic-calibrated",
+                    io_mode="auto",
+                )
+                no_edit = attach_baseline_metadata(
+                    self._ai_idea_bench_instance(),
+                    baseline_name="ours-eig-critic-no-edit",
+                    io_mode="auto",
+                )
+
+            self.assertEqual(calibrated.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
+            self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
+            self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
+            self.assertFalse(calibrated.metadata.get("runtime_controller_disable_calibration", False))
+            self.assertTrue(Path(calibrated.metadata["runtime_controller_calibration_path"]).is_file())
+            self.assertAlmostEqual(calibrated.metadata["runtime_controller_tau_override"], 0.068)
+            self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.6563)
+
+            self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
+            self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
+            self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
+            self.assertTrue(Path(no_edit.metadata["runtime_controller_calibration_path"]).is_file())
+
         no_commit = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
             baseline_name="ours-eig-critic-no-commit",
             io_mode="auto",
         )
-        no_edit = attach_baseline_metadata(
-            self._ai_idea_bench_instance(),
-            baseline_name="ours-eig-critic-no-edit",
-            io_mode="auto",
-        )
-
-        self.assertEqual(calibrated.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
-        self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
-        self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
-        self.assertFalse(calibrated.metadata.get("runtime_controller_disable_calibration", False))
-        self.assertTrue(Path(calibrated.metadata["runtime_controller_calibration_path"]).is_file())
-        self.assertAlmostEqual(calibrated.metadata["runtime_controller_tau_override"], 0.068)
-        self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.6563)
 
         self.assertTrue(no_commit.metadata["runtime_controller_use_edit"])
         self.assertFalse(no_commit.metadata["runtime_controller_use_commit"])
         self.assertTrue(no_commit.metadata["runtime_controller_disable_calibration"])
         self.assertNotIn("runtime_controller_calibration_path", no_commit.metadata)
 
-        self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
-        self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
-        self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
-        self.assertTrue(Path(no_edit.metadata["runtime_controller_calibration_path"]).is_file())
+    def test_two_head_controller_variants_tolerate_missing_private_calibration_artifact(self) -> None:
+        with patch(
+            "idea_graph.baselines.TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH",
+            Path("private") / "joint_controller_calibration.json",
+        ):
+            calibrated = attach_baseline_metadata(
+                self._ai_idea_bench_instance(),
+                baseline_name="ours-eig-critic-calibrated",
+                io_mode="auto",
+            )
+            no_edit = attach_baseline_metadata(
+                self._ai_idea_bench_instance(),
+                baseline_name="ours-eig-critic-no-edit",
+                io_mode="auto",
+            )
+
+        for instance in (calibrated, no_edit):
+            self.assertEqual(
+                instance.metadata["runtime_controller_kind"],
+                "relation_graph_two_head_critic",
+            )
+            self.assertNotIn("runtime_controller_calibration_path", instance.metadata)
+            self.assertTrue(instance.metadata["runtime_controller_calibration_missing"])
+            self.assertAlmostEqual(instance.metadata["runtime_controller_tau_override"], 0.05)
+            self.assertAlmostEqual(instance.metadata["runtime_controller_gamma_commit"], 0.60)
 
     def test_attach_baseline_metadata_enables_fixed_and_random_control_variants(self) -> None:
         fixed = attach_baseline_metadata(
@@ -372,6 +418,11 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertFalse(fixed.metadata["runtime_controller_use_commit"])
         self.assertEqual(fixed.metadata["max_rounds_hint"], 5)
         self.assertTrue(Path(fixed.metadata["runtime_controller_policy_path"]).is_file())
+        self.assertTrue(
+            fixed.metadata["runtime_controller_policy_path"].replace("\\", "/").endswith(
+                "configs/fixed_control_policy.example.json"
+            )
+        )
 
         self.assertEqual(random.metadata["baseline_name"], "ours-eig-random-control")
         self.assertEqual(random.metadata["runtime_controller_kind"], "random_control")
@@ -545,11 +596,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             policy_path = Path(tmp_dir) / "fixed_control_policy.json"
             policy_path.write_text(
                 json.dumps(
-                    {
-                        "Round1": {
-                            "MechanismProposer": ["attach_evidence", "add_support_edge", "skip"],
-                        },
-                    }
+                    {"Round1": ["attach_evidence", "add_support_edge"]},
                 ),
                 encoding="utf-8",
             )
@@ -573,12 +620,12 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             round_name="Round1",
             role="MechanismProposer",
             candidate_specs=[
-                {"candidate_id": "c0", "kind": "add_support_edge"},
-                {"candidate_id": "c1", "kind": "attach_evidence"},
-                {"candidate_id": "c2", "kind": "skip"},
+                {"candidate_id": "c0", "kind": "attach_evidence", "candidate_source": "utility_attach_evidence"},
+                {"candidate_id": "c1", "kind": "add_support_edge", "candidate_source": "utility_add_support"},
+                {"candidate_id": "c2", "kind": "skip", "candidate_source": "parallel_skip"},
             ],
         )
-        self.assertEqual(selected["candidate_id"], "c1")
+        self.assertEqual(selected["candidate_id"], "c0")
         self.assertEqual(runtime_metadata["kind"], "fixed_control")
         self.assertEqual(runtime_metadata["policy_path"], str(policy_path.resolve()))
         self.assertFalse(runtime_metadata["use_commit"])

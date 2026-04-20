@@ -33,4 +33,17 @@ class RandomControlPolicy:
 
         if not candidates:
             raise ValueError("candidates must not be empty.")
-        return dict(self._rng.choice(list(candidates)))
+
+        utility_candidates = [
+            dict(row)
+            for row in candidates
+            if str(row.get("candidate_source", "")).strip().startswith("utility_")
+        ]
+        if utility_candidates:
+            return dict(self._rng.choice(utility_candidates))
+
+        for row in candidates:
+            if str(row.get("kind", "")).strip() == "skip":
+                return dict(row)
+
+        return dict(candidates[0])

@@ -1,18 +1,26 @@
 from __future__ import annotations
 
+from argparse import Namespace
+import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from idea_graph.instances import ExperimentInstance
 from scripts.run_quality_batch import (
+    BenchmarkTarget,
     aggregate_rows,
     build_batch_dir,
     format_markdown_summary,
+    load_targets,
     overall_aggregate_rows,
+    print_progress,
     summarize_graph_usage,
 )
 
@@ -172,6 +180,116 @@ class RunQualityBatchTests(unittest.TestCase):
 
         projected_output = batch_dir.resolve(strict=False) / "overall_aggregate_rows.csv"
         self.assertLessEqual(len(str(projected_output)), 240)
+
+    def test_print_progress_does_not_crash_on_gbk_stdout(self) -> None:
+        class GbkLikeStdout:
+            encoding = "gbk"
+
+            def __init__(self) -> None:
+                self.text = ""
+
+            def write(self, text: str) -> int:
+                text.encode(self.encoding)
+                self.text += text
+                return len(text)
+
+            def flush(self) -> None:
+                return None
+
+        stream = GbkLikeStdout()
+
+        with patch("sys.stdout", stream):
+            print_progress("running topic with ö")
+
+        self.assertIn("[batch] running topic with", stream.text)
+        self.assertIn("?", stream.text)
+
+    def test_load_targets_can_use_frozen_split_registry_shard(self) -> None:
+        registry = ROOT / "outputs" / "tmp-test-split-registry.jsonl"
+        rows = [
+            {
+                "group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1728",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "ai-idea-bench-2025-1728",
+                "partition_role": "paper_eval",
+                "source_split": "frozen",
+            },
+            {
+                "group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-1732",
+                "benchmark": "AI_Idea_Bench_2025",
+                "instance_name": "ai-idea-bench-2025-1732",
+                "partition_role": "paper_eval",
+                "source_split": "frozen",
+            },
+            {
+                "group_id": "liveideabench::liveideabench-robotics-8",
+                "benchmark": "liveideabench",
+                "instance_name": "liveideabench-robotics-8",
+                "partition_role": "paper_eval",
+                "source_split": "frozen",
+                "benchmark_keyword": "robotics",
+            },
+            {
+                "group_id": "liveideabench::liveideabench-vision-12",
+                "benchmark": "liveideabench",
+                "instance_name": "liveideabench-vision-12",
+                "partition_role": "paper_eval",
+                "source_split": "frozen",
+                "benchmark_keyword": "vision",
+            },
+        ]
+        registry.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: registry.unlink(missing_ok=True))
+
+        def make_target(benchmark: str, selector: int, display_selector: str) -> BenchmarkTarget:
+            return BenchmarkTarget(
+                benchmark=benchmark,
+                selector=selector,
+                display_selector=display_selector,
+                instance_name=f"{benchmark}-{selector}",
+                topic_preview="topic",
+                instance=ExperimentInstance(
+                    name=f"{benchmark}-{selector}",
+                    topic="topic",
+                    literature=[],
+                    source_path="test",
+                    metadata={},
+                ),
+            )
+
+        args = Namespace(
+            ai_benchmark_root=ROOT / "data" / "benchmarks" / "ai_idea_bench_2025",
+            live_benchmark_root=ROOT / "data" / "benchmarks" / "liveideabench",
+            ai_indices=[],
+            live_row_indices=[],
+            split_registry=registry,
+            partition_role="paper_eval",
+            target_aiib=2,
+            target_live=2,
+            sampling_seed=0,
+            shard_count=2,
+            shard_index=1,
+        )
+
+        with (
+            patch(
+                "scripts.run_quality_batch.load_ai_target",
+                side_effect=lambda _root, index: make_target("AI_Idea_Bench_2025", index, str(index)),
+            ),
+            patch(
+                "scripts.run_quality_batch.load_live_target",
+                side_effect=lambda _root, index: make_target("liveideabench", index, str(index)),
+            ),
+        ):
+            targets = load_targets(args)
+
+        self.assertEqual([target.benchmark for target in targets], ["AI_Idea_Bench_2025", "liveideabench"])
+        self.assertEqual([target.selector for target in targets], [1732, 12])
+        self.assertEqual(targets[0].split_row["group_id"], "AI_Idea_Bench_2025::ai-idea-bench-2025-1732")
+        self.assertEqual(targets[1].split_row["group_id"], "liveideabench::liveideabench-vision-12")
 
     def test_format_markdown_summary_surfaces_parallel_protocol_and_affordability(self) -> None:
         rows = self._sample_rows()

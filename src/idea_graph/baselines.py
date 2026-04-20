@@ -56,16 +56,12 @@ RELATION_GRAPH_TWO_HEAD_MODEL_RELATIVE_DIR = (
     / "parallel_v2_twohead_repaired_boundary_st_full_e8_20260418"
 )
 TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH = (
-    Path("data")
-    / "splits"
-    / "parallel_v2"
-    / "frozen_dev_joint_controller_calibration.json"
+    Path("configs")
+    / "joint_controller_calibration.json"
 )
 FIXED_CONTROL_POLICY_RELATIVE_PATH = (
-    Path("data")
-    / "splits"
-    / "parallel_v2"
-    / "fixed_control_policy.json"
+    Path("configs")
+    / "fixed_control_policy.example.json"
 )
 
 
@@ -92,6 +88,8 @@ RUNTIME_CONTROLLER_METADATA_KEYS = (
     "runtime_controller_calibration_path",
     "runtime_controller_calibration_source",
     "runtime_controller_calibration_version",
+    "runtime_controller_calibration_missing",
+    "runtime_controller_calibration_missing_path",
     "runtime_controller_disable_calibration",
     "runtime_controller_error",
     "runtime_controller_loaded",
@@ -195,6 +193,14 @@ def _apply_joint_runtime_calibration(
     explicit_path = str(metadata.get("runtime_controller_calibration_path", "")).strip()
     if explicit_path:
         calibration_path = Path(explicit_path)
+        if not calibration_path.exists():
+            calibrated = dict(metadata)
+            calibrated.pop("runtime_controller_calibration_path", None)
+            calibrated["runtime_controller_calibration_missing"] = True
+            calibrated["runtime_controller_calibration_missing_path"] = str(
+                calibration_path.resolve()
+            )
+            return calibrated
         calibration = load_joint_controller_calibration(calibration_path)
         calibrated = apply_joint_controller_calibration(metadata, calibration)
         calibrated["runtime_controller_calibration_path"] = str(calibration_path.resolve())

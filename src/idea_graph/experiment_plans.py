@@ -123,6 +123,18 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
 ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
     "ours-eig": MAIN_METHOD_PLANS["ours-eig"],
     "ours-eig-critic-graph-twohead": MAIN_METHOD_PLANS["ours-eig-critic-graph-twohead"],
+    "ours-eig-critic-text": ExperimentMethodPlan(
+        name="ours-eig-critic-text",
+        baseline_name="ours-eig-critic-text",
+        restarts=1,
+        max_rounds=5,
+        stop_when_mature=True,
+        runtime_protocol="parallel_graph_v2",
+        rationale="Parallel EIG with a text-only critic for role-local edit selection.",
+        metadata_overrides={
+            "idea_graph_protocol_variant": "eig_parallel_v2_text_critic",
+        },
+    ),
     "ours-eig-critic-calibrated": ExperimentMethodPlan(
         name="ours-eig-critic-calibrated",
         baseline_name="ours-eig-critic-calibrated",

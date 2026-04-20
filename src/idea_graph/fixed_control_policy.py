@@ -6,12 +6,27 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 CandidateRow = Mapping[str, object]
-RoundRoleKey = tuple[str, str]
 
 
 @dataclass(frozen=True)
 class FixedControlPolicy:
-    ordered_kind_priors: Mapping[RoundRoleKey, Sequence[str]] = field(default_factory=dict)
+    ordered_kind_priors: Mapping[str, Sequence[str]] = field(default_factory=dict)
+
+    @staticmethod
+    def _utility_candidates(candidates: Sequence[CandidateRow]) -> list[dict[str, object]]:
+        filtered: list[dict[str, object]] = []
+        for row in candidates:
+            candidate_source = str(row.get("candidate_source", "")).strip()
+            if candidate_source.startswith("utility_"):
+                filtered.append(dict(row))
+        return filtered
+
+    @staticmethod
+    def _skip_candidate(candidates: Sequence[CandidateRow]) -> dict[str, object] | None:
+        for row in candidates:
+            if str(row.get("kind", "")).strip() == "skip":
+                return dict(row)
+        return None
 
     def choose(
         self,
@@ -29,16 +44,20 @@ class FixedControlPolicy:
         if not candidates:
             raise ValueError("candidates must not be empty.")
 
-        ordered_kinds = tuple(self.ordered_kind_priors.get((round_name, role), ()))
+        utility_candidates = self._utility_candidates(candidates)
+        ordered_kinds = tuple(self.ordered_kind_priors.get(round_name, ()))
 
         for preferred_kind in ordered_kinds:
-            for row in candidates:
+            for row in utility_candidates:
                 if str(row.get("kind", "")).strip() == preferred_kind:
                     return dict(row)
 
-        for row in candidates:
-            if str(row.get("kind", "")).strip() == "skip":
-                return dict(row)
+        if utility_candidates:
+            return dict(utility_candidates[0])
+
+        skip_candidate = self._skip_candidate(candidates)
+        if skip_candidate is not None:
+            return skip_candidate
 
         return dict(candidates[0])
 
@@ -48,12 +67,9 @@ def load_fixed_control_policy(path: str | Path) -> FixedControlPolicy:
     if not isinstance(payload, Mapping):
         raise ValueError("Fixed policy JSON must be an object.")
 
-    normalized: dict[RoundRoleKey, tuple[str, ...]] = {}
-    for round_name, roles_payload in payload.items():
-        if not isinstance(roles_payload, Mapping):
-            raise ValueError("Each round entry must be an object of role -> ordered kinds.")
-        for role, ordered_kinds in roles_payload.items():
-            if not isinstance(ordered_kinds, Sequence) or isinstance(ordered_kinds, (str, bytes)):
-                raise ValueError("Each role entry must be a list of candidate kinds.")
-            normalized[(str(round_name), str(role))] = tuple(str(kind) for kind in ordered_kinds)
+    normalized: dict[str, tuple[str, ...]] = {}
+    for round_name, ordered_kinds in payload.items():
+        if not isinstance(ordered_kinds, Sequence) or isinstance(ordered_kinds, (str, bytes)):
+            raise ValueError("Each round entry must be a list of ordered utility kinds.")
+        normalized[str(round_name)] = tuple(str(kind) for kind in ordered_kinds)
     return FixedControlPolicy(ordered_kind_priors=normalized)

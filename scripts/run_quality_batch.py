@@ -38,6 +38,11 @@ from idea_graph.io import write_run_artifacts
 from idea_graph.instances import ExperimentInstance
 from idea_graph.repo_paths import default_ai_benchmark_root, default_live_benchmark_root
 from idea_graph.settings import OpenAICompatibleSettings
+from idea_graph.split_eval_selection import (
+    load_split_registry_rows,
+    select_balanced_split_rows,
+    shard_split_rows,
+)
 
 
 @dataclass(frozen=True)
@@ -48,10 +53,17 @@ class BenchmarkTarget:
     instance_name: str
     topic_preview: str
     instance: ExperimentInstance
+    split_row: dict[str, Any] | None = None
 
 
 def print_progress(message: str) -> None:
-    print(f"[batch] {message}", flush=True)
+    line = f"[batch] {message}"
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        safe_line = line.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    except LookupError:
+        safe_line = line
+    print(safe_line, flush=True)
 
 
 def _clean_text(value: Any) -> str:
@@ -212,6 +224,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="LiveIdeaBench row indices to include.",
     )
     parser.add_argument(
+        "--split-registry",
+        type=Path,
+        default=None,
+        help="Optional frozen split registry JSONL. When set, balanced split targets replace explicit index lists.",
+    )
+    parser.add_argument(
+        "--partition-role",
+        default="paper_eval",
+        help="Partition role to select from --split-registry.",
+    )
+    parser.add_argument(
+        "--target-aiib",
+        type=int,
+        default=0,
+        help="Number of AI Idea Bench 2025 rows to select from --split-registry.",
+    )
+    parser.add_argument(
+        "--target-live",
+        type=int,
+        default=0,
+        help="Number of LiveIdeaBench rows to select from --split-registry.",
+    )
+    parser.add_argument(
+        "--sampling-seed",
+        type=int,
+        default=0,
+        help="Deterministic seed for balanced split-registry sampling.",
+    )
+    parser.add_argument(
+        "--shard-count",
+        type=int,
+        default=1,
+        help="Number of deterministic shards for split-registry targets.",
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=0,
+        help="Shard index to run, where 0 <= shard_index < shard_count.",
+    )
+    parser.add_argument(
         "--baselines",
         nargs="+",
         default=None,
@@ -288,7 +341,58 @@ def load_live_target(benchmark_root: Path, row_index: int) -> BenchmarkTarget:
     )
 
 
+def _selector_from_instance_name(instance_name: object) -> int:
+    match = re.search(r"(\d+)\s*$", str(instance_name))
+    if match is None:
+        raise ValueError(f"Could not parse numeric selector from instance_name={instance_name!r}.")
+    return int(match.group(1))
+
+
+def _with_split_row(target: BenchmarkTarget, row: dict[str, Any]) -> BenchmarkTarget:
+    return BenchmarkTarget(
+        benchmark=target.benchmark,
+        selector=target.selector,
+        display_selector=target.display_selector,
+        instance_name=target.instance_name,
+        topic_preview=target.topic_preview,
+        instance=target.instance,
+        split_row=dict(row),
+    )
+
+
+def load_split_targets(args: argparse.Namespace) -> list[BenchmarkTarget]:
+    registry_rows = load_split_registry_rows(
+        args.split_registry,
+        partition_role=args.partition_role,
+    )
+    selected_rows = select_balanced_split_rows(
+        registry_rows,
+        target_aiib=int(args.target_aiib),
+        target_live=int(args.target_live),
+        seed=int(args.sampling_seed),
+    )
+    shard_rows = shard_split_rows(
+        selected_rows,
+        shard_count=int(args.shard_count),
+        shard_index=int(args.shard_index),
+    )
+    targets: list[BenchmarkTarget] = []
+    for row in shard_rows:
+        benchmark = str(row.get("benchmark", "")).strip()
+        selector = _selector_from_instance_name(row.get("instance_name"))
+        if benchmark == "AI_Idea_Bench_2025":
+            targets.append(_with_split_row(load_ai_target(args.ai_benchmark_root, selector), row))
+        elif benchmark == "liveideabench":
+            targets.append(_with_split_row(load_live_target(args.live_benchmark_root, selector), row))
+        else:
+            raise ValueError(f"Unsupported benchmark in split registry row: {benchmark!r}")
+    return targets
+
+
 def load_targets(args: argparse.Namespace) -> list[BenchmarkTarget]:
+    if getattr(args, "split_registry", None) is not None:
+        return load_split_targets(args)
+
     targets: list[BenchmarkTarget] = []
     for benchmark_index in args.ai_indices:
         targets.append(load_ai_target(args.ai_benchmark_root, benchmark_index))
@@ -569,6 +673,11 @@ def main() -> None:
     runs_root.mkdir(parents=True, exist_ok=True)
 
     targets = load_targets(args)
+    selected_split_rows_payload = [
+        dict(target.split_row)
+        for target in targets
+        if target.split_row is not None
+    ]
     raw_rows: list[dict[str, Any]] = []
     selected_rows: list[dict[str, Any]] = []
     native_eval_count = 0
@@ -666,6 +775,9 @@ def main() -> None:
                     "benchmark": target.benchmark,
                     "selector": target.selector,
                     "display_selector": target.display_selector,
+                    "split_group_id": (target.split_row or {}).get("group_id", ""),
+                    "split_partition_role": (target.split_row or {}).get("partition_role", ""),
+                    "split_source_split": (target.split_row or {}).get("source_split", ""),
                     "instance_name": prepared_instance.name,
                     "baseline_name": method_name,
                     "runner_baseline_name": plan.baseline_name,
@@ -750,6 +862,14 @@ def main() -> None:
         "model": settings.model,
         "ai_indices": args.ai_indices,
         "live_row_indices": args.live_row_indices,
+        "split_registry": str(args.split_registry) if args.split_registry is not None else "",
+        "partition_role": getattr(args, "partition_role", ""),
+        "target_aiib": getattr(args, "target_aiib", 0),
+        "target_live": getattr(args, "target_live", 0),
+        "sampling_seed": getattr(args, "sampling_seed", 0),
+        "shard_count": getattr(args, "shard_count", 1),
+        "shard_index": getattr(args, "shard_index", 0),
+        "selected_split_rows": selected_split_rows_payload,
         "method_plans": [method_catalog[name].as_dict() for name in requested_methods],
         "raw_rows": raw_rows,
         "selected_rows": clean_selected_rows,
@@ -768,6 +888,11 @@ def main() -> None:
         format_markdown_summary(payload),
         encoding="utf-8",
     )
+    if selected_split_rows_payload:
+        (batch_dir / "selected_split_rows.jsonl").write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in selected_split_rows_payload),
+            encoding="utf-8",
+        )
     write_csv(batch_dir / "raw_rows.csv", raw_rows)
     write_csv(batch_dir / "selected_rows.csv", clean_selected_rows)
     write_csv(batch_dir / "aggregate_rows.csv", aggregate_payload)
