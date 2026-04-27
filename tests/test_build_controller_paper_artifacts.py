@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.build_controller_paper_artifacts import (
+from scripts.eval.build_controller_paper_artifacts import (
     build_controller_behavior_exports,
     load_case_study_data,
     render_case_study_drawing_note,

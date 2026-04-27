@@ -222,7 +222,7 @@ class CriticEpisodeCollectionTests(unittest.TestCase):
 
     def test_cli_dry_run_writes_collection_artifacts(self) -> None:
         output_root = self.tmp_dir / "collections"
-        script_path = ROOT / "scripts" / "collect_critic_train_episodes.py"
+        script_path = ROOT / "scripts" / "data_prep" / "collect_critic_train_episodes.py"
         completed = subprocess.run(
             [
                 sys.executable,
@@ -252,7 +252,7 @@ class CriticEpisodeCollectionTests(unittest.TestCase):
 
     def test_cli_dry_run_persists_runtime_protocol_and_disable_maturity_stop(self) -> None:
         output_root = self.tmp_dir / "collections"
-        script_path = ROOT / "scripts" / "collect_critic_train_episodes.py"
+        script_path = ROOT / "scripts" / "data_prep" / "collect_critic_train_episodes.py"
         completed = subprocess.run(
             [
                 sys.executable,

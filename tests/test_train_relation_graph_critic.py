@@ -25,7 +25,7 @@ class TrainRelationGraphCriticCliTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    "scripts/train_relation_graph_critic.py",
+                    "scripts/train/train_relation_graph_critic.py",
                     "--candidate-dataset-dir",
                     str(fixture.candidate_dir),
                     "--g1-dataset-dir",

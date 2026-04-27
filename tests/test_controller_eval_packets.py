@@ -121,7 +121,7 @@ def test_cli_emits_expected_files(tmp_path: Path) -> None:
     manifest = tmp_path / "cli_manifest.jsonl"
     _write_manifest(manifest, rows)
     output_root = tmp_path / "cli_output"
-    script = Path(__file__).resolve().parents[1] / "scripts" / "build_controller_eval_packets.py"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "data_prep" / "build_controller_eval_packets.py"
 
     subprocess.run(
         [

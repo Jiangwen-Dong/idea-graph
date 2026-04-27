@@ -474,7 +474,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    "scripts/calibrate_joint_controller.py",
+                    "scripts/train/calibrate_joint_controller.py",
                     "--edit-examples",
                     str(edit_examples),
                     "--commit-examples",
@@ -845,7 +845,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    "scripts/calibrate_joint_controller.py",
+                    "scripts/train/calibrate_joint_controller.py",
                     "--run-manifest",
                     str(run_manifest),
                     "--output-path",

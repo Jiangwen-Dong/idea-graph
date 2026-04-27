@@ -10,7 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts import collect_critic_train_episodes, run_controller_eval_packet, run_pipeline, run_quality_batch
+from scripts import run_pipeline
+from scripts.data_prep import collect_critic_train_episodes
+from scripts.eval import run_controller_eval_packet, run_quality_batch
 
 
 class ScriptDefaultPathTests(unittest.TestCase):
@@ -36,7 +38,7 @@ class ScriptDefaultPathTests(unittest.TestCase):
             expected.mkdir(parents=True, exist_ok=True)
             worktree_root.mkdir(parents=True, exist_ok=True)
 
-            with patch("scripts.collect_critic_train_episodes.ROOT", worktree_root):
+            with patch("scripts.data_prep.collect_critic_train_episodes.ROOT", worktree_root):
                 parser = collect_critic_train_episodes.build_parser()
 
             args = parser.parse_args(["--split-registry", "dummy.jsonl", "--output-dir", "out"])
@@ -51,7 +53,7 @@ class ScriptDefaultPathTests(unittest.TestCase):
             (expected_base / "liveideabench").mkdir(parents=True, exist_ok=True)
             worktree_root.mkdir(parents=True, exist_ok=True)
 
-            with patch("scripts.run_quality_batch.ROOT", worktree_root):
+            with patch("scripts.eval.run_quality_batch.ROOT", worktree_root):
                 parser = run_quality_batch.build_parser()
 
             args = parser.parse_args(["--llm-config", "dummy.json"])
@@ -66,7 +68,7 @@ class ScriptDefaultPathTests(unittest.TestCase):
             expected.mkdir(parents=True, exist_ok=True)
             worktree_root.mkdir(parents=True, exist_ok=True)
 
-            with patch("scripts.run_controller_eval_packet.ROOT", worktree_root):
+            with patch("scripts.eval.run_controller_eval_packet.ROOT", worktree_root):
                 parser = run_controller_eval_packet.build_parser()
 
             args = parser.parse_args(["--packet-manifest", "packet.jsonl", "--baselines", "ours-eig", "--output-root", "out"])

@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from scripts.check_external_baselines import check_external_baseline_config
+from scripts.eval.check_external_baselines import check_external_baseline_config
 
 
 class ExternalBaselinePreflightTests(unittest.TestCase):
@@ -77,7 +77,7 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
         self.assertTrue(by_name["ai-researcher"]["ready"])
         self.assertEqual(by_name["ai-researcher"]["adapter_status"], "exact-upstream")
         self.assertTrue(by_name["scipip"]["ready"])
-        self.assertEqual(by_name["scipip"]["adapter_status"], "paper-faithful-adapter")
+        self.assertEqual(by_name["scipip"]["adapter_status"], "paper-faithful")
 
     def test_preflight_resolves_relative_paths_from_config_directory(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -97,7 +97,7 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
                     {
                         "ai-researcher": {
                             "enabled": True,
-                            "execution_mode": "openai-compatible-bridge",
+                            "execution_mode": "openai-compatible",
                             "repo_path": "../.tmp-baselines/AI-Researcher",
                         }
                     }
@@ -109,7 +109,7 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
 
         by_name = {row["baseline"]: row for row in report["baselines"]}
         self.assertTrue(by_name["ai-researcher"]["ready"])
-        self.assertEqual(by_name["ai-researcher"]["adapter_status"], "paper-faithful-adapter")
+        self.assertEqual(by_name["ai-researcher"]["adapter_status"], "paper-faithful")
 
     def test_preflight_resolves_repo_relative_paths_from_config_ancestors(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -143,7 +143,7 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
         self.assertTrue(by_name["ai-researcher"]["ready"])
         self.assertEqual(by_name["ai-researcher"]["adapter_status"], "exact-upstream")
 
-    def test_preflight_accepts_bridge_ready_scipip_and_virsci(self) -> None:
+    def test_preflight_accepts_config_ready_scipip_and_virsci(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
 
@@ -161,7 +161,7 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
                     {
                         "scipip": {
                             "enabled": True,
-                            "execution_mode": "openai-compatible-bridge",
+                            "execution_mode": "openai-compatible",
                             "repo_path": str(scipip_repo),
                             "openai_compatible": {
                                 "base_url": "https://example.com/v1",
@@ -171,7 +171,7 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
                         },
                         "virsci": {
                             "enabled": True,
-                            "execution_mode": "benchmark-fixed-topic-bridge",
+                            "execution_mode": "benchmark-fixed-topic",
                             "repo_path": str(virsci_repo.parent),
                             "openai_compatible": {
                                 "base_url": "https://example.com/v1",
@@ -188,9 +188,9 @@ class ExternalBaselinePreflightTests(unittest.TestCase):
 
         by_name = {row["baseline"]: row for row in report["baselines"]}
         self.assertTrue(by_name["scipip"]["ready"])
-        self.assertEqual(by_name["scipip"]["adapter_status"], "paper-faithful-adapter")
+        self.assertEqual(by_name["scipip"]["adapter_status"], "paper-faithful")
         self.assertTrue(by_name["virsci"]["ready"])
-        self.assertEqual(by_name["virsci"]["adapter_status"], "paper-faithful-adapter")
+        self.assertEqual(by_name["virsci"]["adapter_status"], "paper-faithful")
 
 
 if __name__ == "__main__":

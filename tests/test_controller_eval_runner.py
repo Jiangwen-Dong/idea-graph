@@ -176,6 +176,76 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         self.assertTrue(updated.metadata["runtime_controller_disable_calibration"])
         self.assertNotIn("runtime_controller_calibration_path", updated.metadata)
 
+    def test_apply_runtime_controller_overrides_can_toggle_action_score_calibration(self) -> None:
+        from idea_graph.controller_eval_runtime import apply_runtime_controller_overrides
+        from idea_graph.instances import ExperimentInstance
+
+        instance = ExperimentInstance(
+            name="demo",
+            topic="topic",
+            literature=["paper"],
+            source_path="demo.json",
+            metadata={
+                "runtime_controller_kind": "relation_graph_two_head_critic",
+                "runtime_controller_use_action_score_calibration": True,
+            },
+        )
+
+        updated = apply_runtime_controller_overrides(
+            instance,
+            runtime_controller_calibration_path=None,
+            disable_runtime_calibration=False,
+            disable_action_score_calibration=True,
+            action_score_calibration_strength=0.25,
+            action_score_calibration_max_bias=0.20,
+        )
+
+        self.assertFalse(updated.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertEqual(updated.metadata["runtime_controller_action_score_calibration_strength"], 0.25)
+        self.assertEqual(updated.metadata["runtime_controller_action_score_calibration_max_bias"], 0.20)
+
+    def test_runner_cli_dry_run_accepts_action_score_calibration_flags(self) -> None:
+        manifest_path = self.tmp_dir / "packet.jsonl"
+        self._write_jsonl(
+            manifest_path,
+            [
+                {
+                    "group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-10",
+                    "benchmark": "AI_Idea_Bench_2025",
+                    "instance_name": "ai-idea-bench-2025-10",
+                    "partition_role": "critic_dev",
+                    "source_split": "validation",
+                    "benchmark_index": 10,
+                },
+            ],
+        )
+        output_root = self.tmp_dir / "runner_output_action_calib"
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "eval" / "run_controller_eval_packet.py"),
+                "--packet-manifest",
+                str(manifest_path),
+                "--baselines",
+                "ours-eig-critic-graph-twohead",
+                "--output-root",
+                str(output_root),
+                "--dry-run",
+                "--disable-action-score-calibration",
+                "--action-score-calibration-strength",
+                "0.25",
+                "--action-score-calibration-max-bias",
+                "0.20",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue((output_root / "run_manifest.jsonl").exists())
+
     def test_apply_runtime_controller_overrides_resets_preapplied_calibration(self) -> None:
         from idea_graph.controller_eval_runtime import apply_runtime_controller_overrides
         from idea_graph.instances import ExperimentInstance
@@ -207,8 +277,9 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         self.assertTrue(updated.metadata["runtime_controller_disable_calibration"])
         self.assertEqual(updated.metadata["runtime_controller_tau_override"], 0.05)
         self.assertEqual(updated.metadata["runtime_controller_tau_commit"], 0.08)
-        self.assertEqual(updated.metadata["runtime_controller_gamma_commit"], 0.60)
-        self.assertEqual(updated.metadata["runtime_controller_min_commit_round"], 2)
+        self.assertEqual(updated.metadata["runtime_controller_gamma_commit"], 0.50)
+        self.assertEqual(updated.metadata["runtime_controller_min_commit_round"], 3)
+        self.assertFalse(updated.metadata["runtime_controller_use_low_signal_kind_swap_guard"])
         self.assertEqual(updated.metadata["runtime_controller_guard_support_threshold"], 0.66)
         self.assertNotIn("runtime_controller_calibration_path", updated.metadata)
         self.assertNotIn("runtime_controller_calibration_source", updated.metadata)
@@ -439,7 +510,7 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         )
 
         output_root = self.tmp_dir / "summary_output"
-        script_path = ROOT / "scripts" / "summarize_controller_eval_packet.py"
+        script_path = ROOT / "scripts" / "analysis" / "summarize_controller_eval_packet.py"
         completed = subprocess.run(
             [
                 sys.executable,
@@ -475,7 +546,7 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         )
 
         output_root = self.tmp_dir / "runner_output"
-        script_path = ROOT / "scripts" / "run_controller_eval_packet.py"
+        script_path = ROOT / "scripts" / "eval" / "run_controller_eval_packet.py"
         completed = subprocess.run(
             [
                 sys.executable,
@@ -526,7 +597,7 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         )
 
         output_root = self.tmp_dir / "runner_output_override"
-        script_path = ROOT / "scripts" / "run_controller_eval_packet.py"
+        script_path = ROOT / "scripts" / "eval" / "run_controller_eval_packet.py"
         completed = subprocess.run(
             [
                 sys.executable,
@@ -574,7 +645,7 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         )
 
         output_root = self.tmp_dir / "runner_output_calibrated"
-        script_path = ROOT / "scripts" / "run_controller_eval_packet.py"
+        script_path = ROOT / "scripts" / "eval" / "run_controller_eval_packet.py"
         completed = subprocess.run(
             [
                 sys.executable,

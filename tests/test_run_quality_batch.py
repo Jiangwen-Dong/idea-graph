@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from idea_graph.instances import ExperimentInstance
-from scripts.run_quality_batch import (
+from scripts.eval.run_quality_batch import (
     BenchmarkTarget,
     aggregate_rows,
     build_batch_dir,
@@ -276,11 +276,11 @@ class RunQualityBatchTests(unittest.TestCase):
 
         with (
             patch(
-                "scripts.run_quality_batch.load_ai_target",
+                "scripts.eval.run_quality_batch.load_ai_target",
                 side_effect=lambda _root, index: make_target("AI_Idea_Bench_2025", index, str(index)),
             ),
             patch(
-                "scripts.run_quality_batch.load_live_target",
+                "scripts.eval.run_quality_batch.load_live_target",
                 side_effect=lambda _root, index: make_target("liveideabench", index, str(index)),
             ),
         ):

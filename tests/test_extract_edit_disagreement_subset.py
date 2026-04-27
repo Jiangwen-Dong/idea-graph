@@ -89,7 +89,7 @@ class ExtractEditDisagreementSubsetTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    "scripts/extract_edit_disagreement_subset.py",
+                    "scripts/data_prep/extract_edit_disagreement_subset.py",
                     "--run-manifest",
                     str(run_manifest),
                     "--output-path",
@@ -186,7 +186,7 @@ class ExtractEditDisagreementSubsetTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    "scripts/extract_edit_disagreement_subset.py",
+                    "scripts/data_prep/extract_edit_disagreement_subset.py",
                     "--run-manifest",
                     str(run_manifest),
                     "--output-path",

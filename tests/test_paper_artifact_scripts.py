@@ -17,10 +17,10 @@ def _load_script_module(name: str, relative_path: str):
     return module
 
 
-def test_build_paper_batch_artifacts_main_table_methods_include_external_bridges() -> None:
+def test_build_paper_batch_artifacts_main_table_methods_include_external_baselines() -> None:
     module = _load_script_module(
         "build_paper_batch_artifacts",
-        "scripts/build_paper_batch_artifacts.py",
+        "scripts/eval/build_paper_batch_artifacts.py",
     )
 
     assert module.METHOD_ORDER == [
@@ -36,10 +36,10 @@ def test_build_paper_batch_artifacts_main_table_methods_include_external_bridges
     assert module.METHOD_DISPLAY_NAMES["virsci"] == r"\textsc{VirSci}"
 
 
-def test_build_paper_pilot_artifacts_display_names_cover_external_bridges() -> None:
+def test_build_paper_pilot_artifacts_display_names_cover_external_baselines() -> None:
     module = _load_script_module(
         "build_paper_pilot_artifacts",
-        "scripts/build_paper_pilot_artifacts.py",
+        "scripts/eval/build_paper_pilot_artifacts.py",
     )
 
     assert module.METHOD_DISPLAY_NAMES["ai-researcher"] == r"\textsc{AI-Researcher}"
