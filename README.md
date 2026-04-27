@@ -78,6 +78,10 @@ python scripts/run_pipeline.py --input /path/to/instance.json --baseline self-re
 python scripts/run_pipeline.py --input /path/to/instance.json --baseline ours-eig --runtime-protocol parallel_graph_v2
 ```
 
+Additional research utilities are grouped under `scripts/analysis/`,
+`scripts/data_prep/`, `scripts/eval/`, and `scripts/train/`. The four flat
+scripts in `scripts/` are the intended public entrypoints.
+
 ## OpenAI-Compatible Backend
 
 Start from the public example config:
@@ -135,9 +139,8 @@ and paper-evaluation calibration artifacts are not included in this repository.
 
 If you have private controller artifacts, keep them in ignored local paths such
 as `outputs/critic_models/` or provide explicit paths through local configs or
-metadata. If no private calibration artifact is present, calibrated controller
-variants fall back to the built-in uncalibrated defaults and mark the
-calibration as missing in runtime metadata.
+metadata. Temporary external-baseline workspaces should likewise stay under
+ignored paths such as `outputs/tmp/`.
 
 The fixed-control ablation uses the public example schedule:
 

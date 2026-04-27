@@ -23,10 +23,10 @@
   },
   "scipip": {
     "enabled": true,
-    "execution_mode": "openai-compatible-bridge",
+    "execution_mode": "openai-compatible",
     "repo_path": "C:/path/to/SciPIP",
     "python_executable": "python",
-    "workspace_root": ".tmp-external-baseline-runs",
+    "workspace_root": "outputs/tmp/external-baseline-runs",
     "timeout_seconds": 3600,
     "openai_compatible": {
       "base_url": "https://api.openai.com/v1",
@@ -38,10 +38,10 @@
   },
   "virsci": {
     "enabled": true,
-    "execution_mode": "benchmark-fixed-topic-bridge",
+    "execution_mode": "benchmark-fixed-topic",
     "repo_path": "C:/path/to/Virtual-Scientists",
     "python_executable": "python",
-    "workspace_root": ".tmp-external-baseline-runs",
+    "workspace_root": "outputs/tmp/external-baseline-runs",
     "discussion_turns": 3,
     "timeout_seconds": 7200,
     "openai_compatible": {

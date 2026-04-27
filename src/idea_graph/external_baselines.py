@@ -16,8 +16,8 @@ from .agent_backend import OpenAICompatibleCollaborationBackend
 from .settings import OpenAICompatibleSettings
 
 ADAPTER_STATUS_EXACT_UPSTREAM = "exact-upstream"
-ADAPTER_STATUS_PAPER_FAITHFUL = "paper-faithful-adapter"
-ADAPTER_STATUS_EXCLUDED = "exclude-until-fixed-topic-adapter"
+ADAPTER_STATUS_PAPER_FAITHFUL = "paper-faithful"
+ADAPTER_STATUS_EXCLUDED = "exclude-until-fixed-topic"
 
 
 def load_external_baseline_config(path: str | Path | None) -> dict[str, dict[str, Any]]:
@@ -90,7 +90,7 @@ def _workspace_root(config: dict[str, Any]) -> Path:
     if configured:
         root = Path(configured)
     else:
-        root = Path(".tmp-external-baseline-runs")
+        root = Path("outputs") / "tmp" / "external-baseline-runs"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -163,8 +163,14 @@ def _execution_mode(config: dict[str, Any], *, default: str) -> str:
     return _clean_text(config.get("execution_mode")).lower() or default
 
 
-def _uses_bridge_mode(config: dict[str, Any], *, default: str) -> bool:
-    return "bridge" in _execution_mode(config, default=default)
+def _uses_openai_compatible_mode(config: dict[str, Any], *, default: str) -> bool:
+    mode = _execution_mode(config, default=default)
+    return mode in {
+        "openai-compatible",
+        "openai_compatible",
+        "benchmark-fixed-topic",
+        "benchmark_fixed_topic",
+    }
 
 
 def _write_json_artifact(path: Path, payload: Any) -> None:
@@ -176,7 +182,7 @@ def _append_external_trace(graph: IdeaGraph, *, stage: str, trace: dict[str, obj
     graph.metadata.setdefault("external_baseline_traces", []).append({"stage": stage, **trace})
 
 
-def _bridge_packet(graph: IdeaGraph) -> dict[str, object]:
+def _benchmark_context_packet(graph: IdeaGraph) -> dict[str, object]:
     return {
         "topic": _clean_text(graph.topic),
         "benchmark_packet": graph.metadata.get("benchmark_input_packet", {}),
@@ -190,12 +196,12 @@ def _stamp_external_baseline_metadata(
     *,
     execution_mode: str,
     adapter_status: str,
-    proxy_fallback: bool = False,
+    local_fallback: bool = False,
     preserved_stages: list[str] | None = None,
 ) -> None:
     graph.metadata["external_baseline_execution_mode"] = execution_mode
     graph.metadata["external_baseline_adapter_status"] = adapter_status
-    graph.metadata["external_baseline_proxy_fallback"] = proxy_fallback
+    graph.metadata["external_baseline_local_fallback"] = local_fallback
     if preserved_stages is not None:
         graph.metadata["external_baseline_preserved_stages"] = list(preserved_stages)
 
@@ -457,7 +463,7 @@ def _proposal_from_virsci_payload(graph: IdeaGraph, payload: dict[str, Any]) -> 
     )
 
 
-def _build_openai_compatible_bridge_backend(config: dict[str, Any]) -> OpenAICompatibleCollaborationBackend:
+def _build_openai_compatible_backend(config: dict[str, Any]) -> OpenAICompatibleCollaborationBackend:
     llm_config_path = _clean_text(config.get("llm_config_path"))
     if llm_config_path:
         settings = OpenAICompatibleSettings.from_json_file(llm_config_path)
@@ -469,34 +475,34 @@ def _build_openai_compatible_bridge_backend(config: dict[str, Any]) -> OpenAICom
         return OpenAICompatibleCollaborationBackend(settings)
 
     raise RuntimeError(
-        "OpenAI-compatible bridge mode requires either 'llm_config_path' or an "
+        "OpenAI-compatible mode requires either 'llm_config_path' or an "
         "'openai_compatible' settings mapping in the external baseline config."
     )
 
 
-def _build_ai_researcher_bridge_backend(config: dict[str, Any]) -> OpenAICompatibleCollaborationBackend:
-    return _build_openai_compatible_bridge_backend(config)
+def _build_ai_researcher_openai_backend(config: dict[str, Any]) -> OpenAICompatibleCollaborationBackend:
+    return _build_openai_compatible_backend(config)
 
 
-def _run_ai_researcher_openai_compatible_bridge(
+def _run_ai_researcher_openai_compatible(
     graph: IdeaGraph,
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
 ) -> FinalProposal:
-    from .baselines import BaselineSpec, _llm_ai_researcher_proxy_proposal
+    from .baselines import BaselineSpec, _llm_ai_researcher_guided_proposal
 
     _stamp_external_baseline_metadata(
         graph,
-        execution_mode="openai-compatible-bridge",
+        execution_mode="openai-compatible",
         adapter_status=ADAPTER_STATUS_PAPER_FAITHFUL,
-        proxy_fallback=False,
+        local_fallback=False,
         preserved_stages=[
             "seed_generation",
             "proposal_expansion",
             "candidate_ranking",
         ],
     )
-    backend = _build_ai_researcher_bridge_backend(config)
+    backend = _build_ai_researcher_openai_backend(config)
     workspace = _make_workspace(
         config,
         baseline_name="ai-researcher",
@@ -515,19 +521,19 @@ def _run_ai_researcher_openai_compatible_bridge(
         display_name="AI-Researcher",
         strategy="external",
         description=(
-            "Repository-local AI-Researcher compatibility bridge that preserves the "
+            "Repository-local AI-Researcher compatible path that preserves the "
             "seed-generation, proposal-expansion, and ranking structure under an "
             "OpenAI-compatible backend."
         ),
-        prompt_style="ai_researcher_proxy",
+        prompt_style="ai_researcher_guided",
         candidate_count=max(2, int(config.get("ideas_n", 4) or 4)),
     )
 
     _emit(
         progress_callback,
-        "AI-Researcher: running the OpenAI-compatible compatibility bridge with seed generation, proposal expansion, and ranking.",
+        "AI-Researcher: running the OpenAI-compatible path with seed generation, proposal expansion, and ranking.",
     )
-    proposal = _llm_ai_researcher_proxy_proposal(
+    proposal = _llm_ai_researcher_guided_proposal(
         graph,
         baseline,
         backend,
@@ -546,18 +552,16 @@ def _run_ai_researcher(
 ) -> FinalProposal:
     execution_mode = _clean_text(config.get("execution_mode")).lower()
     if execution_mode in {
-        "openai-compatible-bridge",
-        "openai_compatible_bridge",
         "openai-compatible",
-        "bridge",
+        "openai_compatible",
     } or _clean_text(config.get("llm_config_path")) or isinstance(config.get("openai_compatible"), dict):
-        return _run_ai_researcher_openai_compatible_bridge(graph, config, progress_callback)
+        return _run_ai_researcher_openai_compatible(graph, config, progress_callback)
 
     _stamp_external_baseline_metadata(
         graph,
         execution_mode="upstream",
         adapter_status=ADAPTER_STATUS_EXACT_UPSTREAM,
-        proxy_fallback=False,
+        local_fallback=False,
         preserved_stages=[
             "grounded_idea_generation",
             "experiment_plan_generation",
@@ -709,14 +713,14 @@ def _run_scipip(
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
 ) -> FinalProposal:
-    if _uses_bridge_mode(config, default="upstream-generator"):
-        return _run_scipip_openai_compatible_bridge(graph, config, progress_callback)
+    if _uses_openai_compatible_mode(config, default="upstream-generator"):
+        return _run_scipip_openai_compatible(graph, config, progress_callback)
 
     _stamp_external_baseline_metadata(
         graph,
         execution_mode="upstream-generator",
         adapter_status=ADAPTER_STATUS_PAPER_FAITHFUL,
-        proxy_fallback=False,
+        local_fallback=False,
         preserved_stages=[
             "background_conditioned_generation",
             "retrieval_or_inspiration",
@@ -801,7 +805,7 @@ def _run_scipip(
     return _proposal_from_scipip_text(graph, selected_text)
 
 
-def _run_scipip_openai_compatible_bridge(
+def _run_scipip_openai_compatible(
     graph: IdeaGraph,
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
@@ -810,9 +814,9 @@ def _run_scipip_openai_compatible_bridge(
 
     _stamp_external_baseline_metadata(
         graph,
-        execution_mode="openai-compatible-bridge",
+        execution_mode="openai-compatible",
         adapter_status=ADAPTER_STATUS_PAPER_FAITHFUL,
-        proxy_fallback=False,
+        local_fallback=False,
         preserved_stages=[
             "problem_decomposition",
             "reference_inspiration",
@@ -827,13 +831,13 @@ def _run_scipip_openai_compatible_bridge(
     )
     graph.metadata["external_baseline_workspace"] = str(workspace)
 
-    backend = _build_openai_compatible_bridge_backend(config)
+    backend = _build_openai_compatible_backend(config)
     graph.metadata["external_baseline_backend_settings"] = backend.settings.sanitized_dict()
     graph.metadata["external_baseline_source_repo"] = str(repo_root)
 
-    packet = _bridge_packet(graph)
-    decomposition_path = workspace / "scipip_bridge_decomposition.json"
-    proposal_path = workspace / "scipip_bridge_proposal.json"
+    packet = _benchmark_context_packet(graph)
+    decomposition_path = workspace / "scipip_decomposition.json"
+    proposal_path = workspace / "scipip_proposal.json"
 
     _emit(progress_callback, "SciPIP: decomposing benchmark background into a structured research problem.")
     decomposition_payload, decomposition_trace = _llm_json_object(
@@ -906,14 +910,14 @@ def _run_virsci(
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
 ) -> FinalProposal:
-    if _uses_bridge_mode(config, default="upstream-multi-agent"):
-        return _run_virsci_fixed_topic_bridge(graph, config, progress_callback)
+    if _uses_openai_compatible_mode(config, default="upstream-multi-agent"):
+        return _run_virsci_fixed_topic(graph, config, progress_callback)
 
     _stamp_external_baseline_metadata(
         graph,
         execution_mode="upstream-multi-agent",
         adapter_status=ADAPTER_STATUS_EXCLUDED,
-        proxy_fallback=False,
+        local_fallback=False,
         preserved_stages=[
             "multi_agent_discussion",
             "team_synthesis",
@@ -977,7 +981,7 @@ def _run_virsci(
     return _proposal_from_virsci_payload(graph, payload)
 
 
-def _run_virsci_fixed_topic_bridge(
+def _run_virsci_fixed_topic(
     graph: IdeaGraph,
     config: dict[str, Any],
     progress_callback: Callable[[str], None] | None,
@@ -986,9 +990,9 @@ def _run_virsci_fixed_topic_bridge(
 
     _stamp_external_baseline_metadata(
         graph,
-        execution_mode="benchmark-fixed-topic-bridge",
+        execution_mode="benchmark-fixed-topic",
         adapter_status=ADAPTER_STATUS_PAPER_FAITHFUL,
-        proxy_fallback=False,
+        local_fallback=False,
         preserved_stages=[
             "multi_agent_discussion",
             "team_synthesis",
@@ -1006,11 +1010,11 @@ def _run_virsci_fixed_topic_bridge(
     )
     graph.metadata["external_baseline_workspace"] = str(workspace)
 
-    backend = _build_openai_compatible_bridge_backend(config)
+    backend = _build_openai_compatible_backend(config)
     graph.metadata["external_baseline_backend_settings"] = backend.settings.sanitized_dict()
     graph.metadata["external_baseline_source_repo"] = str(repo_root)
 
-    packet = _bridge_packet(graph)
+    packet = _benchmark_context_packet(graph)
     discussion_turns = max(2, int(config.get("discussion_turns", 3) or 3))
     personas = [
         ("ScientistAlpha", "frame why this topic matters now and surface the most important bottleneck."),
@@ -1058,7 +1062,7 @@ def _run_virsci_fixed_topic_bridge(
             trace=discussion_trace,
         )
 
-    transcript_path = workspace / "virsci_bridge_discussion.json"
+    transcript_path = workspace / "virsci_discussion.json"
     _write_json_artifact(transcript_path, {"discussion": discussion_rows})
 
     _emit(progress_callback, "VirSci: synthesizing the panel discussion into one final proposal.")
@@ -1092,7 +1096,7 @@ def _run_virsci_fixed_topic_bridge(
     )
     _append_external_trace(graph, stage="virsci_team_synthesis", trace=proposal_trace)
 
-    proposal_path = workspace / "virsci_bridge_proposal.json"
+    proposal_path = workspace / "virsci_proposal.json"
     _write_json_artifact(proposal_path, proposal_payload)
 
     graph.metadata["external_baseline_discussion_file"] = str(transcript_path)

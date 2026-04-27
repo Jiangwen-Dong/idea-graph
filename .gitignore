@@ -3,6 +3,7 @@ __pycache__/
 
 # Local runtime artifacts and caches
 outputs/
+o/
 .pytest_cache/
 .worktrees/
 .tmp-tests/

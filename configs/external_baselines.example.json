@@ -1,8 +1,8 @@
 {
   "ai-researcher": {
     "enabled": true,
-    "execution_mode": "openai-compatible-bridge",
-    "workspace_root": ".tmp-external-baseline-runs",
+    "execution_mode": "openai-compatible",
+    "workspace_root": "outputs/tmp/external-baseline-runs",
     "ideas_n": 4,
     "openai_compatible": {
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -22,7 +22,7 @@
     "repo_path": "C:/path/to/SciPIP",
     "python_executable": "python",
     "config_path": "C:/path/to/SciPIP/configs/datasets.yaml",
-    "workspace_root": ".tmp-external-baseline-runs",
+    "workspace_root": "outputs/tmp/external-baseline-runs",
     "retriever_name": "SNKG",
     "brainstorm_mode": "mode_c",
     "use_inspiration": true,
@@ -37,7 +37,7 @@
     "enabled": false,
     "repo_path": "C:/path/to/Virtual-Scientists",
     "python_executable": "python",
-    "workspace_root": ".tmp-external-baseline-runs",
+    "workspace_root": "outputs/tmp/external-baseline-runs",
     "runs": 1,
     "team_limit": 1,
     "max_discuss_iteration": 2,
