@@ -858,7 +858,7 @@ def _dynamic_allowed_actions(graph: IdeaGraph, round_name: str) -> tuple[str, ..
         ):
             allowed = [kind for kind in allowed if kind != "attach_evidence"]
         if not allowed:
-            allowed = ["freeze_branch"]
+            allowed = list(phase.allowed_actions)
         return tuple(allowed)
 
     if "attach_evidence" in allowed and not _attachable_target_ids(graph):
@@ -1147,9 +1147,7 @@ def _normalize_action_payload(
     normalized = {str(key): value for key, value in payload.items()}
 
     own_branch_id = _own_branch_id(graph, role)
-    if kind != "freeze_branch" and own_branch_id:
-        normalized["branch_id"] = own_branch_id
-    elif not _coerce_string(normalized.get("branch_id")) and own_branch_id:
+    if own_branch_id:
         normalized["branch_id"] = own_branch_id
 
     if "evidence" in normalized:
@@ -1252,16 +1250,16 @@ def _literature_display_items(graph: IdeaGraph, *, limit: int = 8) -> list[str]:
 def _baseline_prompt_instruction(metadata: dict[str, Any]) -> str:
     baseline_key = _coerce_string(metadata.get("baseline_name"))
     baseline_name = _coerce_string(metadata.get("baseline_display_name") or metadata.get("baseline_name"))
-    proxy_target = _coerce_string(metadata.get("baseline_proxy_target"))
+    reference_target = _coerce_string(metadata.get("baseline_reference_target"))
     strategy = _coerce_string(metadata.get("baseline_strategy"))
     if not baseline_name:
         return ""
     parts = [f"Current baseline wrapper: {baseline_name}."]
     if strategy:
         parts.append(f"Execution strategy: {strategy}.")
-    if proxy_target:
+    if reference_target:
         parts.append(
-            f"This is a local proxy wrapper intended to approximate {proxy_target}; do not assume it is an exact reproduction."
+            f"This local variant follows the high-level {reference_target} workflow while using the shared benchmark-facing input and output contract."
         )
     baseline_specific_guidance = {
         "ours-eig": (
@@ -1270,7 +1268,7 @@ def _baseline_prompt_instruction(metadata: dict[str, Any]) -> str:
         "ours-delayed-consensus": (
             "Optimize for typed-graph rigor: add complementary claims, expose contradictions early, attach evidence when possible, and converge toward one mature high-utility subgraph rather than a loose discussion transcript."
         ),
-        "virsci-proxy": (
+        "virsci-discussion": (
             "Approximate a discussion-oriented virtual-scientist panel: keep multiple viewpoints alive for longer, surface tradeoffs explicitly, and let the graph capture debate before convergence."
         ),
         "direct": (
@@ -1279,10 +1277,10 @@ def _baseline_prompt_instruction(metadata: dict[str, Any]) -> str:
         "self-refine": (
             "Favor a strong draft followed by explicit internal critique and revision for specificity."
         ),
-        "ai-researcher-proxy": (
+        "ai-researcher-guided": (
             "Favor literature-grounded candidate ideation, benchmark-faithful topic anchoring, and deliberate selection among alternatives."
         ),
-        "scipip-proxy": (
+        "scipip-structured": (
             "Favor structured decomposition: identify the core bottleneck, relate it to nearby work, and turn it into one coherent method plus evaluation plan."
         ),
     }

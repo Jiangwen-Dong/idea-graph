@@ -182,7 +182,27 @@ def _build_candidate_rows(
             }
         )
     if not selected_candidate_id:
-        raise ValueError(f"Parallel edit slate for {round_name}/{role} is missing the selected candidate.")
+        selected_candidate_id = f"parallel::{round_name}::{role}::candidate:{len(candidate_rows):04d}"
+        synthetic_spec = {
+            "kind": selected_action.kind,
+            "target_ids": list(selected_action.target_ids),
+            "payload": dict(selected_action.payload),
+            "rationale": str(selected_action.rationale).strip(),
+            "candidate_source": "legacy_selected_action",
+        }
+        candidate_rows.append(
+            {
+                "candidate_id": selected_candidate_id,
+                "candidate_index": len(candidate_rows),
+                "candidate_kind": selected_action.kind,
+                "candidate_target_ids": list(selected_action.target_ids),
+                "candidate_payload": dict(selected_action.payload),
+                "candidate_rationale": str(selected_action.rationale).strip(),
+                "candidate_source": "legacy_selected_action",
+                "candidate_text": flatten_candidate_text(graph, synthetic_spec),
+                "is_selected": True,
+            }
+        )
     return candidate_rows, selected_candidate_id
 
 
@@ -282,6 +302,24 @@ def build_post_round_commit_row(
         "utility": float(getattr(commit_check, "utility", 0.0)),
         "controller_kind": str(getattr(commit_check, "controller_kind", "") or ""),
         "commit_probability": getattr(commit_check, "commit_probability", None),
+        "commit_probability_calibrated": getattr(
+            commit_check,
+            "commit_probability_calibrated",
+            None,
+        ),
         "commit_threshold": getattr(commit_check, "commit_threshold", None),
+        "commit_calibration_bias": float(
+            getattr(commit_check, "commit_calibration_bias", 0.0) or 0.0
+        ),
+        "commit_calibration_enabled": bool(
+            getattr(commit_check, "commit_calibration_enabled", False)
+        ),
+        "commit_calibration_feedback": dict(
+            getattr(commit_check, "commit_calibration_feedback", {}) or {}
+        ),
+        "graph_signals": dict(getattr(commit_check, "graph_signals", {}) or {}),
+        "graph_signal_deficits": dict(
+            getattr(commit_check, "graph_signal_deficits", {}) or {}
+        ),
         "commit_guard_reason": str(getattr(commit_check, "commit_guard_reason", "") or ""),
     }

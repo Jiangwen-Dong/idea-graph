@@ -21,7 +21,7 @@ from idea_graph.baselines import (
     BASELINE_SPECS,
     _ai_researcher_expansion_system_prompt,
     _ai_researcher_focus_constraints,
-    _ai_researcher_proxy_postprocess_proposal,
+    _ai_researcher_guided_postprocess_proposal,
     _ai_researcher_topic_fidelity_score,
     _baseline_postprocess_proposal,
     _default_relation_graph_runtime_model_dir,
@@ -175,7 +175,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
     def test_generation_safe_grounding_does_not_leak_target_paper_fields(self) -> None:
         instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
-            baseline_name="scipip-proxy",
+            baseline_name="scipip-structured",
             io_mode="auto",
         )
 
@@ -234,14 +234,14 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(graph.metadata["stop_reason"], "baseline_self_refine_complete")
         self.assertTrue(graph.final_proposal.evaluation)
 
-    def test_scipip_proxy_baseline_adds_structured_bottleneck_language(self) -> None:
+    def test_scipip_structured_baseline_adds_structured_bottleneck_language(self) -> None:
         instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
-            baseline_name="scipip-proxy",
+            baseline_name="scipip-structured",
             io_mode="auto",
         )
 
-        graph = run_baseline_experiment(instance, baseline_name="scipip-proxy")
+        graph = run_baseline_experiment(instance, baseline_name="scipip-structured")
 
         self.assertIsNotNone(graph.final_proposal)
         self.assertIn("core bottleneck", graph.final_proposal.method.lower())
@@ -250,10 +250,13 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertNotIn("target paper", graph.final_proposal.existing_methods.lower())
         self.assertNotIn("gold method", graph.final_proposal.existing_methods.lower())
 
-    def test_proxy_baselines_are_registered(self) -> None:
+    def test_local_variant_baselines_are_registered(self) -> None:
         self.assertIn("ai-researcher", BASELINE_SPECS)
         self.assertIn("scipip", BASELINE_SPECS)
         self.assertIn("virsci", BASELINE_SPECS)
+        self.assertIn("graph-of-thought", BASELINE_SPECS)
+        self.assertEqual(BASELINE_SPECS["graph-of-thought"].strategy, "graph_of_thought")
+        self.assertEqual(BASELINE_SPECS["graph-of-thought"].prompt_style, "graph_of_thought")
         self.assertIn("ours-eig-critic-text", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-graph", BASELINE_SPECS)
         self.assertIn("ours-eig-critic-graph-twohead", BASELINE_SPECS)
@@ -263,11 +266,11 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIn("ours-eig-fixed-control", BASELINE_SPECS)
         self.assertIn("ours-eig-random-control", BASELINE_SPECS)
         self.assertEqual(BASELINE_SPECS["ai-researcher"].strategy, "external")
-        self.assertIn("ai-researcher-proxy", BASELINE_SPECS)
-        self.assertIn("scipip-proxy", BASELINE_SPECS)
-        self.assertIn("virsci-proxy", BASELINE_SPECS)
-        self.assertNotIn("research-agent-proxy", BASELINE_SPECS)
-        self.assertTrue(BASELINE_SPECS["ai-researcher-proxy"].is_proxy)
+        self.assertIn("ai-researcher-guided", BASELINE_SPECS)
+        self.assertIn("scipip-structured", BASELINE_SPECS)
+        self.assertIn("virsci-discussion", BASELINE_SPECS)
+        self.assertNotIn("research-agent-approx", BASELINE_SPECS)
+        self.assertTrue(BASELINE_SPECS["ai-researcher-guided"].is_local_variant)
         self.assertEqual(
             BASELINE_SPECS["ours-eig-critic-graph"].runtime_controller,
             "relation_graph_critic_rerank",
@@ -284,6 +287,267 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             BASELINE_SPECS["ours-eig-random-control"].runtime_controller,
             "random_control",
         )
+
+    def test_graph_of_thought_baseline_runs_three_generation_scoring_rounds(self) -> None:
+        class FakeClient:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.payloads = [
+                    {
+                        "thought_nodes": [
+                            {
+                                "id": "n1",
+                                "type": "problem_gap",
+                                "text": "Panoramic pose estimation lacks scale-aware uncertainty checks.",
+                            },
+                            {
+                                "id": "n2",
+                                "type": "method",
+                                "text": "Add scale-consistency constraints with uncertainty-aware pose heads.",
+                            },
+                            {
+                                "id": "n3",
+                                "type": "evaluation",
+                                "text": "Evaluate relative pose and scale calibration with ablations.",
+                            },
+                        ],
+                        "thought_edges": [
+                            {
+                                "source": "n1",
+                                "relation": "motivates",
+                                "target": "n2",
+                                "rationale": "The method directly repairs the gap.",
+                            },
+                            {
+                                "source": "n2",
+                                "relation": "tested_by",
+                                "target": "n3",
+                                "rationale": "The evaluation isolates the mechanism.",
+                            },
+                        ],
+                    },
+                    {
+                        "selected_node_ids": ["n1", "n2", "n3"],
+                        "critique": "The first path is coherent but needs stronger novelty.",
+                        "repair_instructions": [
+                            "Add a sharper novelty node while staying centered on panoramic relative pose estimation.",
+                        ],
+                        "scores": [
+                            {
+                                "node_id": "n2",
+                                "novelty": 7,
+                                "feasibility": 8,
+                                "benchmark_fit": 9,
+                                "overall": 8,
+                            }
+                        ],
+                    },
+                    {
+                        "thought_nodes": [
+                            {
+                                "id": "n1",
+                                "type": "problem_gap",
+                                "text": "Panoramic pose estimation lacks scale-aware uncertainty checks.",
+                            },
+                            {
+                                "id": "n2",
+                                "type": "method",
+                                "text": "Add scale-consistency constraints with uncertainty-aware pose heads.",
+                            },
+                            {
+                                "id": "n3",
+                                "type": "evaluation",
+                                "text": "Evaluate relative pose and scale calibration with ablations.",
+                            },
+                            {
+                                "id": "n4",
+                                "type": "novelty",
+                                "text": "Use disagreement between geometric and learned scale cues as a training signal.",
+                            },
+                        ],
+                        "thought_edges": [
+                            {
+                                "source": "n1",
+                                "relation": "motivates",
+                                "target": "n2",
+                                "rationale": "The method directly repairs the gap.",
+                            },
+                            {
+                                "source": "n2",
+                                "relation": "tested_by",
+                                "target": "n3",
+                                "rationale": "The evaluation isolates the mechanism.",
+                            },
+                            {
+                                "source": "n4",
+                                "relation": "repairs",
+                                "target": "n2",
+                                "rationale": "The novelty node sharpens the mechanism.",
+                            },
+                        ],
+                    },
+                    {
+                        "selected_node_ids": ["n1", "n2", "n3", "n4"],
+                        "critique": "The graph is more novel but needs an explicit risk check.",
+                        "repair_instructions": [
+                            "Add a feasibility/risk node and keep only the coherent benchmark-facing path.",
+                        ],
+                        "scores": [
+                            {
+                                "node_id": "n4",
+                                "novelty": 8,
+                                "feasibility": 7,
+                                "benchmark_fit": 9,
+                                "overall": 8,
+                            }
+                        ],
+                    },
+                    {
+                        "thought_nodes": [
+                            {
+                                "id": "n1",
+                                "type": "problem_gap",
+                                "text": "Panoramic pose estimation lacks scale-aware uncertainty checks.",
+                            },
+                            {
+                                "id": "n2",
+                                "type": "method",
+                                "text": "Add scale-consistency constraints with uncertainty-aware pose heads.",
+                            },
+                            {
+                                "id": "n3",
+                                "type": "evaluation",
+                                "text": "Evaluate relative pose and scale calibration with ablations.",
+                            },
+                            {
+                                "id": "n4",
+                                "type": "novelty",
+                                "text": "Use disagreement between geometric and learned scale cues as a training signal.",
+                            },
+                            {
+                                "id": "n5",
+                                "type": "risk",
+                                "text": "Constrain the disagreement objective so it does not overfit texture shortcuts.",
+                            },
+                        ],
+                        "thought_edges": [
+                            {
+                                "source": "n1",
+                                "relation": "motivates",
+                                "target": "n2",
+                                "rationale": "The method directly repairs the gap.",
+                            },
+                            {
+                                "source": "n4",
+                                "relation": "repairs",
+                                "target": "n2",
+                                "rationale": "The novelty node sharpens the mechanism.",
+                            },
+                            {
+                                "source": "n2",
+                                "relation": "tested_by",
+                                "target": "n3",
+                                "rationale": "The evaluation isolates the mechanism.",
+                            },
+                            {
+                                "source": "n5",
+                                "relation": "repairs",
+                                "target": "n2",
+                                "rationale": "The risk node makes the mechanism feasible.",
+                            },
+                        ],
+                    },
+                    {
+                        "selected_node_ids": ["n1", "n2", "n3", "n5"],
+                        "critique": "The selected subgraph is coherent, feasible, and benchmark-faithful.",
+                        "repair_instructions": [
+                            "Synthesize the final proposal from the selected subgraph only.",
+                        ],
+                        "scores": [
+                            {
+                                "node_id": "n2",
+                                "novelty": 8,
+                                "feasibility": 8,
+                                "benchmark_fit": 9,
+                                "overall": 8.5,
+                            }
+                        ],
+                    },
+                    {
+                        "title": "Scale-Calibrated Panorama Pose Estimation",
+                        "problem": "Panoramic relative pose estimation still struggles with scale consistency.",
+                        "existing_methods": "Depth and pose networks provide useful baselines but need stronger scale checks.",
+                        "motivation": "Scale errors make downstream panoramic localization unreliable.",
+                        "hypothesis": "Uncertainty-aware scale consistency can improve panoramic relative pose estimates.",
+                        "method": "Train a pose model with scale-consistency constraints and uncertainty-aware heads.",
+                        "evaluation": "Report pose error, scale calibration, and ablations against depth and pose baselines.",
+                        "significance": "This makes panoramic relative pose estimation more reliable.",
+                        "caveats": "The constraint may need tuning for unusual panoramas.",
+                    },
+                ]
+
+            def create_chat_completion(self, **kwargs):
+                payload = self.payloads[self.calls]
+                self.calls += 1
+                content = json.dumps(payload, ensure_ascii=False)
+                return SimpleNamespace(
+                    content=content,
+                    raw_response={
+                        "usage": {
+                            "prompt_tokens": 100 * self.calls,
+                            "completion_tokens": 20 * self.calls,
+                            "total_tokens": 120 * self.calls,
+                        },
+                        "choices": [{"message": {"content": content}}],
+                    },
+                )
+
+        backend = OpenAICompatibleCollaborationBackend(
+            OpenAICompatibleSettings.from_mapping(
+                {
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "api_key": "test-key",
+                    "model": "qwen3-8b",
+                    "provider": "dashscope",
+                    "reasoning_mode": "auto",
+                    "max_retries": 0,
+                }
+            )
+        )
+        fake_client = FakeClient()
+        backend.client = fake_client
+        instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="graph-of-thought",
+            io_mode="auto",
+        )
+
+        graph = run_baseline_experiment(
+            instance,
+            baseline_name="graph-of-thought",
+            collaboration_backend=backend,
+        )
+
+        self.assertIsNotNone(graph.final_proposal)
+        self.assertEqual(graph.final_proposal.title, "Scale-Calibrated Panorama Pose Estimation")
+        self.assertEqual(graph.metadata["stop_reason"], "baseline_graph_of_thought_complete")
+        self.assertEqual(fake_client.calls, 7)
+        self.assertEqual(
+            [trace["stage"] for trace in graph.metadata["baseline_traces"]],
+            [
+                "graph_of_thought_round_1_generation",
+                "graph_of_thought_round_1_scoring",
+                "graph_of_thought_round_2_generation",
+                "graph_of_thought_round_2_scoring",
+                "graph_of_thought_round_3_generation",
+                "graph_of_thought_round_3_scoring",
+                "graph_of_thought_synthesis",
+            ],
+        )
+        self.assertEqual(graph.metadata["graph_of_thought_round_count"], 3)
+        self.assertEqual(len(graph.metadata["graph_of_thought_rounds"]), 3)
+        self.assertEqual(graph.metadata["graph_of_thought_selected_node_ids"], ["n1", "n2", "n3", "n5"])
+        self.assertEqual(len(graph.metadata["graph_of_thought_graph"]["thought_nodes"]), 5)
 
     def test_attach_baseline_metadata_enables_relation_graph_runtime_defaults(self) -> None:
         instance = attach_baseline_metadata(
@@ -311,57 +575,43 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(instance.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
         self.assertTrue(instance.metadata["runtime_controller_use_edit"])
         self.assertTrue(instance.metadata["runtime_controller_use_commit"])
-        self.assertTrue(instance.metadata["runtime_controller_disable_calibration"])
+        self.assertTrue(instance.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertNotIn("runtime_controller_disable_calibration", instance.metadata)
         self.assertNotIn("runtime_controller_calibration_path", instance.metadata)
         self.assertIn(
-            "parallel_v2_twohead_repaired_boundary_st_full_e8_20260418",
+            "parallel_v2_twohead_gold256_st_e8_20260423",
             instance.metadata["runtime_controller_model_dir"],
         )
         self.assertEqual(instance.metadata["runtime_protocol"], "parallel_graph_v2")
 
     def test_attach_baseline_metadata_enables_self_contained_two_head_controller_variants(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            calibration_path = Path(tmp_dir) / "joint_controller_calibration.json"
-            calibration_path.write_text(
-                json.dumps(
-                    {
-                        "tau_override": 0.068,
-                        "tau_commit": 0.08,
-                        "gamma_commit": 0.6563,
-                        "min_commit_round": 2,
-                        "guard_support_threshold": 0.66,
-                        "source": "unit_test",
-                    }
-                ),
-                encoding="utf-8",
-            )
-            with patch(
-                "idea_graph.baselines.TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH",
-                calibration_path,
-            ):
-                calibrated = attach_baseline_metadata(
-                    self._ai_idea_bench_instance(),
-                    baseline_name="ours-eig-critic-calibrated",
-                    io_mode="auto",
-                )
-                no_edit = attach_baseline_metadata(
-                    self._ai_idea_bench_instance(),
-                    baseline_name="ours-eig-critic-no-edit",
-                    io_mode="auto",
-                )
+        calibrated = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-calibrated",
+            io_mode="auto",
+        )
+        no_edit = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-critic-no-edit",
+            io_mode="auto",
+        )
 
-            self.assertEqual(calibrated.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
-            self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
-            self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
-            self.assertFalse(calibrated.metadata.get("runtime_controller_disable_calibration", False))
-            self.assertTrue(Path(calibrated.metadata["runtime_controller_calibration_path"]).is_file())
-            self.assertAlmostEqual(calibrated.metadata["runtime_controller_tau_override"], 0.068)
-            self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.6563)
+        self.assertEqual(calibrated.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
+        self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
+        self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
+        self.assertTrue(calibrated.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertNotIn("runtime_controller_disable_calibration", calibrated.metadata)
+        self.assertNotIn("runtime_controller_calibration_path", calibrated.metadata)
+        self.assertAlmostEqual(calibrated.metadata["runtime_controller_tau_override"], 0.05)
+        self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.50)
+        self.assertEqual(calibrated.metadata["runtime_controller_min_commit_round"], 3)
+        self.assertFalse(calibrated.metadata["runtime_controller_use_low_signal_kind_swap_guard"])
 
-            self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
-            self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
-            self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
-            self.assertTrue(Path(no_edit.metadata["runtime_controller_calibration_path"]).is_file())
+        self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
+        self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
+        self.assertFalse(no_edit.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertNotIn("runtime_controller_disable_calibration", no_edit.metadata)
+        self.assertNotIn("runtime_controller_calibration_path", no_edit.metadata)
 
         no_commit = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
@@ -371,10 +621,11 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
 
         self.assertTrue(no_commit.metadata["runtime_controller_use_edit"])
         self.assertFalse(no_commit.metadata["runtime_controller_use_commit"])
-        self.assertTrue(no_commit.metadata["runtime_controller_disable_calibration"])
+        self.assertTrue(no_commit.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertNotIn("runtime_controller_disable_calibration", no_commit.metadata)
         self.assertNotIn("runtime_controller_calibration_path", no_commit.metadata)
 
-    def test_two_head_controller_variants_tolerate_missing_private_calibration_artifact(self) -> None:
+    def test_two_head_controller_variants_do_not_require_private_threshold_calibration_artifact(self) -> None:
         with patch(
             "idea_graph.baselines.TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH",
             Path("private") / "joint_controller_calibration.json",
@@ -396,9 +647,11 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
                 "relation_graph_two_head_critic",
             )
             self.assertNotIn("runtime_controller_calibration_path", instance.metadata)
-            self.assertTrue(instance.metadata["runtime_controller_calibration_missing"])
+            self.assertNotIn("runtime_controller_calibration_missing", instance.metadata)
             self.assertAlmostEqual(instance.metadata["runtime_controller_tau_override"], 0.05)
-            self.assertAlmostEqual(instance.metadata["runtime_controller_gamma_commit"], 0.60)
+            self.assertAlmostEqual(instance.metadata["runtime_controller_gamma_commit"], 0.50)
+            self.assertEqual(instance.metadata["runtime_controller_min_commit_round"], 3)
+            self.assertFalse(instance.metadata["runtime_controller_use_low_signal_kind_swap_guard"])
 
     def test_attach_baseline_metadata_enables_fixed_and_random_control_variants(self) -> None:
         fixed = attach_baseline_metadata(
@@ -430,6 +683,19 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertFalse(random.metadata["runtime_controller_use_commit"])
         self.assertEqual(random.metadata["max_rounds_hint"], 5)
         self.assertEqual(random.metadata["runtime_controller_random_seed"], 0)
+
+    def test_attach_baseline_metadata_enables_signal_heuristic_control_variant(self) -> None:
+        heuristic = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-signal-heuristic",
+            io_mode="auto",
+        )
+
+        self.assertEqual(heuristic.metadata["baseline_name"], "ours-eig-signal-heuristic")
+        self.assertEqual(heuristic.metadata["runtime_controller_kind"], "signal_heuristic_control")
+        self.assertTrue(heuristic.metadata["runtime_controller_use_edit"])
+        self.assertTrue(heuristic.metadata["runtime_controller_use_commit"])
+        self.assertEqual(heuristic.metadata["runtime_protocol"], "parallel_graph_v2")
 
     def test_attach_baseline_metadata_uses_parallel_runtime_for_ours_eig_family(self) -> None:
         eig_instance = attach_baseline_metadata(
@@ -698,7 +964,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
     def test_generation_prompts_discourage_noisy_fragment_copying(self) -> None:
         direct_prompt = _direct_system_prompt(BASELINE_SPECS["direct"])
         refine_prompt = _refine_system_prompt(BASELINE_SPECS["self-refine"])
-        ai_prompt = _ai_researcher_expansion_system_prompt(BASELINE_SPECS["ai-researcher-proxy"])
+        ai_prompt = _ai_researcher_expansion_system_prompt(BASELINE_SPECS["ai-researcher-guided"])
 
         self.assertIn("Do not copy raw extraction fragments", direct_prompt)
         self.assertIn("noisy copied snippet fragments", refine_prompt)
@@ -735,7 +1001,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertNotIn("ignored", payload)
         self.assertEqual(payload["ai-researcher"]["repo_path"], "C:/tmp/AI-Researcher")
 
-    def test_ai_researcher_external_bridge_runs_with_openai_compatible_mode(self) -> None:
+    def test_ai_researcher_external_runs_with_openai_compatible_mode(self) -> None:
         class FakeSettings:
             max_retries = 0
             model = "qwen3-8b"
@@ -840,7 +1106,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         config = {
             "ai-researcher": {
                 "enabled": True,
-                "execution_mode": "openai-compatible-bridge",
+                "execution_mode": "openai-compatible",
                 "ideas_n": 2,
                 "openai_compatible": {
                     "base_url": "https://example.com/v1",
@@ -852,7 +1118,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             }
         }
 
-        with patch("idea_graph.external_baselines._build_ai_researcher_bridge_backend", return_value=fake_backend):
+        with patch("idea_graph.external_baselines._build_ai_researcher_openai_backend", return_value=fake_backend):
             graph = run_baseline_experiment(
                 instance,
                 baseline_name="ai-researcher",
@@ -862,13 +1128,13 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertIsNotNone(graph.final_proposal)
         self.assertEqual(graph.final_proposal.title, "Benchmark-Faithful 3D Language Field Modeling")
         self.assertEqual(graph.metadata["baseline_name"], "ai-researcher")
-        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "openai-compatible-bridge")
-        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful-adapter")
-        self.assertFalse(graph.metadata.get("external_baseline_proxy_fallback", True))
+        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "openai-compatible")
+        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful")
+        self.assertFalse(graph.metadata.get("external_baseline_local_fallback", True))
         self.assertEqual(graph.metadata["stop_reason"], "baseline_ai-researcher_complete")
-        self.assertEqual(graph.metadata["ai_researcher_proxy_candidate_count"], 2)
+        self.assertEqual(graph.metadata["ai_researcher_guided_candidate_count"], 2)
 
-    def test_scipip_external_bridge_runs_with_openai_compatible_mode(self) -> None:
+    def test_scipip_external_runs_with_openai_compatible_mode(self) -> None:
         class FakeSettings:
             max_retries = 0
             model = "qwen3-8b"
@@ -940,7 +1206,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             config = {
                 "scipip": {
                     "enabled": True,
-                    "execution_mode": "openai-compatible-bridge",
+                    "execution_mode": "openai-compatible",
                     "repo_path": str(repo_root),
                     "openai_compatible": {
                         "base_url": "https://example.com/v1",
@@ -952,7 +1218,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
                 }
             }
 
-            with patch("idea_graph.external_baselines._build_openai_compatible_bridge_backend", return_value=fake_backend):
+            with patch("idea_graph.external_baselines._build_openai_compatible_backend", return_value=fake_backend):
                 graph = run_baseline_experiment(
                     instance,
                     baseline_name="scipip",
@@ -961,12 +1227,12 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
 
         self.assertIsNotNone(graph.final_proposal)
         self.assertEqual(graph.final_proposal.title, "Overlap-Aware Panorama Pose Adaptation")
-        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "openai-compatible-bridge")
-        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful-adapter")
+        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "openai-compatible")
+        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful")
         self.assertEqual(graph.metadata["stop_reason"], "baseline_scipip_complete")
         self.assertIn("external_baseline_decomposition_file", graph.metadata)
 
-    def test_virsci_fixed_topic_bridge_runs_with_openai_compatible_mode(self) -> None:
+    def test_virsci_fixed_topic_runs_with_openai_compatible_mode(self) -> None:
         class FakeSettings:
             max_retries = 0
             model = "qwen3-8b"
@@ -1049,7 +1315,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             config = {
                 "virsci": {
                     "enabled": True,
-                    "execution_mode": "benchmark-fixed-topic-bridge",
+                    "execution_mode": "benchmark-fixed-topic",
                     "repo_path": str(repo_root.parent),
                     "openai_compatible": {
                         "base_url": "https://example.com/v1",
@@ -1061,7 +1327,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
                 }
             }
 
-            with patch("idea_graph.external_baselines._build_openai_compatible_bridge_backend", return_value=fake_backend):
+            with patch("idea_graph.external_baselines._build_openai_compatible_backend", return_value=fake_backend):
                 graph = run_baseline_experiment(
                     instance,
                     baseline_name="virsci",
@@ -1073,8 +1339,8 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             graph.final_proposal.title,
             "Sparse Anchor Language Fields for Open-Vocabulary 3D Queries",
         )
-        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "benchmark-fixed-topic-bridge")
-        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful-adapter")
+        self.assertEqual(graph.metadata["external_baseline_execution_mode"], "benchmark-fixed-topic")
+        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "paper-faithful")
         self.assertEqual(graph.metadata["external_baseline_discussion_turns"], 3)
         self.assertEqual(graph.metadata["stop_reason"], "baseline_virsci_complete")
 
@@ -1099,10 +1365,10 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
 
         self.assertIn("fixed-topic benchmark", str(context.exception).lower())
         self.assertEqual(graph.metadata["external_baseline_execution_mode"], "upstream-multi-agent")
-        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "exclude-until-fixed-topic-adapter")
-        self.assertFalse(graph.metadata.get("external_baseline_proxy_fallback", True))
+        self.assertEqual(graph.metadata["external_baseline_adapter_status"], "exclude-until-fixed-topic")
+        self.assertFalse(graph.metadata.get("external_baseline_local_fallback", True))
 
-    def test_ai_researcher_external_bridge_requires_openai_compatible_settings(self) -> None:
+    def test_ai_researcher_external_openai_compatible_requires_settings(self) -> None:
         instance = attach_baseline_metadata(
             self._language_field_instance(),
             baseline_name="ai-researcher",
@@ -1112,7 +1378,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         config = {
             "ai-researcher": {
                 "enabled": True,
-                "execution_mode": "openai-compatible-bridge",
+                "execution_mode": "openai-compatible",
             }
         }
 
@@ -1125,7 +1391,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
 
         self.assertIn("openai-compatible", str(context.exception).lower())
 
-    def test_ai_researcher_proxy_falls_back_when_llm_generation_fails(self) -> None:
+    def test_ai_researcher_guided_falls_back_when_llm_generation_fails(self) -> None:
         class FailingClient:
             def create_chat_completion(self, **kwargs):
                 raise RuntimeError("synthetic LLM failure")
@@ -1145,25 +1411,25 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
 
         instance = attach_baseline_metadata(
             self._language_field_instance(),
-            baseline_name="ai-researcher-proxy",
+            baseline_name="ai-researcher-guided",
             io_mode="auto",
         )
 
         graph = run_baseline_experiment(
             instance,
-            baseline_name="ai-researcher-proxy",
+            baseline_name="ai-researcher-guided",
             collaboration_backend=backend,
         )
 
         self.assertIsNotNone(graph.final_proposal)
-        self.assertEqual(graph.metadata["baseline_name"], "ai-researcher-proxy")
+        self.assertEqual(graph.metadata["baseline_name"], "ai-researcher-guided")
         self.assertIn("baseline_generation_error", graph.metadata)
         self.assertEqual(graph.metadata["stop_reason"], "baseline_candidate_rank_complete")
 
     def test_ai_researcher_topic_fidelity_prefers_field_modeling_over_generic_reconstruction(self) -> None:
         instance = attach_baseline_metadata(
             self._language_field_instance(),
-            baseline_name="ai-researcher-proxy",
+            baseline_name="ai-researcher-guided",
             io_mode="auto",
         )
         graph = run_baseline_experiment(instance, baseline_name="direct")
@@ -1199,7 +1465,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
     def test_ai_researcher_postprocess_adds_language_field_wording(self) -> None:
         instance = attach_baseline_metadata(
             self._language_field_instance(),
-            baseline_name="ai-researcher-proxy",
+            baseline_name="ai-researcher-guided",
             io_mode="auto",
         )
         graph = run_baseline_experiment(instance, baseline_name="direct")
@@ -1215,7 +1481,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             caveats="May fail on ambiguity.",
         )
 
-        polished = _ai_researcher_proxy_postprocess_proposal(graph, draft)
+        polished = _ai_researcher_guided_postprocess_proposal(graph, draft)
 
         self.assertIn("language field", polished.title.lower())
         self.assertIn("3d language field", polished.problem.lower())
@@ -1224,7 +1490,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
     def test_ai_researcher_focus_constraints_are_generic_for_non_language_field_topics(self) -> None:
         instance = attach_baseline_metadata(
             self._liveideabench_instance(),
-            baseline_name="ai-researcher-proxy",
+            baseline_name="ai-researcher-guided",
             io_mode="auto",
         )
         graph = run_baseline_experiment(instance, baseline_name="direct")
@@ -1239,7 +1505,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
     def test_ai_researcher_topic_fidelity_prefers_meteorology_over_language_field_drift(self) -> None:
         instance = attach_baseline_metadata(
             self._liveideabench_instance(),
-            baseline_name="ai-researcher-proxy",
+            baseline_name="ai-researcher-guided",
             io_mode="auto",
         )
         graph = run_baseline_experiment(instance, baseline_name="direct")
@@ -1275,7 +1541,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
     def test_ai_researcher_postprocess_does_not_inject_language_field_wording_for_liveideabench(self) -> None:
         instance = attach_baseline_metadata(
             self._liveideabench_instance(),
-            baseline_name="ai-researcher-proxy",
+            baseline_name="ai-researcher-guided",
             io_mode="auto",
         )
         graph = run_baseline_experiment(instance, baseline_name="direct")
@@ -1291,7 +1557,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             caveats="May need regional adaptation.",
         )
 
-        polished = _baseline_postprocess_proposal(graph, BASELINE_SPECS["ai-researcher-proxy"], draft)
+        polished = _baseline_postprocess_proposal(graph, BASELINE_SPECS["ai-researcher-guided"], draft)
         combined = " ".join(
             [
                 polished.title,
@@ -1318,7 +1584,7 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         )
         virsci_instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
-            baseline_name="virsci-proxy",
+            baseline_name="virsci-discussion",
             io_mode="auto",
         )
 

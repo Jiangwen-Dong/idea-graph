@@ -21,14 +21,17 @@ from idea_graph.action_candidates import (
     enumerate_candidate_specs,
     flatten_candidate_text,
 )
+from idea_graph.collaboration_protocol import resolve_round_phase
 from idea_graph.claim_chain import select_claim_chain
 from idea_graph.engine import (
+    branch_for_role,
     make_action,
     build_seed_graphs,
     choose_round_action,
     create_branch,
     create_edge,
     create_node,
+    generic_candidate_action_specs,
     maturity_snapshot,
     merge_seed_graphs,
     run_experiment,
@@ -77,7 +80,7 @@ class MisalignedRepairBackend:
 
     def choose_action(self, graph: IdeaGraph, round_name: str, role: str) -> ActionDecision:
         branch_id = next(branch.id for branch in graph.branches.values() if branch.role == role)
-        if round_name == "Round3":
+        if round_name in {"Round2", "Round3"}:
             unresolved = unresolved_contradiction_edges(graph)
             target_id = unresolved[0].source_id if unresolved else graph.active_nodes()[0].id
             return ActionDecision(
@@ -331,6 +334,12 @@ class EngineTests(unittest.TestCase):
             )
 
         self.assertTrue(mock_selector.called)
+        state_features = mock_selector.call_args.kwargs["state_features"]
+        self.assertIn("utility", state_features)
+        self.assertIn("utility_stable", state_features)
+        self.assertIn("utility_breakdown", state_features)
+        self.assertIn("evidence", state_features["utility_breakdown"])
+        self.assertIn("coherence", state_features["utility_breakdown"])
         self.assertIsNotNone(graph.final_proposal)
         self.assertEqual(graph.metadata["runtime_controller"]["kind"], "relation_graph_critic_rerank")
         self.assertTrue(graph.metadata.get("runtime_controller_log"))
@@ -403,6 +412,12 @@ class EngineTests(unittest.TestCase):
                 selected_spec={
                     **selected,
                     "critic_score": 0.91,
+                    "critic_base_score": 0.72,
+                    "critic_calibration_bias": 0.19,
+                    "critic_score_calibrated": 0.91,
+                    "critic_action_family": "support",
+                    "critic_calibration_enabled": True,
+                    "critic_calibration_feedback": {"support_coverage": 0.25},
                     "predicted_gain": 0.42,
                 },
                 policy_decision=SimpleNamespace(
@@ -415,6 +430,12 @@ class EngineTests(unittest.TestCase):
                     {
                         **candidate,
                         "critic_score": 0.80 - (index * 0.1),
+                        "critic_base_score": 0.70 - (index * 0.1),
+                        "critic_calibration_bias": 0.10,
+                        "critic_score_calibrated": 0.80 - (index * 0.1),
+                        "critic_action_family": "support",
+                        "critic_calibration_enabled": True,
+                        "critic_calibration_feedback": {"support_coverage": 0.25},
                         "predicted_gain": 0.30 - (index * 0.05),
                     }
                     for index, candidate in enumerate(valid_candidates)
@@ -451,10 +472,22 @@ class EngineTests(unittest.TestCase):
         self.assertIn("target_ids", first["selected_candidate"])
         self.assertIn("payload", first["selected_candidate"])
         self.assertIn("candidate_source", first["selected_candidate"])
+        self.assertEqual(first["selected_candidate"]["critic_base_score"], 0.72)
+        self.assertEqual(first["selected_candidate"]["critic_calibration_bias"], 0.19)
+        self.assertEqual(first["selected_candidate"]["critic_score_calibrated"], 0.91)
+        self.assertEqual(first["selected_candidate"]["critic_action_family"], "support")
+        self.assertTrue(first["selected_candidate"]["critic_calibration_enabled"])
+        self.assertEqual(
+            first["selected_candidate"]["critic_calibration_feedback"],
+            {"support_coverage": 0.25},
+        )
         self.assertTrue(first["top_scored_candidates"])
         self.assertIn("target_ids", first["top_scored_candidates"][0])
         self.assertIn("payload", first["top_scored_candidates"][0])
         self.assertIn("candidate_source", first["top_scored_candidates"][0])
+        self.assertIn("critic_base_score", first["top_scored_candidates"][0])
+        self.assertIn("critic_calibration_bias", first["top_scored_candidates"][0])
+        self.assertIn("critic_action_family", first["top_scored_candidates"][0])
 
     def test_progress_callback_uses_functional_role_display_names(self) -> None:
         messages: list[str] = []
@@ -640,6 +673,8 @@ class EngineTests(unittest.TestCase):
         self.assertIn("materialized_graph_actions", traces[0])
         self.assertIsInstance(traces[0]["materialized_graph_actions"], list)
         self.assertIn("post_round_commit", traces[0])
+        self.assertIn("graph_signals", traces[0]["post_round_commit"])
+        self.assertIn("graph_signal_deficits", traces[0]["post_round_commit"])
         self.assertNotIn("selected_actions", traces[0])
 
     def test_parallel_runtime_records_parallel_edit_rows(self) -> None:
@@ -684,6 +719,8 @@ class EngineTests(unittest.TestCase):
         self.assertIn("state_snapshot", first_row)
         self.assertEqual(first_row["commit_supervision"]["source"], "maturity_snapshot")
         self.assertIn("label", first_row["commit_supervision"])
+        self.assertIn("graph_signals", first_row)
+        self.assertIn("graph_signal_deficits", first_row)
 
     def test_parallel_runtime_stops_early_on_two_head_commit_signal(self) -> None:
         class FreezeBackend:
@@ -1234,7 +1271,7 @@ class EngineTests(unittest.TestCase):
 
         action = choose_round_action(graph, "Round4", "FeasibilityCritic")
 
-        self.assertEqual(action.kind, "attach_evidence")
+        self.assertEqual(action.kind, "propose_repair")
         self.assertEqual(len(action.target_ids), 1)
 
     def test_choose_round_action_handles_missing_impact_hypothesis_in_structure_phase(self) -> None:
@@ -1258,6 +1295,207 @@ class EngineTests(unittest.TestCase):
 
         self.assertEqual(action.kind, "propose_repair")
         self.assertIn(action.target_ids[0], contradiction_target_ids)
+
+    def test_round2_and_later_use_repair_phase_after_initial_structure_round(self) -> None:
+        self.assertEqual(resolve_round_phase("Round1").key, "structure")
+        self.assertEqual(resolve_round_phase("Round2").key, "repair")
+        self.assertEqual(resolve_round_phase("Round4").key, "repair")
+
+    def test_generic_candidate_specs_switch_to_repair_slate_after_round1(self) -> None:
+        graph = self._build_seed_graph()
+        branch = branch_for_role(graph, "FeasibilityCritic")
+
+        candidates = generic_candidate_action_specs(graph, "Round2", "FeasibilityCritic", branch)
+        candidate_kinds = {candidate["kind"] for candidate in candidates}
+
+        self.assertIn("propose_repair", candidate_kinds)
+        self.assertNotIn("add_contradiction_edge", candidate_kinds)
+
+    def test_repair_phase_attach_evidence_candidates_include_core_grounding_gap_nodes(self) -> None:
+        graph = IdeaGraph(topic="topic", literature=["paper a", "paper b"])
+        problem_branch = create_branch(graph, "ImpactReframer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        critic_branch = create_branch(graph, "FeasibilityCritic")
+        novelty_branch = create_branch(graph, "NoveltyExaminer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="Problem.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.8,
+            evidence=["paper p"],
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text="Method.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.8,
+        )
+        novelty = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Novelty.",
+            role="NoveltyExaminer",
+            branch_id=novelty_branch.id,
+            confidence=0.8,
+            evidence=["paper n"],
+        )
+        risk = create_node(
+            graph,
+            node_type="Risk",
+            text="Risk.",
+            role="FeasibilityCritic",
+            branch_id=critic_branch.id,
+            confidence=0.7,
+        )
+        eval_plan = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Eval.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.8,
+        )
+
+        create_edge(
+            graph,
+            source_id=risk.id,
+            relation="contradicts",
+            target_id=novelty.id,
+            role="FeasibilityCritic",
+            branch_id=critic_branch.id,
+        )
+        create_edge(
+            graph,
+            source_id=method.id,
+            relation="supports",
+            target_id=problem.id,
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+        )
+
+        branch = branch_for_role(graph, "FeasibilityCritic")
+        candidates = generic_candidate_action_specs(graph, "Round3", "FeasibilityCritic", branch)
+        attach_targets = [
+            candidate["target_ids"][0]
+            for candidate in candidates
+            if candidate["kind"] == "attach_evidence"
+        ]
+
+        self.assertIn(eval_plan.id, attach_targets)
+
+    def test_repair_phase_attach_evidence_candidates_prioritize_claim_chain_backbone_gap_nodes(self) -> None:
+        graph = IdeaGraph(topic="topic", literature=["paper a", "paper b"])
+        problem_branch = create_branch(graph, "ImpactReframer")
+        method_branch = create_branch(graph, "MechanismProposer")
+        critic_branch = create_branch(graph, "FeasibilityCritic")
+        novelty_branch = create_branch(graph, "NoveltyExaminer")
+        eval_branch = create_branch(graph, "EvaluationDesigner")
+
+        auxiliary_eval = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Auxiliary eval.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.7,
+        )
+        problem = create_node(
+            graph,
+            node_type="Problem",
+            text="Problem.",
+            role="ImpactReframer",
+            branch_id=problem_branch.id,
+            confidence=0.8,
+            evidence=["paper p"],
+        )
+        hypothesis = create_node(
+            graph,
+            node_type="Hypothesis",
+            text="Hypothesis.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.8,
+            evidence=["paper h"],
+        )
+        method = create_node(
+            graph,
+            node_type="Method",
+            text="Method.",
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+            confidence=0.8,
+        )
+        novelty = create_node(
+            graph,
+            node_type="NoveltyClaim",
+            text="Novelty.",
+            role="NoveltyExaminer",
+            branch_id=novelty_branch.id,
+            confidence=0.8,
+            evidence=["paper n"],
+        )
+        backbone_eval = create_node(
+            graph,
+            node_type="EvalPlan",
+            text="Backbone eval.",
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+            confidence=0.8,
+        )
+        create_node(
+            graph,
+            node_type="Risk",
+            text="Risk.",
+            role="FeasibilityCritic",
+            branch_id=critic_branch.id,
+            confidence=0.7,
+        )
+
+        create_edge(
+            graph,
+            source_id=method.id,
+            relation="supports",
+            target_id=problem.id,
+            role="MechanismProposer",
+            branch_id=method_branch.id,
+        )
+        create_edge(
+            graph,
+            source_id=backbone_eval.id,
+            relation="depends_on",
+            target_id=method.id,
+            role="EvaluationDesigner",
+            branch_id=eval_branch.id,
+        )
+
+        branch = branch_for_role(graph, "FeasibilityCritic")
+        with patch(
+            "idea_graph.engine.select_claim_chain",
+            return_value={
+                "coverage": {
+                    "required_slots": ["problem", "gap", "mechanism", "evaluation", "caveat"],
+                    "slot_count": 5,
+                },
+                "subgraph": {"core_node_ids": [hypothesis.id, method.id, backbone_eval.id, novelty.id]},
+            },
+        ):
+            candidates = generic_candidate_action_specs(graph, "Round4", "FeasibilityCritic", branch)
+
+        attach_targets = [
+            candidate["target_ids"][0]
+            for candidate in candidates
+            if candidate["kind"] == "attach_evidence"
+        ]
+
+        self.assertGreaterEqual(len(attach_targets), 1)
+        self.assertEqual(attach_targets[0], backbone_eval.id)
+        self.assertNotEqual(attach_targets[0], auxiliary_eval.id)
 
     def test_misaligned_llm_repair_actions_fall_back_to_contradiction_targeted_repairs(self) -> None:
         messages: list[str] = []

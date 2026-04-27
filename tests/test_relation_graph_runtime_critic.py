@@ -282,6 +282,20 @@ def _build_runtime_graph() -> IdeaGraph:
     return graph
 
 
+def _vocabularies_with_candidate_kinds(
+    base: RelationGraphVocabularies,
+    kinds: list[str],
+) -> RelationGraphVocabularies:
+    candidate_kind_to_id = {kind: index for index, kind in enumerate(kinds)}
+    candidate_kind_to_id.setdefault("unknown", len(candidate_kind_to_id))
+    return RelationGraphVocabularies(
+        node_type_to_id=dict(base.node_type_to_id),
+        role_to_id=dict(base.role_to_id),
+        edge_type_to_id=dict(base.edge_type_to_id),
+        candidate_kind_to_id=candidate_kind_to_id,
+    )
+
+
 class RelationGraphRuntimeSelectorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp_dir = Path(mkdtemp())
@@ -683,6 +697,306 @@ class RelationGraphRuntimeSelectorTests(unittest.TestCase):
         self.assertTrue(scored["heuristic"]["after_is_mature"])
         self.assertFalse(scored["critic-safe"]["after_is_mature"])
 
+    def test_action_score_calibration_boosts_support_when_support_coverage_is_low(self) -> None:
+        graph = _build_runtime_graph()
+        vocabularies = _vocabularies_with_candidate_kinds(
+            self.vocabularies,
+            ["propose_repair", "add_support_edge", "skip"],
+        )
+
+        decision = select_relation_graph_critic_candidate(
+            graph,
+            round_name="Round1",
+            role="MechanismProposer",
+            state_features={
+                "round_index": 1,
+                "support_coverage": 0.10,
+                "unresolved_contradiction_ratio": 0.0,
+                "completeness": False,
+                "is_mature": False,
+                "utility_breakdown": {
+                    "evidence": 0.70,
+                    "coherence": 0.70,
+                    "novelty": 0.80,
+                },
+            },
+            candidate_specs=[
+                {
+                    "candidate_id": "heuristic-repair",
+                    "kind": "propose_repair",
+                    "target_ids": ["N001"],
+                    "payload": {"branch_id": "B001", "repair_text": "Tighten the claim."},
+                    "predicted_gain": 0.10,
+                },
+                {
+                    "candidate_id": "support-candidate",
+                    "kind": "add_support_edge",
+                    "target_ids": ["N001", "N002"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.20,
+                },
+            ],
+            heuristic_candidate_id="heuristic-repair",
+            runtime_bundle=_StubRuntimeBundle(scores=[0.55, 0.32], vocabularies=vocabularies),
+            config=RelationGraphRuntimeConfig(
+                tau_override=0.01,
+                use_commit=False,
+                use_action_score_calibration=True,
+                action_score_calibration_strength=0.50,
+                action_score_calibration_max_bias=0.45,
+            ),
+        )
+
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "support-candidate")
+        scored = {str(row["candidate_id"]): row for row in decision.scored_candidates}
+        self.assertEqual(scored["support-candidate"]["critic_base_score"], 0.32)
+        self.assertGreater(scored["support-candidate"]["critic_calibration_bias"], 0.0)
+        self.assertEqual(
+            scored["support-candidate"]["critic_score"],
+            scored["support-candidate"]["critic_score_calibrated"],
+        )
+        self.assertGreater(
+            scored["support-candidate"]["critic_score"],
+            scored["heuristic-repair"]["critic_score"],
+        )
+        self.assertEqual(scored["support-candidate"]["critic_action_family"], "support")
+        self.assertTrue(scored["support-candidate"]["critic_calibration_enabled"])
+        self.assertLess(
+            scored["support-candidate"]["critic_calibration_feedback"]["support_coverage"],
+            0.20,
+        )
+
+    def test_action_score_calibration_prefers_repair_for_unresolved_contradictions(self) -> None:
+        graph = _build_runtime_graph()
+        vocabularies = _vocabularies_with_candidate_kinds(
+            self.vocabularies,
+            ["add_contradiction_edge", "propose_repair"],
+        )
+
+        decision = select_relation_graph_critic_candidate(
+            graph,
+            round_name="Round3",
+            role="MechanismProposer",
+            state_features={
+                "round_index": 3,
+                "support_coverage": 0.75,
+                "unresolved_contradiction_ratio": 1.0,
+                "completeness": True,
+                "is_mature": False,
+                "utility_breakdown": {
+                    "evidence": 0.50,
+                    "coherence": 0.45,
+                    "novelty": 0.70,
+                },
+            },
+            candidate_specs=[
+                {
+                    "candidate_id": "heuristic-contradiction",
+                    "kind": "add_contradiction_edge",
+                    "target_ids": ["N001", "N002"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.10,
+                },
+                {
+                    "candidate_id": "repair-candidate",
+                    "kind": "propose_repair",
+                    "target_ids": ["N001"],
+                    "payload": {"branch_id": "B001", "repair_text": "Resolve the conflict."},
+                    "predicted_gain": 0.20,
+                },
+            ],
+            heuristic_candidate_id="heuristic-contradiction",
+            runtime_bundle=_StubRuntimeBundle(scores=[0.60, 0.42], vocabularies=vocabularies),
+            config=RelationGraphRuntimeConfig(
+                tau_override=0.01,
+                use_commit=False,
+                use_action_score_calibration=True,
+                action_score_calibration_strength=0.50,
+                action_score_calibration_max_bias=0.45,
+            ),
+        )
+
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "repair-candidate")
+        scored = {str(row["candidate_id"]): row for row in decision.scored_candidates}
+        self.assertGreater(scored["repair-candidate"]["critic_calibration_bias"], 0.0)
+        self.assertLess(scored["heuristic-contradiction"]["critic_calibration_bias"], 0.0)
+        self.assertEqual(scored["repair-candidate"]["critic_action_family"], "repair")
+        self.assertEqual(scored["heuristic-contradiction"]["critic_action_family"], "critique")
+
+    def test_action_score_calibration_boosts_skip_when_graph_is_mature(self) -> None:
+        graph = _build_runtime_graph()
+        vocabularies = _vocabularies_with_candidate_kinds(
+            self.vocabularies,
+            ["add_support_edge", "skip"],
+        )
+
+        decision = select_relation_graph_critic_candidate(
+            graph,
+            round_name="Round3",
+            role="MechanismProposer",
+            state_features={
+                "round_index": 3,
+                "support_coverage": 0.92,
+                "unresolved_contradiction_ratio": 0.0,
+                "completeness": True,
+                "is_mature": True,
+                "utility_stable": True,
+                "utility_breakdown": {
+                    "evidence": 0.55,
+                    "coherence": 0.82,
+                    "novelty": 0.84,
+                },
+            },
+            candidate_specs=[
+                {
+                    "candidate_id": "heuristic-support",
+                    "kind": "add_support_edge",
+                    "target_ids": ["N001", "N002"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.10,
+                },
+                {
+                    "candidate_id": "skip-candidate",
+                    "kind": "skip",
+                    "target_ids": [],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.0,
+                },
+            ],
+            heuristic_candidate_id="heuristic-support",
+            runtime_bundle=_StubRuntimeBundle(scores=[0.48, 0.30], vocabularies=vocabularies),
+            config=RelationGraphRuntimeConfig(
+                tau_override=0.01,
+                use_commit=False,
+                use_action_score_calibration=True,
+                action_score_calibration_strength=0.50,
+                action_score_calibration_max_bias=0.45,
+            ),
+        )
+
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "skip-candidate")
+        scored = {str(row["candidate_id"]): row for row in decision.scored_candidates}
+        self.assertEqual(scored["skip-candidate"]["critic_action_family"], "abstain")
+        self.assertGreater(scored["skip-candidate"]["critic_calibration_bias"], 0.0)
+        self.assertLessEqual(scored["heuristic-support"]["critic_calibration_bias"], 0.0)
+
+    def test_action_score_calibration_can_be_disabled(self) -> None:
+        graph = _build_runtime_graph()
+        vocabularies = _vocabularies_with_candidate_kinds(
+            self.vocabularies,
+            ["propose_repair", "add_support_edge"],
+        )
+
+        decision = select_relation_graph_critic_candidate(
+            graph,
+            round_name="Round1",
+            role="MechanismProposer",
+            state_features={
+                "round_index": 1,
+                "support_coverage": 0.10,
+                "unresolved_contradiction_ratio": 0.0,
+                "completeness": False,
+                "is_mature": False,
+            },
+            candidate_specs=[
+                {
+                    "candidate_id": "heuristic-repair",
+                    "kind": "propose_repair",
+                    "target_ids": ["N001"],
+                    "payload": {"branch_id": "B001", "repair_text": "Tighten the claim."},
+                    "predicted_gain": 0.10,
+                },
+                {
+                    "candidate_id": "support-candidate",
+                    "kind": "add_support_edge",
+                    "target_ids": ["N001", "N002"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.20,
+                },
+            ],
+            heuristic_candidate_id="heuristic-repair",
+            runtime_bundle=_StubRuntimeBundle(scores=[0.55, 0.32], vocabularies=vocabularies),
+            config=RelationGraphRuntimeConfig(
+                tau_override=0.01,
+                use_commit=False,
+                use_action_score_calibration=False,
+                action_score_calibration_strength=0.50,
+                action_score_calibration_max_bias=0.45,
+            ),
+        )
+
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "heuristic-repair")
+        scored = {str(row["candidate_id"]): row for row in decision.scored_candidates}
+        self.assertEqual(scored["support-candidate"]["critic_base_score"], 0.32)
+        self.assertEqual(scored["support-candidate"]["critic_calibration_bias"], 0.0)
+        self.assertFalse(scored["support-candidate"]["critic_calibration_enabled"])
+        self.assertEqual(scored["support-candidate"]["critic_score"], 0.32)
+
+    def test_action_score_calibration_uses_graph_only_positioning_signal_for_mark_overlap(self) -> None:
+        graph = _build_runtime_graph()
+        vocabularies = _vocabularies_with_candidate_kinds(
+            self.vocabularies,
+            ["request_evidence", "mark_overlap"],
+        )
+
+        decision = select_relation_graph_critic_candidate(
+            graph,
+            round_name="Round2",
+            role="NoveltyExaminer",
+            state_features={
+                "round_index": 2,
+                "support_coverage": 0.78,
+                "unresolved_contradiction_ratio": 0.0,
+                "completeness": True,
+                "is_mature": False,
+                "utility_breakdown": {
+                    "evidence": 0.70,
+                    "coherence": 0.76,
+                    "novelty": 0.85,
+                    "benchmark_specificity": 0.0,
+                    "experiment_alignment": 0.0,
+                },
+            },
+            candidate_specs=[
+                {
+                    "candidate_id": "heuristic-evidence",
+                    "kind": "request_evidence",
+                    "target_ids": ["N002"],
+                    "payload": {"branch_id": "B001", "query": "Need more grounding."},
+                    "predicted_gain": 0.10,
+                },
+                {
+                    "candidate_id": "overlap-candidate",
+                    "kind": "mark_overlap",
+                    "target_ids": ["N002"],
+                    "payload": {
+                        "branch_id": "B001",
+                        "paper_id": "paper-1",
+                        "evidence": "Possible overlap with related work.",
+                    },
+                    "predicted_gain": 0.12,
+                },
+            ],
+            heuristic_candidate_id="heuristic-evidence",
+            runtime_bundle=_StubRuntimeBundle(scores=[0.55, 0.46], vocabularies=vocabularies),
+            config=RelationGraphRuntimeConfig(
+                tau_override=0.01,
+                use_commit=False,
+                use_action_score_calibration=True,
+                action_score_calibration_strength=0.50,
+                action_score_calibration_max_bias=0.45,
+            ),
+        )
+
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "overlap-candidate")
+        scored = {str(row["candidate_id"]): row for row in decision.scored_candidates}
+        self.assertGreater(scored["overlap-candidate"]["critic_calibration_bias"], 0.0)
+        self.assertEqual(scored["overlap-candidate"]["critic_aligned_signal"], "positioning")
+        feedback = scored["overlap-candidate"]["critic_calibration_feedback"]
+        self.assertIn("positioning", feedback)
+        self.assertNotIn("benchmark_specificity", feedback)
+        self.assertNotIn("experiment_alignment", feedback)
+
     def test_select_relation_graph_critic_candidate_disables_commit_by_default(self) -> None:
         graph = _build_runtime_graph()
         decision = select_relation_graph_critic_candidate(
@@ -749,7 +1063,7 @@ class RelationGraphRuntimeSelectorTests(unittest.TestCase):
         self.assertTrue(decision.policy_decision.used_heuristic_fallback)
         self.assertEqual(decision.selected_spec["controller_fallback_reason"], "predicted_gain_guard")
 
-    def test_select_relation_graph_critic_candidate_blocks_low_signal_kind_swap(self) -> None:
+    def test_select_relation_graph_critic_candidate_preserves_low_signal_kind_swap_by_default(self) -> None:
         graph = _build_runtime_graph()
         vocabularies = RelationGraphVocabularies(
             node_type_to_id=dict(self.vocabularies.node_type_to_id),
@@ -789,6 +1103,57 @@ class RelationGraphRuntimeSelectorTests(unittest.TestCase):
             heuristic_candidate_id="heuristic",
             runtime_bundle=_StubRuntimeBundle(scores=[0.10, 0.90], vocabularies=vocabularies),
             config=RelationGraphRuntimeConfig(tau_override=0.05, use_commit=False),
+        )
+
+        self.assertEqual(decision.policy_decision.selected_candidate_id, "critic-low-signal")
+        self.assertEqual(decision.policy_decision.selected_source, "critic")
+        self.assertFalse(decision.policy_decision.used_heuristic_fallback)
+        self.assertNotIn("controller_fallback_reason", decision.selected_spec)
+
+    def test_select_relation_graph_critic_candidate_blocks_low_signal_kind_swap_when_enabled(self) -> None:
+        graph = _build_runtime_graph()
+        vocabularies = RelationGraphVocabularies(
+            node_type_to_id=dict(self.vocabularies.node_type_to_id),
+            role_to_id=dict(self.vocabularies.role_to_id),
+            edge_type_to_id=dict(self.vocabularies.edge_type_to_id),
+            candidate_kind_to_id={
+                "request_evidence": 0,
+                "add_support_edge": 1,
+                "unknown": 2,
+            },
+        )
+        decision = select_relation_graph_critic_candidate(
+            graph,
+            round_name="Round3",
+            role="MechanismProposer",
+            state_features={
+                "round_index": 3,
+                "support_coverage": 0.60,
+                "unresolved_contradiction_ratio": 0.0,
+            },
+            candidate_specs=[
+                {
+                    "candidate_id": "heuristic",
+                    "kind": "request_evidence",
+                    "target_ids": ["N001"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.0,
+                },
+                {
+                    "candidate_id": "critic-low-signal",
+                    "kind": "add_support_edge",
+                    "target_ids": ["N002", "N001"],
+                    "payload": {"branch_id": "B001"},
+                    "predicted_gain": 0.0,
+                },
+            ],
+            heuristic_candidate_id="heuristic",
+            runtime_bundle=_StubRuntimeBundle(scores=[0.10, 0.90], vocabularies=vocabularies),
+            config=RelationGraphRuntimeConfig(
+                tau_override=0.05,
+                use_commit=False,
+                use_low_signal_kind_swap_guard=True,
+            ),
         )
 
         self.assertEqual(decision.policy_decision.selected_candidate_id, "heuristic")

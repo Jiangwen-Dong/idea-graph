@@ -1,9 +1,9 @@
 # idea-graph
 
 `idea-graph` is a Python research prototype for scientific ideation with
-Evolving Idea Graphs (EIG). The system represents a developing research idea as
-a typed graph, lets role-specialized agents propose graph edits, and synthesizes
-a final proposal from the committed graph state.
+Evolving Idea Graphs (EIG). It represents a developing research idea as a typed
+graph, lets role-specialized agents edit that shared state, and synthesizes a
+final proposal from the committed graph.
 
 This repository is prepared as a code-only public version. It intentionally
 does not include experiment outputs, benchmark datasets, trained model
@@ -19,6 +19,24 @@ internal research logs.
 - Baseline adapters and controller variants used by the research prototype
 - Public configuration examples in `configs/`
 - Unit tests in `tests/`
+
+## Public Surface
+
+The public entrypoints are:
+
+- `python scripts/run_pipeline.py ...`
+- `python scripts/check_openai_compatible.py ...`
+- `python scripts/fetch_ai_idea_bench_2025.py`
+- `python scripts/fetch_liveideabench.py`
+
+Research utilities are grouped under:
+
+- `scripts/analysis/`
+- `scripts/data_prep/`
+- `scripts/eval/`
+- `scripts/train/`
+
+See `scripts/README.md` for the grouped layout.
 
 ## What Is Not Included
 
@@ -39,9 +57,8 @@ python -m pip install -e .
 ```
 
 The package depends on `numpy`, `scikit-learn`, `torch`, and
-`sentence-transformers`. Some paths, especially learned-controller paths, may
-also require private model artifacts that are not part of this public code
-release.
+`sentence-transformers`. Learned-controller paths can require local model
+artifacts that are intentionally not part of this public release.
 
 ## Quick Start
 
@@ -78,9 +95,23 @@ python scripts/run_pipeline.py --input /path/to/instance.json --baseline self-re
 python scripts/run_pipeline.py --input /path/to/instance.json --baseline ours-eig --runtime-protocol parallel_graph_v2
 ```
 
-Additional research utilities are grouped under `scripts/analysis/`,
-`scripts/data_prep/`, `scripts/eval/`, and `scripts/train/`. The four flat
-scripts in `scripts/` are the intended public entrypoints.
+## Baseline Families
+
+The repository includes several baseline families:
+
+- Direct proposal generation: `direct`
+- Single-agent revision: `self-refine`
+- EIG variants: `ours-eig` and controller-based variants such as text critic,
+  relation-graph critic, two-head graph critic, signal heuristic control, fixed
+  control, and random control
+- Single-model graph reasoning: `graph-of-thought`
+- External upstream wrappers: `ai-researcher`, `scipip`, `virsci`
+- Local workflow variants inspired by upstream systems:
+  `ai-researcher-guided`, `scipip-structured`, and `virsci-discussion`
+
+The three local workflow variants are benchmark-facing local implementations
+that follow the high-level workflow shape of the named systems. They are not
+claims of exact upstream reproduction.
 
 ## OpenAI-Compatible Backend
 
@@ -90,8 +121,8 @@ Start from the public example config:
 configs/openai_compatible.example.json
 ```
 
-Set credentials through environment variables rather than writing keys into
-JSON files:
+Set credentials through environment variables rather than writing keys into JSON
+files:
 
 ```powershell
 $env:DASHSCOPE_API_KEY="your_real_key"
@@ -133,14 +164,25 @@ Large paper archives and benchmark assets remain local. Do not commit them.
 
 ## Learned Controllers And Private Artifacts
 
-The code contains controller integration paths for text critics, graph critics,
-two-head graph critics, fixed control, and random control. Trained critic models
-and paper-evaluation calibration artifacts are not included in this repository.
+The code contains controller integration paths for text critics, relation-graph
+critics, two-head graph critics, signal-heuristic control, fixed control, and
+random control. Trained critic models and paper-evaluation calibration artifacts
+are not included in this repository.
 
 If you have private controller artifacts, keep them in ignored local paths such
 as `outputs/critic_models/` or provide explicit paths through local configs or
 metadata. Temporary external-baseline workspaces should likewise stay under
 ignored paths such as `outputs/tmp/`.
+
+The public repository includes the runtime code for these controllers, but not
+the learned checkpoints needed to reproduce the trained-controller results.
+
+## External Baselines
+
+The external baselines `ai-researcher`, `scipip`, and `virsci` require local
+copies of their upstream repositories plus local configuration. Their temporary
+workspaces should remain under ignored paths such as
+`outputs/tmp/external-baseline-runs/`.
 
 The fixed-control ablation uses the public example schedule:
 

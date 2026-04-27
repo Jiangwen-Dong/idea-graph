@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 
+from .controller_protocol import (
+    allowed_actions_for_role,
+    is_active_edit_action,
+)
 from .models import GraphAction, IdeaGraph
 
 
@@ -73,8 +77,23 @@ def enumerate_candidate_specs(
     from .engine import branch_for_role, generic_candidate_action_specs
 
     branch = branch_for_role(graph, role)
+    allowed = set(allowed_actions_for_role(role))
     baseline_candidate = action_spec_from_action(baseline_action, candidate_source="legacy_policy")
-    candidates = [baseline_candidate, *generic_candidate_action_specs(graph, round_name, role, branch)]
+    baseline_candidates = (
+        [baseline_candidate]
+        if str(baseline_candidate.get("kind", "")).strip() in allowed
+        and is_active_edit_action(str(baseline_candidate.get("kind", "")).strip())
+        else []
+    )
+    candidates = [
+        *baseline_candidates,
+        *[
+            candidate
+            for candidate in generic_candidate_action_specs(graph, round_name, role, branch)
+            if str(candidate.get("kind", "")).strip() in allowed
+            and is_active_edit_action(str(candidate.get("kind", "")).strip())
+        ],
+    ]
     candidates.append(
         build_action_spec(
             kind="commit",
@@ -97,8 +116,20 @@ def enumerate_edit_candidate_specs(
     from .engine import branch_for_role, generic_candidate_action_specs
 
     branch = branch_for_role(graph, role)
+    allowed = set(allowed_actions_for_role(role))
     baseline_candidate = action_spec_from_action(baseline_action, candidate_source="parallel_selected")
-    candidates = [baseline_candidate, *generic_candidate_action_specs(graph, round_name, role, branch)]
+    candidates = []
+    if (
+        str(baseline_candidate.get("kind", "")).strip() in allowed
+        and is_active_edit_action(str(baseline_candidate.get("kind", "")).strip())
+    ):
+        candidates.append(baseline_candidate)
+    candidates.extend(
+        candidate
+        for candidate in generic_candidate_action_specs(graph, round_name, role, branch)
+        if str(candidate.get("kind", "")).strip() in allowed
+        and is_active_edit_action(str(candidate.get("kind", "")).strip())
+    )
     candidates.append(
         build_action_spec(
             kind="skip",

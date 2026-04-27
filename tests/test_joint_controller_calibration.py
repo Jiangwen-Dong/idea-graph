@@ -268,6 +268,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
                     "runtime_controller_kind": "relation_graph_two_head_critic",
                     "runtime_controller_model_dir": str(model_dir),
                     "runtime_controller_use_commit": True,
+                    "runtime_controller_use_joint_threshold_calibration": True,
                     "runtime_controller_tau_override": 0.05,
                     "runtime_controller_tau_commit": 0.08,
                     "runtime_controller_gamma_commit": 0.60,
@@ -333,6 +334,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
                     "runtime_controller_kind": "relation_graph_two_head_critic",
                     "runtime_controller_model_dir": str(model_dir),
                     "runtime_controller_use_commit": True,
+                    "runtime_controller_use_joint_threshold_calibration": True,
                     "runtime_controller_calibration_path": str(override_path),
                 },
             )
@@ -377,6 +379,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
                     "runtime_controller_kind": "relation_graph_two_head_critic",
                     "runtime_controller_model_dir": str(model_dir),
                     "runtime_controller_use_commit": True,
+                    "runtime_controller_use_joint_threshold_calibration": True,
                     "runtime_controller_disable_calibration": True,
                 },
             )
@@ -394,8 +397,8 @@ class JointControllerCalibrationTests(unittest.TestCase):
             config = controller_metadata["config"]
             self.assertTrue(config.use_edit)
             self.assertEqual(config.tau_override, 0.05)
-            self.assertEqual(config.gamma_commit, 0.60)
-            self.assertEqual(config.min_commit_round, 2)
+            self.assertEqual(config.gamma_commit, 0.50)
+            self.assertEqual(config.min_commit_round, 3)
             self.assertEqual(config.guard_support_threshold, 0.66)
 
     def test_runtime_controller_loader_disable_resets_preapplied_calibration(self) -> None:
@@ -423,6 +426,7 @@ class JointControllerCalibrationTests(unittest.TestCase):
                     "runtime_controller_kind": "relation_graph_two_head_critic",
                     "runtime_controller_model_dir": str(model_dir),
                     "runtime_controller_use_commit": True,
+                    "runtime_controller_use_joint_threshold_calibration": True,
                     "runtime_controller_tau_override": 0.13,
                     "runtime_controller_tau_commit": 0.08,
                     "runtime_controller_gamma_commit": 0.74,
@@ -448,8 +452,8 @@ class JointControllerCalibrationTests(unittest.TestCase):
             config = controller_metadata["config"]
             self.assertTrue(config.use_edit)
             self.assertEqual(config.tau_override, 0.05)
-            self.assertEqual(config.gamma_commit, 0.60)
-            self.assertEqual(config.min_commit_round, 2)
+            self.assertEqual(config.gamma_commit, 0.50)
+            self.assertEqual(config.min_commit_round, 3)
             self.assertEqual(config.guard_support_threshold, 0.66)
             self.assertNotIn("runtime_controller_calibration_source", graph.metadata)
             self.assertNotIn("runtime_controller_calibration_version", graph.metadata)

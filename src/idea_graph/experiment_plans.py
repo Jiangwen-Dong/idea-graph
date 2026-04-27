@@ -53,6 +53,14 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         stop_when_mature=True,
         rationale="Single-agent draft-critique-revise baseline.",
     ),
+    "graph-of-thought": ExperimentMethodPlan(
+        name="graph-of-thought",
+        baseline_name="graph-of-thought",
+        restarts=1,
+        max_rounds=1,
+        stop_when_mature=True,
+        rationale="Single-model Graph-of-Thought baseline with three graph-generation/scoring rounds followed by final synthesis.",
+    ),
     "ai-researcher": ExperimentMethodPlan(
         name="ai-researcher",
         baseline_name="ai-researcher",
@@ -67,7 +75,7 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         restarts=1,
         max_rounds=1,
         stop_when_mature=True,
-        rationale="Paper-faithful SciPIP bridge baseline under the shared benchmark-facing I/O contract.",
+        rationale="Paper-faithful SciPIP baseline under the shared benchmark-facing I/O contract.",
     ),
     "virsci": ExperimentMethodPlan(
         name="virsci",
@@ -75,23 +83,23 @@ MAIN_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         restarts=1,
         max_rounds=1,
         stop_when_mature=True,
-        rationale="Paper-faithful fixed-topic VirSci bridge baseline under the shared benchmark-facing I/O contract.",
+        rationale="Paper-faithful fixed-topic VirSci baseline under the shared benchmark-facing I/O contract.",
     ),
-    "scipip-proxy": ExperimentMethodPlan(
-        name="scipip-proxy",
-        baseline_name="scipip-proxy",
+    "scipip-structured": ExperimentMethodPlan(
+        name="scipip-structured",
+        baseline_name="scipip-structured",
         restarts=1,
         max_rounds=1,
         stop_when_mature=True,
-        rationale="Structured decomposition proxy baseline.",
+        rationale="Structured decomposition baseline.",
     ),
-    "ai-researcher-proxy": ExperimentMethodPlan(
-        name="ai-researcher-proxy",
-        baseline_name="ai-researcher-proxy",
+    "ai-researcher-guided": ExperimentMethodPlan(
+        name="ai-researcher-guided",
+        baseline_name="ai-researcher-guided",
         restarts=1,
         max_rounds=1,
         stop_when_mature=True,
-        rationale="Literature-grounded candidate-generation proxy baseline.",
+        rationale="Literature-grounded candidate-generation baseline.",
     ),
     "ours-eig": ExperimentMethodPlan(
         name="ours-eig",
@@ -142,7 +150,7 @@ ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         max_rounds=5,
         stop_when_mature=True,
         runtime_protocol="parallel_graph_v2",
-        rationale="Parallel EIG with the two-head graph critic and frozen-dev controller calibration.",
+        rationale="Parallel EIG with the two-head graph critic and graph-health action-score calibration.",
         metadata_overrides={
             "idea_graph_protocol_variant": "eig_parallel_v2_twohead_calibrated",
         },
@@ -249,13 +257,13 @@ ABLATION_METHOD_PLANS: dict[str, ExperimentMethodPlan] = {
         strip_literature_grounding=True,
         strip_literature_list=True,
     ),
-    "virsci-proxy": ExperimentMethodPlan(
-        name="virsci-proxy",
-        baseline_name="virsci-proxy",
+    "virsci-discussion": ExperimentMethodPlan(
+        name="virsci-discussion",
+        baseline_name="virsci-discussion",
         restarts=1,
         max_rounds=5,
         stop_when_mature=True,
-        rationale="Discussion-oriented multi-agent proxy baseline sharing the same benchmark-facing I/O contract.",
+        rationale="Discussion-oriented multi-agent baseline sharing the same benchmark-facing I/O contract.",
     ),
 }
 

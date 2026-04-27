@@ -94,7 +94,11 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertEqual(instance.metadata["runtime_protocol"], "parallel_graph_v2")
         self.assertEqual(instance.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
         self.assertTrue(instance.metadata["runtime_controller_use_commit"])
-        self.assertTrue(instance.metadata["runtime_controller_disable_calibration"])
+        self.assertTrue(instance.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertAlmostEqual(instance.metadata["runtime_controller_gamma_commit"], 0.50)
+        self.assertEqual(instance.metadata["runtime_controller_min_commit_round"], 3)
+        self.assertFalse(instance.metadata["runtime_controller_use_low_signal_kind_swap_guard"])
+        self.assertNotIn("runtime_controller_disable_calibration", instance.metadata)
         self.assertNotIn("runtime_controller_calibration_path", instance.metadata)
 
     def test_ablation_method_plan_includes_controller_variants(self) -> None:
@@ -129,8 +133,12 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertEqual(calibrated.metadata["runtime_controller_kind"], "relation_graph_two_head_critic")
         self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
         self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
-        self.assertFalse(calibrated.metadata.get("runtime_controller_disable_calibration", False))
-        self.assertTrue(calibrated.metadata.get("runtime_controller_calibration_missing", False))
+        self.assertTrue(calibrated.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.50)
+        self.assertEqual(calibrated.metadata["runtime_controller_min_commit_round"], 3)
+        self.assertFalse(calibrated.metadata["runtime_controller_use_low_signal_kind_swap_guard"])
+        self.assertNotIn("runtime_controller_disable_calibration", calibrated.metadata)
+        self.assertNotIn("runtime_controller_calibration_missing", calibrated.metadata)
         self.assertNotIn("runtime_controller_calibration_path", calibrated.metadata)
 
         no_commit = prepare_instance_for_method_plan(
@@ -141,7 +149,11 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertEqual(no_commit.metadata["runner_baseline_name"], "ours-eig-critic-no-commit")
         self.assertTrue(no_commit.metadata["runtime_controller_use_edit"])
         self.assertFalse(no_commit.metadata["runtime_controller_use_commit"])
-        self.assertTrue(no_commit.metadata["runtime_controller_disable_calibration"])
+        self.assertTrue(no_commit.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertAlmostEqual(no_commit.metadata["runtime_controller_gamma_commit"], 0.50)
+        self.assertEqual(no_commit.metadata["runtime_controller_min_commit_round"], 3)
+        self.assertFalse(no_commit.metadata["runtime_controller_use_low_signal_kind_swap_guard"])
+        self.assertNotIn("runtime_controller_disable_calibration", no_commit.metadata)
         self.assertNotIn("runtime_controller_calibration_path", no_commit.metadata)
 
         no_edit = prepare_instance_for_method_plan(
@@ -152,8 +164,9 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertEqual(no_edit.metadata["runner_baseline_name"], "ours-eig-critic-no-edit")
         self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
         self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
-        self.assertFalse(no_edit.metadata.get("runtime_controller_disable_calibration", False))
-        self.assertTrue(no_edit.metadata.get("runtime_controller_calibration_missing", False))
+        self.assertFalse(no_edit.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertNotIn("runtime_controller_disable_calibration", no_edit.metadata)
+        self.assertNotIn("runtime_controller_calibration_missing", no_edit.metadata)
         self.assertNotIn("runtime_controller_calibration_path", no_edit.metadata)
 
         fixed = prepare_instance_for_method_plan(
@@ -198,7 +211,7 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertGreater(len(instance.metadata["benchmark_input_packet"]["reference_packet"]), 0)
         self.assertEqual(instance.literature, self._instance().literature)
 
-    def test_main_method_plan_includes_scipip_and_virsci_bridges(self) -> None:
+    def test_main_method_plan_includes_scipip_and_virsci(self) -> None:
         self.assertIn("scipip", MAIN_METHOD_PLANS)
         self.assertIn("virsci", MAIN_METHOD_PLANS)
 
@@ -221,6 +234,20 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertEqual(virsci_instance.metadata["baseline_name"], "virsci")
         self.assertGreater(len(virsci_instance.metadata["benchmark_input_packet"]["reference_packet"]), 0)
         self.assertEqual(virsci_instance.literature, self._instance().literature)
+
+    def test_main_method_plan_includes_graph_of_thought(self) -> None:
+        self.assertIn("graph-of-thought", MAIN_METHOD_PLANS)
+
+        instance = prepare_instance_for_method_plan(
+            self._instance(),
+            plan=MAIN_METHOD_PLANS["graph-of-thought"],
+        )
+
+        self.assertEqual(instance.metadata["method_name"], "graph-of-thought")
+        self.assertEqual(instance.metadata["runner_baseline_name"], "graph-of-thought")
+        self.assertEqual(instance.metadata["baseline_name"], "graph-of-thought")
+        self.assertEqual(instance.metadata["baseline_strategy"], "graph_of_thought")
+        self.assertEqual(instance.metadata["method_plan"]["max_rounds"], 1)
 
     def test_no_reference_grounding_plan_strips_reference_packet_and_grounding(self) -> None:
         instance = prepare_instance_for_method_plan(

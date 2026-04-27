@@ -19,11 +19,11 @@ class ScoredCandidate:
 
 @dataclass(frozen=True)
 class SafeCriticPolicyConfig:
-    min_commit_round: int = 2
+    min_commit_round: int = 3
     tau_override: float = 0.05
     tau_override_by_round: Mapping[int | str, float] = field(default_factory=dict)
     tau_commit: float = 0.08
-    gamma_commit: float = 0.60
+    gamma_commit: float = 0.50
     gamma_commit_by_round: Mapping[int | str, float] = field(default_factory=dict)
     guard_support_threshold: float = 0.66
     guard_support_gain_floor: float = 0.10

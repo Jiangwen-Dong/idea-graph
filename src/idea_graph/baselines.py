@@ -23,6 +23,7 @@ from .relation_graph_runtime_critic import (
 )
 from .relation_graph_two_head_runtime_critic import load_relation_graph_two_head_runtime_bundle
 from .runtime_critic import TextCriticRuntimeConfig, load_pickled_text_critic_model
+from .signal_heuristic_control import SignalHeuristicController
 
 
 @dataclass(frozen=True)
@@ -31,8 +32,8 @@ class BaselineSpec:
     display_name: str
     strategy: str
     description: str
-    is_proxy: bool = False
-    proxy_target: str = ""
+    is_local_variant: bool = False
+    reference_target: str = ""
     prompt_style: str = ""
     candidate_count: int = 1
     runtime_controller: str = ""
@@ -53,7 +54,7 @@ RELATION_GRAPH_CRITIC_MODEL_RELATIVE_DIR = (
 RELATION_GRAPH_TWO_HEAD_MODEL_RELATIVE_DIR = (
     Path("outputs")
     / "critic_models"
-    / "parallel_v2_twohead_repaired_boundary_st_full_e8_20260418"
+    / "parallel_v2_twohead_gold256_st_e8_20260423"
 )
 TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH = (
     Path("configs")
@@ -76,11 +77,15 @@ RUNTIME_CONTROLLER_METADATA_KEYS = (
     "runtime_controller_gamma_commit",
     "runtime_controller_gamma_commit_by_round",
     "runtime_controller_min_commit_round",
+    "runtime_controller_use_low_signal_kind_swap_guard",
     "runtime_controller_guard_support_threshold",
     "runtime_controller_guard_support_gain_floor",
     "runtime_controller_guard_requires_contradiction_progress",
     "runtime_controller_guard_commit_support_threshold",
     "runtime_controller_guard_commit_utility_floor",
+    "runtime_controller_use_action_score_calibration",
+    "runtime_controller_action_score_calibration_strength",
+    "runtime_controller_action_score_calibration_max_bias",
     "runtime_controller_model_path",
     "runtime_controller_model_dir",
     "runtime_controller_policy_path",
@@ -90,11 +95,14 @@ RUNTIME_CONTROLLER_METADATA_KEYS = (
     "runtime_controller_calibration_version",
     "runtime_controller_calibration_missing",
     "runtime_controller_calibration_missing_path",
+    "runtime_controller_use_joint_threshold_calibration",
     "runtime_controller_disable_calibration",
     "runtime_controller_error",
     "runtime_controller_loaded",
     "max_rounds_hint",
 )
+
+GRAPH_OF_THOUGHT_ROUND_COUNT = 3
 
 
 def _shared_repo_root_from_worktree(root: Path) -> Path | None:
@@ -136,14 +144,18 @@ TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS: dict[str, Any] = {
     "runtime_controller_tau_override": 0.05,
     "runtime_controller_tau_override_by_round": {},
     "runtime_controller_tau_commit": 0.08,
-    "runtime_controller_gamma_commit": 0.60,
+    "runtime_controller_gamma_commit": 0.50,
     "runtime_controller_gamma_commit_by_round": {},
-    "runtime_controller_min_commit_round": 2,
+    "runtime_controller_min_commit_round": 3,
+    "runtime_controller_use_low_signal_kind_swap_guard": False,
     "runtime_controller_guard_support_threshold": 0.66,
     "runtime_controller_guard_support_gain_floor": 0.10,
     "runtime_controller_guard_requires_contradiction_progress": False,
     "runtime_controller_guard_commit_support_threshold": 0.0,
     "runtime_controller_guard_commit_utility_floor": 0.0,
+    "runtime_controller_use_action_score_calibration": True,
+    "runtime_controller_action_score_calibration_strength": 0.35,
+    "runtime_controller_action_score_calibration_max_bias": 0.35,
 }
 
 
@@ -153,6 +165,9 @@ def reset_two_head_runtime_controller_defaults(metadata: Mapping[str, Any]) -> d
     updated.pop("runtime_controller_calibration_path", None)
     updated.pop("runtime_controller_calibration_source", None)
     updated.pop("runtime_controller_calibration_version", None)
+    updated.pop("runtime_controller_calibration_missing", None)
+    updated.pop("runtime_controller_calibration_missing_path", None)
+    updated.pop("runtime_controller_use_joint_threshold_calibration", None)
     return updated
 
 
@@ -188,6 +203,15 @@ def _apply_joint_runtime_calibration(
     metadata: dict[str, Any],
     model_dir: Path,
 ) -> dict[str, Any]:
+    if not bool(metadata.get("runtime_controller_use_joint_threshold_calibration", False)):
+        calibrated = dict(metadata)
+        calibrated.pop("runtime_controller_calibration_path", None)
+        calibrated.pop("runtime_controller_calibration_source", None)
+        calibrated.pop("runtime_controller_calibration_version", None)
+        calibrated.pop("runtime_controller_calibration_missing", None)
+        calibrated.pop("runtime_controller_calibration_missing_path", None)
+        calibrated.pop("runtime_controller_disable_calibration", None)
+        return calibrated
     if bool(metadata.get("runtime_controller_disable_calibration", False)):
         return reset_two_head_runtime_controller_defaults(metadata)
     explicit_path = str(metadata.get("runtime_controller_calibration_path", "")).strip()
@@ -258,7 +282,7 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         name="ours-eig-critic-calibrated",
         display_name="Ours (EIG + Calibrated Two-Head Graph Critic)",
         strategy="evolving_graph",
-        description="Parallel EIG with a shared-encoder two-head graph critic and tracked frozen-dev controller calibration.",
+        description="Parallel EIG with a shared-encoder two-head graph critic and graph-health action-score calibration.",
         prompt_style="ours",
         runtime_controller="relation_graph_two_head_critic",
     ),
@@ -294,6 +318,14 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         prompt_style="ours",
         runtime_controller="random_control",
     ),
+    "ours-eig-signal-heuristic": BaselineSpec(
+        name="ours-eig-signal-heuristic",
+        display_name="Ours (Signal Heuristic Control)",
+        strategy="evolving_graph",
+        description="Parallel EIG with the streamlined graph-signal controller and heuristic edit/commit decisions.",
+        prompt_style="ours",
+        runtime_controller="signal_heuristic_control",
+    ),
     "direct": BaselineSpec(
         name="direct",
         display_name="Direct",
@@ -307,6 +339,14 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         strategy="self_refine",
         description="Single-agent draft, critique, and revision baseline.",
         prompt_style="self_refine",
+    ),
+    "graph-of-thought": BaselineSpec(
+        name="graph-of-thought",
+        display_name="Graph-of-Thought",
+        strategy="graph_of_thought",
+        description="Single-model Graph-of-Thought baseline with three graph-generation/scoring rounds followed by final synthesis.",
+        prompt_style="graph_of_thought",
+        candidate_count=4,
     ),
     "ai-researcher": BaselineSpec(
         name="ai-researcher",
@@ -326,33 +366,33 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         strategy="external",
         description="External wrapper that runs the official Virtual-Scientists pipeline from its upstream repository when the task setting is supported.",
     ),
-    "ai-researcher-proxy": BaselineSpec(
-        name="ai-researcher-proxy",
-        display_name="AI-Researcher Proxy",
+    "ai-researcher-guided": BaselineSpec(
+        name="ai-researcher-guided",
+        display_name="AI-Researcher Guided",
         strategy="candidate_rank",
-        description="Local proxy wrapper for the AI-Researcher ideation pipeline with literature-grounded candidate generation and selection.",
-        is_proxy=True,
-        proxy_target="AI-Researcher",
-        prompt_style="ai_researcher_proxy",
+        description="Local AI-Researcher-style workflow with literature-grounded candidate generation and selection.",
+        is_local_variant=True,
+        reference_target="AI-Researcher",
+        prompt_style="ai_researcher_guided",
         candidate_count=4,
     ),
-    "scipip-proxy": BaselineSpec(
-        name="scipip-proxy",
-        display_name="SciPIP Proxy",
+    "scipip-structured": BaselineSpec(
+        name="scipip-structured",
+        display_name="SciPIP Structured",
         strategy="self_refine",
-        description="Local proxy wrapper emphasizing structured motivation and experiment decomposition.",
-        is_proxy=True,
-        proxy_target="SciPIP",
-        prompt_style="scipip_proxy",
+        description="Local SciPIP-style workflow emphasizing structured motivation and experiment decomposition.",
+        is_local_variant=True,
+        reference_target="SciPIP",
+        prompt_style="scipip_structured",
     ),
-    "virsci-proxy": BaselineSpec(
-        name="virsci-proxy",
-        display_name="VirSci Proxy",
+    "virsci-discussion": BaselineSpec(
+        name="virsci-discussion",
+        display_name="VirSci Discussion",
         strategy="evolving_graph",
-        description="Local proxy wrapper for a discussion-oriented multi-agent baseline.",
-        is_proxy=True,
-        proxy_target="VirSci",
-        prompt_style="virsci_proxy",
+        description="Local VirSci-style discussion workflow for multi-agent ideation.",
+        is_local_variant=True,
+        reference_target="VirSci",
+        prompt_style="virsci_discussion",
     ),
 }
 
@@ -367,13 +407,16 @@ PROMPT_STYLE_GUIDANCE = {
     "self_refine": (
         "Produce a strong first draft, then use explicit critique to revise weak sections."
     ),
-    "ai_researcher_proxy": (
+    "graph_of_thought": (
+        "Represent intermediate reasoning as a graph of candidate thoughts, score/prune the graph, then synthesize the best connected path into one proposal."
+    ),
+    "ai_researcher_guided": (
         "Emphasize literature-grounded candidate generation, proposal elaboration, diversity across ideas, and selective ranking."
     ),
-    "scipip_proxy": (
+    "scipip_structured": (
         "Emphasize structured decomposition from topic and inspiration context into motivation and experiment plan."
     ),
-    "virsci_proxy": (
+    "virsci_discussion": (
         "Emphasize diverse agent perspectives, discussion-style synthesis, and explicit tradeoffs across alternatives."
     ),
 }
@@ -412,8 +455,8 @@ def attach_baseline_metadata(
     metadata["baseline_strategy"] = baseline.strategy
     metadata["baseline_prompt_style"] = baseline.prompt_style
     metadata["baseline_description"] = baseline.description
-    metadata["baseline_proxy"] = baseline.is_proxy
-    metadata["baseline_proxy_target"] = baseline.proxy_target
+    metadata["baseline_local_variant"] = baseline.is_local_variant
+    metadata["baseline_reference_target"] = baseline.reference_target
     metadata["baseline_runtime_controller"] = baseline.runtime_controller
     if baseline.strategy == "evolving_graph":
         metadata["runtime_protocol"] = "parallel_graph_v2"
@@ -440,19 +483,11 @@ def attach_baseline_metadata(
         metadata["runtime_controller_use_commit"] = True
         metadata.update(TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS)
         metadata["runtime_controller_model_dir"] = str(_default_relation_graph_two_head_runtime_model_dir())
-        if baseline.name in {"ours-eig-critic-graph-twohead", "ours-eig-critic-no-commit"}:
-            metadata["runtime_controller_disable_calibration"] = True
-        if baseline.name == "ours-eig-critic-calibrated":
-            metadata["runtime_controller_calibration_path"] = str(
-                _default_joint_controller_calibration_path()
-            )
         if baseline.name == "ours-eig-critic-no-commit":
             metadata["runtime_controller_use_commit"] = False
         if baseline.name == "ours-eig-critic-no-edit":
             metadata["runtime_controller_use_edit"] = False
-            metadata["runtime_controller_calibration_path"] = str(
-                _default_joint_controller_calibration_path()
-            )
+            metadata["runtime_controller_use_action_score_calibration"] = False
         metadata = _apply_joint_runtime_calibration(
             metadata,
             Path(str(metadata["runtime_controller_model_dir"])),
@@ -471,6 +506,23 @@ def attach_baseline_metadata(
         metadata["runtime_controller_use_commit"] = False
         metadata["runtime_controller_random_seed"] = 0
         metadata["max_rounds_hint"] = 5
+    elif baseline.runtime_controller == "signal_heuristic_control":
+        metadata["runtime_controller_enabled"] = True
+        metadata["runtime_controller_kind"] = "signal_heuristic_control"
+        metadata["runtime_controller_use_edit"] = True
+        metadata["runtime_controller_use_commit"] = True
+        metadata["runtime_controller_tau_override"] = 0.0
+        metadata["runtime_controller_gamma_commit"] = 0.58
+        metadata["runtime_controller_gamma_commit_by_round"] = {
+            1: 0.95,
+            2: 0.74,
+            3: 0.62,
+            4: 0.58,
+            5: 0.55,
+            6: 0.53,
+        }
+        metadata["runtime_controller_min_commit_round"] = 2
+        metadata["max_rounds_hint"] = 6
     return instance.__class__(
         name=instance.name,
         topic=instance.topic,
@@ -648,16 +700,24 @@ def _baseline_focus_constraints(graph: IdeaGraph, baseline: BaselineSpec) -> lis
                 "The final revision should improve specificity rather than simply making the text longer.",
             ]
         )
-    elif baseline.prompt_style == "scipip_proxy":
+    elif baseline.prompt_style == "graph_of_thought":
+        constraints.extend(
+            [
+                "Build a compact thought graph whose nodes cover problem gap, mechanism, evaluation, risk, and expected impact.",
+                "Score connected paths by benchmark fit, novelty, feasibility, and evaluation clarity before synthesis.",
+                "Synthesize one final idea from the strongest connected path rather than averaging unrelated thoughts.",
+            ]
+        )
+    elif baseline.prompt_style == "scipip_structured":
         constraints.extend(
             [
                 "Emphasize structured decomposition: identify the bottleneck, explain why current methods fail, then propose one coherent pipeline.",
                 "Make the experiment plan concrete with datasets, metrics, baselines, and ablations whenever the packet supports them.",
             ]
         )
-    elif baseline.prompt_style == "ai_researcher_proxy":
+    elif baseline.prompt_style == "ai_researcher_guided":
         constraints.extend(_ai_researcher_focus_constraints(graph))
-    elif baseline.prompt_style == "virsci_proxy":
+    elif baseline.prompt_style == "virsci_discussion":
         constraints.extend(
             [
                 "Preserve multiple viewpoints and tradeoffs before settling on one final idea.",
@@ -888,7 +948,7 @@ def _contains_any(text: str, needles: list[str]) -> bool:
     return any(needle.lower() in lowered for needle in needles)
 
 
-def _ai_researcher_proxy_postprocess_proposal(graph: IdeaGraph, proposal: FinalProposal) -> FinalProposal:
+def _ai_researcher_guided_postprocess_proposal(graph: IdeaGraph, proposal: FinalProposal) -> FinalProposal:
     references = _reference_packet(graph)
     reference_titles = [item.get("title", "") for item in references if item.get("title")]
     support_text = " ".join(_reference_support_texts(graph))
@@ -995,8 +1055,8 @@ def _baseline_postprocess_proposal(
     baseline: BaselineSpec,
     proposal: FinalProposal,
 ) -> FinalProposal:
-    if baseline.prompt_style == "ai_researcher_proxy" and _is_ai_researcher_language_field_context(graph):
-        return _ai_researcher_proxy_postprocess_proposal(graph, proposal)
+    if baseline.prompt_style == "ai_researcher_guided" and _is_ai_researcher_language_field_context(graph):
+        return _ai_researcher_guided_postprocess_proposal(graph, proposal)
 
     topic = _topic_text(graph)
     anchors = _baseline_anchor_terms(graph)
@@ -1015,7 +1075,7 @@ def _baseline_postprocess_proposal(
     )
 
     title = proposal.title or topic.title()
-    if baseline.prompt_style == "scipip_proxy" and topic and topic.lower() not in title.lower():
+    if baseline.prompt_style == "scipip_structured" and topic and topic.lower() not in title.lower():
         title = f"{title.rstrip()} for {topic}".strip()
     if len(title.split()) > 18:
         title = title[:96].rsplit(" ", 1)[0].strip()
@@ -1025,7 +1085,7 @@ def _baseline_postprocess_proposal(
         problem = problem.rstrip(".") + f" This matters directly for {topic}."
 
     existing_methods = proposal.existing_methods or grounding["existing_methods_summary"]
-    if baseline.prompt_style == "scipip_proxy" and grounding["existing_methods_summary"]:
+    if baseline.prompt_style == "scipip_structured" and grounding["existing_methods_summary"]:
         summary = grounding["existing_methods_summary"]
         should_append_summary = bool(summary) and summary not in existing_methods
         if should_append_summary and len(existing_methods.split()) >= 38:
@@ -1043,12 +1103,12 @@ def _baseline_postprocess_proposal(
         )
 
     motivation = proposal.motivation or f"A more precise and testable idea for {topic} is needed."
-    if baseline.prompt_style == "scipip_proxy" and "why" not in motivation.lower():
+    if baseline.prompt_style == "scipip_structured" and "why" not in motivation.lower():
         motivation = motivation.rstrip(".") + " The key motivation is that current methods do not adequately address the core bottleneck exposed by the benchmark packet."
 
     hypothesis = proposal.hypothesis or f"A more explicit mechanism around {anchor_phrase} can improve results for {topic}."
     method = proposal.method
-    if baseline.prompt_style == "scipip_proxy" and method:
+    if baseline.prompt_style == "scipip_structured" and method:
         if "first" not in method.lower():
             method = (
                 "First, identify the core bottleneck from the benchmark packet. "
@@ -1061,16 +1121,16 @@ def _baseline_postprocess_proposal(
     evaluation = proposal.evaluation or grounding["experiment_plan_summary"]
     experiment_summary = grounding["experiment_plan_summary"]
     should_append_experiment_summary = bool(experiment_summary) and experiment_summary not in evaluation
-    if should_append_experiment_summary and baseline.prompt_style in {"self_refine", "scipip_proxy"}:
+    if should_append_experiment_summary and baseline.prompt_style in {"self_refine", "scipip_structured"}:
         if (
             experiment_summary.casefold().startswith("compare against strong baselines")
             and _contains_any(evaluation, ["compare against", "ablation", "quantitative metric"])
         ):
             should_append_experiment_summary = False
-        if baseline.prompt_style == "scipip_proxy" and len(evaluation.split()) >= 28:
+        if baseline.prompt_style == "scipip_structured" and len(evaluation.split()) >= 28:
             should_append_experiment_summary = False
     if should_append_experiment_summary:
-        if baseline.prompt_style in {"self_refine", "scipip_proxy"}:
+        if baseline.prompt_style in {"self_refine", "scipip_structured"}:
             evaluation = evaluation.rstrip(".") + " " + grounding["experiment_plan_summary"]
     if "metric" not in evaluation.lower() and "accuracy" not in evaluation.lower():
         evaluation = evaluation.rstrip(".") + " Report quantitative metrics and compare against strong baselines."
@@ -1150,7 +1210,7 @@ def _deterministic_direct_proposal(graph: IdeaGraph, baseline: BaselineSpec) -> 
         f"Design a concise method for {topic_text} that combines a clear mechanism, explicit evaluation hooks, "
         "and literature-aware comparison points instead of only high-level brainstorming."
     )
-    if baseline.prompt_style == "scipip_proxy":
+    if baseline.prompt_style == "scipip_structured":
         method = (
             f"Decompose {topic_text} into a structured motivation, method sketch, and experiment plan derived "
             "from the benchmark topic and reference packet."
@@ -1199,7 +1259,7 @@ def _deterministic_refine_proposal(graph: IdeaGraph, draft: FinalProposal, basel
         )
 
     significance = draft.significance
-    if baseline.prompt_style == "ai_researcher_proxy" and "literature" not in significance.casefold():
+    if baseline.prompt_style == "ai_researcher_guided" and "literature" not in significance.casefold():
         significance = significance.rstrip(".") + ". It should also improve literature-grounded ideation quality."
 
     proposal = FinalProposal(
@@ -1332,6 +1392,237 @@ def _candidate_generation_user_prompt(graph: IdeaGraph, baseline: BaselineSpec) 
         "anchor_terms": _baseline_anchor_terms(graph),
         "literature_grounding": _grounding_brief(graph),
         "candidate_count": max(2, baseline.candidate_count),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _graph_of_thought_generation_system_prompt(
+    baseline: BaselineSpec,
+    *,
+    round_index: int,
+    total_rounds: int,
+) -> str:
+    guidance = PROMPT_STYLE_GUIDANCE.get(baseline.prompt_style, "")
+    candidate_count = max(3, baseline.candidate_count)
+    round_instruction = (
+        "This is the first round, so create the initial graph from scratch."
+        if round_index <= 1
+        else (
+            "This is a later round, so expand or repair the previous graph. "
+            "Preserve useful node ids, add only the nodes or edges needed to address the previous scoring feedback, "
+            "and return the full updated graph."
+        )
+    )
+    return (
+        "You are implementing a Graph-of-Thought scientific ideation baseline. "
+        f"{guidance} "
+        f"Round {round_index}/{total_rounds}: generate or update a compact directed thought graph, not a final proposal. "
+        f"{round_instruction} "
+        f"Create {candidate_count} to {candidate_count + 2} thought nodes and enough edges to show which ideas support, test, repair, or contradict each other. "
+        "Nodes should cover problem gap, mechanism, evaluation, risk, and impact when possible. "
+        "Use only the visible benchmark packet and references. Do not assume hidden target-paper labels. "
+        "Return strict JSON only, with no markdown or commentary. "
+        'JSON schema: {"thought_nodes":[{"id":"n1","type":"problem_gap|mechanism|evaluation|risk|impact|assumption","text":"..."}],'
+        '"thought_edges":[{"source":"n1","relation":"supports|tests|repairs|contradicts|motivates","target":"n2","rationale":"..."}]}'
+    )
+
+
+def _graph_of_thought_generation_user_prompt(
+    graph: IdeaGraph,
+    baseline: BaselineSpec,
+    *,
+    round_index: int,
+    total_rounds: int,
+    previous_graph: dict[str, list[dict[str, str]]] | None = None,
+    previous_scoring: dict[str, Any] | None = None,
+) -> str:
+    payload = {
+        "baseline": asdict(baseline),
+        "round_index": round_index,
+        "total_rounds": total_rounds,
+        "topic": graph.topic,
+        "task_instruction": graph.metadata.get("task_instruction", ""),
+        "input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "focus_constraints": _baseline_focus_constraints(graph, baseline),
+        "anchor_terms": _baseline_anchor_terms(graph),
+        "literature_grounding": _grounding_brief(graph),
+    }
+    if previous_graph is not None:
+        payload["previous_thought_graph"] = previous_graph
+    if previous_scoring is not None:
+        payload["previous_scoring"] = previous_scoring
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _normalize_thought_nodes(payload: dict[str, Any]) -> list[dict[str, str]]:
+    raw_nodes = payload.get("thought_nodes")
+    if raw_nodes is None:
+        raw_nodes = payload.get("nodes", [])
+    if not isinstance(raw_nodes, list):
+        return []
+
+    nodes: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(raw_nodes):
+        if not isinstance(item, dict):
+            continue
+        node_id = _coerce_string(item.get("id") or item.get("node_id") or f"n{index + 1}")
+        node_id = re.sub(r"[^A-Za-z0-9_.:-]+", "_", node_id).strip("_") or f"n{index + 1}"
+        if node_id in seen_ids:
+            node_id = f"{node_id}_{index + 1}"
+        thought_type = _coerce_string(item.get("type") or item.get("kind") or "thought")
+        text = _coerce_string(item.get("text") or item.get("content") or item.get("thought"))
+        if not text:
+            continue
+        nodes.append({"id": node_id, "type": thought_type or "thought", "text": text})
+        seen_ids.add(node_id)
+    return nodes
+
+
+def _normalize_thought_edges(payload: dict[str, Any], node_ids: set[str]) -> list[dict[str, str]]:
+    raw_edges = payload.get("thought_edges")
+    if raw_edges is None:
+        raw_edges = payload.get("edges", [])
+    if not isinstance(raw_edges, list):
+        return []
+
+    edges: list[dict[str, str]] = []
+    for item in raw_edges:
+        if not isinstance(item, dict):
+            continue
+        source = _coerce_string(item.get("source") or item.get("source_id"))
+        target = _coerce_string(item.get("target") or item.get("target_id"))
+        if source not in node_ids or target not in node_ids:
+            continue
+        relation = _coerce_string(item.get("relation") or item.get("type") or "related_to")
+        rationale = _coerce_string(item.get("rationale") or item.get("reason"))
+        edges.append(
+            {
+                "source": source,
+                "relation": relation or "related_to",
+                "target": target,
+                "rationale": rationale,
+            }
+        )
+    return edges
+
+
+def _normalize_thought_graph_payload(payload: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    nodes = _normalize_thought_nodes(payload)
+    node_ids = {node["id"] for node in nodes}
+    edges = _normalize_thought_edges(payload, node_ids)
+    return {"thought_nodes": nodes, "thought_edges": edges}
+
+
+def _graph_of_thought_scoring_system_prompt(
+    baseline: BaselineSpec,
+    *,
+    round_index: int,
+    total_rounds: int,
+) -> str:
+    guidance = PROMPT_STYLE_GUIDANCE.get(baseline.prompt_style, "")
+    next_step = (
+        "Return feedback that will guide the next graph-generation round."
+        if round_index < total_rounds
+        else "Return the final selected subgraph/path for proposal synthesis."
+    )
+    return (
+        "You are scoring a Graph-of-Thought ideation graph. "
+        f"{guidance} "
+        f"Round {round_index}/{total_rounds}: select the strongest connected path or subgraph and critique what the graph still needs. "
+        f"{next_step} "
+        "Score thoughts and paths by benchmark fit, novelty, feasibility, literature grounding, and evaluation clarity. "
+        "Prefer a coherent path with one central mechanism over disconnected high-level thoughts. "
+        "Return strict JSON only, with no markdown or commentary. "
+        'JSON schema: {"selected_node_ids":["n1"],"critique":"...","repair_instructions":["..."],'
+        '"scores":[{"node_id":"n1","novelty":1,"feasibility":1,"benchmark_fit":1,"overall":1}]}'
+    )
+
+
+def _graph_of_thought_scoring_user_prompt(
+    graph: IdeaGraph,
+    baseline: BaselineSpec,
+    thought_graph: dict[str, list[dict[str, str]]],
+    *,
+    round_index: int,
+    total_rounds: int,
+) -> str:
+    payload = {
+        "baseline": asdict(baseline),
+        "round_index": round_index,
+        "total_rounds": total_rounds,
+        "input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "focus_constraints": _baseline_focus_constraints(graph, baseline),
+        "anchor_terms": _baseline_anchor_terms(graph),
+        "thought_graph": thought_graph,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _normalize_selected_node_ids(
+    scoring_payload: dict[str, Any],
+    thought_graph: dict[str, list[dict[str, str]]],
+) -> list[str]:
+    valid_ids = [node["id"] for node in thought_graph.get("thought_nodes", []) if node.get("id")]
+    valid_id_set = set(valid_ids)
+    raw_ids = scoring_payload.get("selected_node_ids")
+    if raw_ids is None:
+        raw_ids = scoring_payload.get("selected_ids", [])
+    selected: list[str] = []
+    if isinstance(raw_ids, list):
+        for item in raw_ids:
+            node_id = _coerce_string(item)
+            if node_id in valid_id_set and node_id not in selected:
+                selected.append(node_id)
+    if not selected:
+        selected = valid_ids[: min(3, len(valid_ids))]
+    return selected
+
+
+def _graph_of_thought_synthesis_system_prompt(baseline: BaselineSpec) -> str:
+    guidance = PROMPT_STYLE_GUIDANCE.get(baseline.prompt_style, "")
+    return (
+        "You are synthesizing the final proposal for a Graph-of-Thought scientific ideation baseline. "
+        f"{guidance} "
+        "Stage 3 converts the selected thought subgraph into one concise structured research idea. "
+        "Follow the selected path and repair instructions, but do not mention the internal graph in the final proposal. "
+        "Do not add unsupported datasets, hidden target-paper labels, or generic filler. "
+        "Return strict JSON only, with no markdown or commentary. "
+        'JSON schema: {"title":"...","problem":"...","existing_methods":"...","motivation":"...",'
+        '"hypothesis":"...","method":"...","evaluation":"...","significance":"...","caveats":"..."}'
+    )
+
+
+def _graph_of_thought_synthesis_user_prompt(
+    graph: IdeaGraph,
+    baseline: BaselineSpec,
+    thought_graph: dict[str, list[dict[str, str]]],
+    scoring_payload: dict[str, Any],
+    selected_node_ids: list[str],
+) -> str:
+    selected_id_set = set(selected_node_ids)
+    selected_nodes = [
+        node for node in thought_graph.get("thought_nodes", [])
+        if node.get("id") in selected_id_set
+    ]
+    selected_edges = [
+        edge for edge in thought_graph.get("thought_edges", [])
+        if edge.get("source") in selected_id_set and edge.get("target") in selected_id_set
+    ]
+    payload = {
+        "baseline": asdict(baseline),
+        "topic": graph.topic,
+        "input_packet": graph.metadata.get("benchmark_input_packet", {}),
+        "focus_constraints": _baseline_focus_constraints(graph, baseline),
+        "anchor_terms": _baseline_anchor_terms(graph),
+        "literature_grounding": _grounding_brief(graph),
+        "selected_subgraph": {
+            "thought_nodes": selected_nodes,
+            "thought_edges": selected_edges,
+        },
+        "graph_critique": _coerce_string(scoring_payload.get("critique")),
+        "repair_instructions": scoring_payload.get("repair_instructions", []),
+        "scores": scoring_payload.get("scores", []),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -1537,8 +1828,8 @@ def _llm_candidate_rank_proposal(
     backend: OpenAICompatibleCollaborationBackend,
     progress_callback: Callable[[str], None] | None = None,
 ) -> FinalProposal:
-    if baseline.prompt_style == "ai_researcher_proxy":
-        return _llm_ai_researcher_proxy_proposal(
+    if baseline.prompt_style == "ai_researcher_guided":
+        return _llm_ai_researcher_guided_proposal(
             graph,
             baseline,
             backend,
@@ -1598,7 +1889,7 @@ def _llm_candidate_rank_proposal(
     return selected
 
 
-def _llm_ai_researcher_proxy_proposal(
+def _llm_ai_researcher_guided_proposal(
     graph: IdeaGraph,
     baseline: BaselineSpec,
     backend: OpenAICompatibleCollaborationBackend,
@@ -1632,7 +1923,7 @@ def _llm_ai_researcher_proxy_proposal(
     seed_ideas = [item for item in seed_ideas if any(item.values())]
     if not seed_ideas:
         raise ValueError("AI-Researcher-style seed generation did not return any usable seed ideas.")
-    graph.metadata["ai_researcher_proxy_seed_ideas"] = seed_ideas
+    graph.metadata["ai_researcher_guided_seed_ideas"] = seed_ideas
     graph.metadata.setdefault("baseline_traces", []).append(
         {"stage": "seed_idea_generation", "baseline": baseline.name, **seed_trace}
     )
@@ -1688,12 +1979,12 @@ def _llm_ai_researcher_proxy_proposal(
                 }
             )
     if expansion_errors:
-        graph.metadata["ai_researcher_proxy_expansion_errors"] = expansion_errors
+        graph.metadata["ai_researcher_guided_expansion_errors"] = expansion_errors
     if not candidates:
         raise ValueError("AI-Researcher-style expansion did not produce any valid candidate proposals.")
 
-    graph.metadata["ai_researcher_proxy_candidate_count"] = len(candidates)
-    graph.metadata["ai_researcher_proxy_candidates"] = [
+    graph.metadata["ai_researcher_guided_candidate_count"] = len(candidates)
+    graph.metadata["ai_researcher_guided_candidates"] = [
         _proposal_as_prompt_payload(candidate)
         for candidate in candidates
     ]
@@ -1723,7 +2014,7 @@ def _llm_ai_researcher_proxy_proposal(
         scores = selection_payload.get("scores", [])
         score_rows = scores if isinstance(scores, list) else []
         if isinstance(scores, list):
-            graph.metadata["ai_researcher_proxy_scores"] = scores
+            graph.metadata["ai_researcher_guided_scores"] = scores
         llm_overall_by_index: dict[int, float] = {}
         for row in score_rows:
             if not isinstance(row, dict):
@@ -1751,7 +2042,7 @@ def _llm_ai_researcher_proxy_proposal(
                     "combined_score": round(combined_score, 3),
                 }
             )
-        graph.metadata["ai_researcher_proxy_combined_scores"] = combined_rows
+        graph.metadata["ai_researcher_guided_combined_scores"] = combined_rows
         best_row = max(combined_rows, key=lambda item: float(item["combined_score"]))
         selected_index = int(best_row["index"])
         selected = _baseline_postprocess_proposal(graph, baseline, candidates[selected_index])
@@ -1811,6 +2102,183 @@ def _llm_self_refine_proposal(
     return _baseline_postprocess_proposal(graph, baseline, proposal)
 
 
+def _llm_graph_of_thought_proposal(
+    graph: IdeaGraph,
+    baseline: BaselineSpec,
+    backend: OpenAICompatibleCollaborationBackend,
+) -> FinalProposal:
+    thought_graph: dict[str, list[dict[str, str]]] | None = None
+    scoring_payload: dict[str, Any] | None = None
+    selected_node_ids: list[str] = []
+    round_summaries: list[dict[str, Any]] = []
+
+    for round_index in range(1, GRAPH_OF_THOUGHT_ROUND_COUNT + 1):
+        thought_graph_payload, generation_trace = _llm_json_object(
+            backend,
+            role="BaselineThoughtGraphGeneration",
+            messages=[
+                {
+                    "role": "system",
+                    "content": _graph_of_thought_generation_system_prompt(
+                        baseline,
+                        round_index=round_index,
+                        total_rounds=GRAPH_OF_THOUGHT_ROUND_COUNT,
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": _graph_of_thought_generation_user_prompt(
+                        graph,
+                        baseline,
+                        round_index=round_index,
+                        total_rounds=GRAPH_OF_THOUGHT_ROUND_COUNT,
+                        previous_graph=thought_graph,
+                        previous_scoring=scoring_payload,
+                    ),
+                },
+            ],
+            temperature=0.55,
+            max_tokens=2000,
+        )
+        thought_graph = _normalize_thought_graph_payload(thought_graph_payload)
+        if not thought_graph["thought_nodes"]:
+            raise ValueError(
+                f"Graph-of-Thought generation round {round_index} did not return any usable thought nodes."
+            )
+        graph.metadata["graph_of_thought_graph"] = thought_graph
+        graph.metadata.setdefault("baseline_traces", []).append(
+            {
+                "stage": f"graph_of_thought_round_{round_index}_generation",
+                "baseline": baseline.name,
+                "round_index": round_index,
+                **generation_trace,
+            }
+        )
+
+        scoring_payload, scoring_trace = _llm_json_object(
+            backend,
+            role="BaselineThoughtGraphScoring",
+            messages=[
+                {
+                    "role": "system",
+                    "content": _graph_of_thought_scoring_system_prompt(
+                        baseline,
+                        round_index=round_index,
+                        total_rounds=GRAPH_OF_THOUGHT_ROUND_COUNT,
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": _graph_of_thought_scoring_user_prompt(
+                        graph,
+                        baseline,
+                        thought_graph,
+                        round_index=round_index,
+                        total_rounds=GRAPH_OF_THOUGHT_ROUND_COUNT,
+                    ),
+                },
+            ],
+            temperature=0.0,
+            max_tokens=1400,
+        )
+        selected_node_ids = _normalize_selected_node_ids(scoring_payload, thought_graph)
+        repair_instructions = scoring_payload.get("repair_instructions", [])
+        normalized_repair_instructions = (
+            [_coerce_string(item) for item in repair_instructions if _coerce_string(item)]
+            if isinstance(repair_instructions, list)
+            else []
+        )
+        round_summaries.append(
+            {
+                "round": round_index,
+                "node_count": len(thought_graph["thought_nodes"]),
+                "edge_count": len(thought_graph["thought_edges"]),
+                "selected_node_ids": selected_node_ids,
+                "critique": _coerce_string(scoring_payload.get("critique")),
+                "repair_instructions": normalized_repair_instructions,
+                "scores": scoring_payload.get("scores", []),
+            }
+        )
+        graph.metadata["graph_of_thought_selected_node_ids"] = selected_node_ids
+        graph.metadata["graph_of_thought_critique"] = _coerce_string(scoring_payload.get("critique"))
+        graph.metadata["graph_of_thought_repair_instructions"] = normalized_repair_instructions
+        graph.metadata.setdefault("baseline_traces", []).append(
+            {
+                "stage": f"graph_of_thought_round_{round_index}_scoring",
+                "baseline": baseline.name,
+                "round_index": round_index,
+                **scoring_trace,
+            }
+        )
+
+    if thought_graph is None or scoring_payload is None:
+        raise ValueError("Graph-of-Thought did not complete any generation/scoring rounds.")
+
+    graph.metadata["graph_of_thought_round_count"] = GRAPH_OF_THOUGHT_ROUND_COUNT
+    graph.metadata["graph_of_thought_rounds"] = round_summaries
+
+    proposal_payload, synthesis_trace = _llm_json_object(
+        backend,
+        role="BaselineThoughtGraphSynthesis",
+        messages=[
+            {"role": "system", "content": _graph_of_thought_synthesis_system_prompt(baseline)},
+            {
+                "role": "user",
+                "content": _graph_of_thought_synthesis_user_prompt(
+                    graph,
+                    baseline,
+                    thought_graph,
+                    scoring_payload,
+                    selected_node_ids,
+                ),
+            },
+        ],
+        temperature=0.25,
+        max_tokens=1600,
+    )
+    graph.metadata.setdefault("baseline_traces", []).append(
+        {"stage": "graph_of_thought_synthesis", "baseline": baseline.name, **synthesis_trace}
+    )
+    proposal = _proposal_from_payload(proposal_payload)
+    return _baseline_postprocess_proposal(graph, baseline, proposal)
+
+
+def _deterministic_graph_of_thought_proposal(
+    graph: IdeaGraph,
+    baseline: BaselineSpec,
+) -> FinalProposal:
+    draft = _deterministic_direct_proposal(graph, baseline)
+    thought_graph = {
+        "thought_nodes": [
+            {"id": "n1", "type": "problem_gap", "text": draft.problem},
+            {"id": "n2", "type": "mechanism", "text": draft.method},
+            {"id": "n3", "type": "evaluation", "text": draft.evaluation},
+            {"id": "n4", "type": "impact", "text": draft.significance},
+        ],
+        "thought_edges": [
+            {"source": "n1", "relation": "motivates", "target": "n2", "rationale": "The mechanism addresses the problem gap."},
+            {"source": "n2", "relation": "tested_by", "target": "n3", "rationale": "The evaluation checks the proposed mechanism."},
+            {"source": "n2", "relation": "enables", "target": "n4", "rationale": "The mechanism drives the expected impact."},
+        ],
+    }
+    graph.metadata["graph_of_thought_graph"] = thought_graph
+    graph.metadata["graph_of_thought_selected_node_ids"] = ["n1", "n2", "n3"]
+    graph.metadata["graph_of_thought_round_count"] = GRAPH_OF_THOUGHT_ROUND_COUNT
+    graph.metadata["graph_of_thought_rounds"] = [
+        {
+            "round": round_index,
+            "node_count": len(thought_graph["thought_nodes"]),
+            "edge_count": len(thought_graph["thought_edges"]),
+            "selected_node_ids": ["n1", "n2", "n3"],
+            "critique": "Deterministic Graph-of-Thought fallback preserves the strongest problem-method-evaluation path.",
+            "repair_instructions": [],
+            "scores": [],
+        }
+        for round_index in range(1, GRAPH_OF_THOUGHT_ROUND_COUNT + 1)
+    ]
+    return _deterministic_refine_proposal(graph, draft, baseline)
+
+
 def _build_baseline_graph(
     instance,
     *,
@@ -1828,8 +2296,8 @@ def _build_baseline_graph(
     graph.metadata["baseline_display_name"] = baseline.display_name
     graph.metadata["baseline_strategy"] = baseline.strategy
     graph.metadata["baseline_prompt_style"] = baseline.prompt_style
-    graph.metadata["baseline_proxy"] = baseline.is_proxy
-    graph.metadata["baseline_proxy_target"] = baseline.proxy_target
+    graph.metadata["baseline_local_variant"] = baseline.is_local_variant
+    graph.metadata["baseline_reference_target"] = baseline.reference_target
     graph.metadata["baseline_description"] = baseline.description
     graph.metadata.setdefault("instance_name", instance.name)
     return graph
@@ -1858,11 +2326,11 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
                 graph.metadata.get("runtime_controller_tau_override_by_round", {})
             ),
             tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
-            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.50)),
             gamma_commit_by_round=_coerce_round_float_map(
                 graph.metadata.get("runtime_controller_gamma_commit_by_round", {})
             ),
-            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 3)),
             use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
             guard_support_threshold=float(
                 graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
@@ -1907,13 +2375,16 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
                 graph.metadata.get("runtime_controller_tau_override_by_round", {})
             ),
             tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
-            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.50)),
             gamma_commit_by_round=_coerce_round_float_map(
                 graph.metadata.get("runtime_controller_gamma_commit_by_round", {})
             ),
-            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 3)),
             use_edit=bool(graph.metadata.get("runtime_controller_use_edit", True)),
             use_commit=bool(graph.metadata.get("runtime_controller_use_commit", False)),
+            use_low_signal_kind_swap_guard=bool(
+                graph.metadata.get("runtime_controller_use_low_signal_kind_swap_guard", False)
+            ),
             guard_support_threshold=float(
                 graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
             ),
@@ -1929,6 +2400,15 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             guard_commit_utility_floor=float(
                 graph.metadata.get("runtime_controller_guard_commit_utility_floor", 0.0)
             ),
+            use_action_score_calibration=bool(
+                graph.metadata.get("runtime_controller_use_action_score_calibration", False)
+            ),
+            action_score_calibration_strength=float(
+                graph.metadata.get("runtime_controller_action_score_calibration_strength", 0.35)
+            ),
+            action_score_calibration_max_bias=float(
+                graph.metadata.get("runtime_controller_action_score_calibration_max_bias", 0.35)
+            ),
         )
         controller_metadata = {
             "kind": "relation_graph_critic_rerank",
@@ -1936,6 +2416,9 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             "model_path": str(model_dir.resolve()),
             "use_commit": bool(config.use_commit),
             "tau_override": float(config.tau_override),
+            "use_action_score_calibration": bool(config.use_action_score_calibration),
+            "action_score_calibration_strength": float(config.action_score_calibration_strength),
+            "action_score_calibration_max_bias": float(config.action_score_calibration_max_bias),
         }
         graph.metadata["runtime_controller_loaded"] = controller_metadata
         return runtime_bundle, {"config": config, **controller_metadata}
@@ -1967,13 +2450,16 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
                 graph.metadata.get("runtime_controller_tau_override_by_round", {})
             ),
             tau_commit=float(graph.metadata.get("runtime_controller_tau_commit", 0.08)),
-            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.60)),
+            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.50)),
             gamma_commit_by_round=_coerce_round_float_map(
                 graph.metadata.get("runtime_controller_gamma_commit_by_round", {})
             ),
-            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2)),
+            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 3)),
             use_edit=bool(graph.metadata.get("runtime_controller_use_edit", True)),
             use_commit=bool(graph.metadata.get("runtime_controller_use_commit", True)),
+            use_low_signal_kind_swap_guard=bool(
+                graph.metadata.get("runtime_controller_use_low_signal_kind_swap_guard", False)
+            ),
             guard_support_threshold=float(
                 graph.metadata.get("runtime_controller_guard_support_threshold", 0.66)
             ),
@@ -1989,6 +2475,15 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             guard_commit_utility_floor=float(
                 graph.metadata.get("runtime_controller_guard_commit_utility_floor", 0.0)
             ),
+            use_action_score_calibration=bool(
+                graph.metadata.get("runtime_controller_use_action_score_calibration", True)
+            ),
+            action_score_calibration_strength=float(
+                graph.metadata.get("runtime_controller_action_score_calibration_strength", 0.35)
+            ),
+            action_score_calibration_max_bias=float(
+                graph.metadata.get("runtime_controller_action_score_calibration_max_bias", 0.35)
+            ),
         )
         controller_metadata = {
             "kind": "relation_graph_two_head_critic",
@@ -1996,6 +2491,9 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             "model_path": str(model_dir.resolve()),
             "use_commit": bool(config.use_commit),
             "tau_override": float(config.tau_override),
+            "use_action_score_calibration": bool(config.use_action_score_calibration),
+            "action_score_calibration_strength": float(config.action_score_calibration_strength),
+            "action_score_calibration_max_bias": float(config.action_score_calibration_max_bias),
         }
         graph.metadata["runtime_controller_loaded"] = controller_metadata
         return runtime_bundle, {"config": config, **controller_metadata}
@@ -2031,6 +2529,35 @@ def _maybe_build_runtime_controller(graph: IdeaGraph, baseline: BaselineSpec) ->
             "kind": "random_control",
             "seed": seed,
             "use_commit": False,
+        }
+        graph.metadata["runtime_controller_loaded"] = controller_metadata
+        return controller, {"config": config, **controller_metadata}
+
+    if runtime_kind == "signal_heuristic_control":
+        controller = SignalHeuristicController()
+        config = RelationGraphRuntimeConfig(
+            tau_override=float(graph.metadata.get("runtime_controller_tau_override", 0.0) or 0.0),
+            gamma_commit=float(graph.metadata.get("runtime_controller_gamma_commit", 0.58) or 0.58),
+            gamma_commit_by_round=dict(
+                graph.metadata.get(
+                    "runtime_controller_gamma_commit_by_round",
+                    {
+                        1: 0.95,
+                        2: 0.74,
+                        3: 0.62,
+                        4: 0.58,
+                        5: 0.55,
+                        6: 0.53,
+                    },
+                )
+            ),
+            min_commit_round=int(graph.metadata.get("runtime_controller_min_commit_round", 2) or 2),
+            use_edit=bool(graph.metadata.get("runtime_controller_use_edit", True)),
+            use_commit=bool(graph.metadata.get("runtime_controller_use_commit", True)),
+        )
+        controller_metadata = {
+            "kind": "signal_heuristic_control",
+            "use_commit": bool(config.use_commit),
         }
         graph.metadata["runtime_controller_loaded"] = controller_metadata
         return controller, {"config": config, **controller_metadata}
@@ -2204,6 +2731,30 @@ def run_baseline_experiment(
         else:
             draft = _deterministic_direct_proposal(graph, baseline)
             proposal = _deterministic_refine_proposal(graph, draft, baseline)
+    elif baseline.strategy == "graph_of_thought":
+        emit_progress(
+            graph,
+            progress_callback,
+            stage="baseline_generation",
+            message=f"Generating a Graph-of-Thought proposal with baseline '{baseline.name}'.",
+        )
+        if isinstance(collaboration_backend, OpenAICompatibleCollaborationBackend):
+            try:
+                proposal = _llm_graph_of_thought_proposal(graph, baseline, collaboration_backend)
+            except Exception as exc:
+                graph.metadata["baseline_generation_error"] = str(exc)
+                emit_progress(
+                    graph,
+                    progress_callback,
+                    stage="baseline_fallback",
+                    message=(
+                        f"Baseline '{baseline.name}' returned an invalid LLM response. "
+                        "Falling back to the deterministic Graph-of-Thought implementation."
+                    ),
+                )
+                proposal = _deterministic_graph_of_thought_proposal(graph, baseline)
+        else:
+            proposal = _deterministic_graph_of_thought_proposal(graph, baseline)
     else:
         raise ValueError(f"Unsupported baseline strategy '{baseline.strategy}'.")
 

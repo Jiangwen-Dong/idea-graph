@@ -74,16 +74,25 @@ class OpenAICompatibleChatClient:
         }
 
         request = Request(url, data=body, headers=headers, method="POST")
-        try:
-            with urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                return response.read().decode("utf-8")
-        except HTTPError as exc:
-            error_text = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                self._format_http_error(payload=payload, status_code=exc.code, error_text=error_text)
-            ) from exc
-        except URLError as exc:
-            raise RuntimeError(f"OpenAI-compatible request failed: {exc}") from exc
+        attempts = max(1, int(self.settings.max_retries) + 1)
+        for attempt in range(attempts):
+            try:
+                with urlopen(request, timeout=self.settings.timeout_seconds) as response:
+                    return response.read().decode("utf-8")
+            except HTTPError as exc:
+                error_text = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    self._format_http_error(payload=payload, status_code=exc.code, error_text=error_text)
+                ) from exc
+            except TimeoutError as exc:
+                if attempt + 1 >= attempts:
+                    raise RuntimeError(
+                        f"OpenAI-compatible request timed out after {attempts} attempts: {exc}"
+                    ) from exc
+            except URLError as exc:
+                if attempt + 1 >= attempts:
+                    raise RuntimeError(f"OpenAI-compatible request failed after {attempts} attempts: {exc}") from exc
+        raise RuntimeError("OpenAI-compatible request failed without returning a response.")
 
     def _apply_provider_adaptations(self, payload: dict[str, object]) -> None:
         if self._provider_family() != "dashscope":

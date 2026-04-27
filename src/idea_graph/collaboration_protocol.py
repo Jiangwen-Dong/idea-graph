@@ -78,33 +78,29 @@ ROUND_PHASES = {
     "structure": RoundPhase(
         key="structure",
         title="Structure Expansion",
-        objective="Expose graph structure by adding support, contradiction, dependency, overlap, or evidence-request signals.",
+        objective="Expose the core graph structure by adding support, dependency, or contradiction relations.",
         allowed_actions=(
             "add_support_edge",
             "add_contradiction_edge",
             "add_dependency_edge",
-            "mark_overlap",
-            "request_evidence",
         ),
         decision_focus=(
-            "Prefer actions that reveal latent structure rather than repeating edges that already exist.",
+            "Prefer actions that reveal missing structural relations rather than repeating edges that already exist.",
             "Use contradiction or dependency edges only when the relation is concrete and locally justified by the snapshot.",
-            "If novelty is uncertain, requesting evidence or marking overlap is often better than asserting support.",
+            "Do not spend the first round on soft content edits when a structural relation is still missing.",
         ),
     ),
     "stress_test": RoundPhase(
         key="stress_test",
-        title="Stress Test",
-        objective="Stress-test branches created by other roles using evidence attachment, overlap marking, or critique.",
+        title="Grounding And Stress Test",
+        objective="Ground key claims with evidence while still allowing targeted contradiction exposure.",
         allowed_actions=(
             "attach_evidence",
-            "mark_overlap",
-            "request_evidence",
             "add_support_edge",
             "add_contradiction_edge",
         ),
         decision_focus=(
-            "Prefer actions that interrogate unsupported claims, unresolved novelty, or cross-branch weaknesses.",
+            "Prefer actions that interrogate unsupported claims or cross-branch weaknesses.",
             "Attach evidence when one literature item can clearly improve a weak node.",
             "Use contradiction edges sparingly and only for substantive failure modes rather than mild disagreement.",
         ),
@@ -112,17 +108,17 @@ ROUND_PHASES = {
     "repair": RoundPhase(
         key="repair",
         title="Repair And Consolidation",
-        objective="Repair or recombine the graph into stronger branches without collapsing into early whole-idea voting.",
+        objective="Repair or consolidate the graph into a stronger final structure without forcing premature stopping.",
         allowed_actions=(
             "propose_repair",
             "add_support_edge",
-            "freeze_branch",
             "attach_evidence",
+            "add_dependency_edge",
         ),
         decision_focus=(
             "When unresolved contradictions block maturity, consider whether a repair can directly address them.",
             "Do not default to repair or support automatically; choose the single highest-leverage action for the current graph state.",
-            "Freeze a branch only when preserving it as an alternative is more valuable than editing it further right now.",
+            "If no edit is worthwhile, use skip rather than forcing an extra graph mutation.",
         ),
     ),
 }
@@ -143,6 +139,4 @@ def resolve_round_phase(round_name: str) -> RoundPhase:
     round_index = round_index_from_name(round_name)
     if round_index == 1:
         return ROUND_PHASES["structure"]
-    if round_index % 2 == 0:
-        return ROUND_PHASES["stress_test"]
     return ROUND_PHASES["repair"]

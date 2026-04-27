@@ -96,7 +96,13 @@ class ParallelCommitCheckRecord:
     utility: float = 0.0
     controller_kind: str = ""
     commit_probability: float | None = None
+    commit_probability_calibrated: float | None = None
     commit_threshold: float | None = None
+    commit_calibration_bias: float = 0.0
+    commit_calibration_enabled: bool = False
+    commit_calibration_feedback: dict[str, object] = field(default_factory=dict)
+    graph_signals: dict[str, object] = field(default_factory=dict)
+    graph_signal_deficits: dict[str, float] = field(default_factory=dict)
     commit_guard_reason: str = ""
 
 

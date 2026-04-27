@@ -320,12 +320,67 @@ def choose_repair_target(graph: IdeaGraph, role: str) -> Node | None:
     return targets[0] if targets else None
 
 
+def unresolved_contradiction_target_nodes(graph: IdeaGraph) -> list[Node]:
+    seen: set[str] = set()
+    targets: list[Node] = []
+    for edge in unresolved_contradiction_edges(graph):
+        target_id = edge.target_id
+        if target_id in seen or target_id not in graph.nodes:
+            continue
+        node = graph.nodes[target_id]
+        if node.status != "active":
+            continue
+        seen.add(target_id)
+        targets.append(node)
+    return targets
+
+
 def contradiction_related_node_ids(graph: IdeaGraph) -> set[str]:
     related: set[str] = set()
     for edge in unresolved_contradiction_edges(graph):
         related.add(edge.source_id)
         related.add(edge.target_id)
     return related
+
+
+def _claim_chain_evidence_gap_nodes(
+    graph: IdeaGraph,
+    *,
+    preferred_types: tuple[str, ...] = ("EvalPlan", "Method", "Hypothesis", "NoveltyClaim"),
+) -> list[Node]:
+    tracked_types = {"Hypothesis", "Method", "EvalPlan", "NoveltyClaim"}
+    claim_chain = select_claim_chain(graph)
+    ordered_focus_ids: list[str] = []
+    if isinstance(claim_chain, dict):
+        subgraph = claim_chain.get("subgraph", {})
+        if isinstance(subgraph, dict):
+            raw_core_ids = subgraph.get("core_node_ids", [])
+            if isinstance(raw_core_ids, list):
+                ordered_focus_ids = [
+                    str(node_id)
+                    for node_id in raw_core_ids
+                    if str(node_id) in graph.nodes
+                    and graph.nodes[str(node_id)].status == "active"
+                    and graph.nodes[str(node_id)].type in tracked_types
+                ]
+
+    if not ordered_focus_ids:
+        ordered_focus_ids = [
+            node.id
+            for node in graph.active_nodes()
+            if node.type in tracked_types
+        ]
+    focus_order = {node_id: index for index, node_id in enumerate(ordered_focus_ids)}
+    type_order = {node_type: index for index, node_type in enumerate(preferred_types)}
+    evidence_gap_nodes = [
+        graph.nodes[node_id]
+        for node_id in ordered_focus_ids
+        if not list(graph.nodes[node_id].evidence)
+    ]
+    return sorted(
+        evidence_gap_nodes,
+        key=lambda node: (type_order.get(node.type, len(type_order)), focus_order.get(node.id, 10_000)),
+    )
 
 
 def llm_action_alignment_error(graph: IdeaGraph, round_name: str, action: GraphAction) -> str | None:
@@ -763,16 +818,17 @@ def choose_consolidation_action(graph: IdeaGraph, round_name: str, role: str, br
             rationale="The core path is already well-supported, so freezing the branch preserves it cleanly for final synthesis.",
         )
 
-    evidence_target = None
-    try:
-        evidence_target = first_available_node(
-            graph,
-            node_types=("EvalPlan", "Method", "Hypothesis", "NoveltyClaim"),
-            preferred_roles=("EvaluationDesigner", "MechanismProposer", "ImpactReframer", "NoveltyExaminer"),
-            prefer_without_evidence=True,
-        )
-    except ValueError:
-        evidence_target = None
+    evidence_target = next(iter(_claim_chain_evidence_gap_nodes(graph)), None)
+    if evidence_target is None:
+        try:
+            evidence_target = first_available_node(
+                graph,
+                node_types=("EvalPlan", "Method", "Hypothesis", "NoveltyClaim"),
+                preferred_roles=("EvaluationDesigner", "MechanismProposer", "ImpactReframer", "NoveltyExaminer"),
+                prefer_without_evidence=True,
+            )
+        except ValueError:
+            evidence_target = None
 
     if evidence_target is not None:
         return make_action(
@@ -1396,13 +1452,27 @@ def _generic_candidate_action_specs(
             )
 
     if "attach_evidence" in allowed_actions:
-        evidence_targets = contradiction_targets or _candidate_nodes(
-            graph,
-            node_types=("EvalPlan", "Method", "Hypothesis", "NoveltyClaim"),
-            preferred_roles=("EvaluationDesigner", "MechanismProposer", "ImpactReframer", role),
-            prefer_without_evidence=True,
-            exclude_role=role if phase.key == "stress_test" else None,
-            limit=2,
+        evidence_targets: list[Node] = []
+        if phase.key == "repair":
+            for target in unresolved_contradiction_target_nodes(graph):
+                if target.id not in {node.id for node in evidence_targets}:
+                    evidence_targets.append(target)
+        else:
+            evidence_targets.extend(contradiction_targets)
+        for target in _claim_chain_evidence_gap_nodes(graph):
+            if target.id not in {node.id for node in evidence_targets}:
+                evidence_targets.append(target)
+        evidence_targets.extend(
+            node
+            for node in _candidate_nodes(
+                graph,
+                node_types=("EvalPlan", "Method", "Hypothesis", "NoveltyClaim"),
+                preferred_roles=("EvaluationDesigner", "MechanismProposer", "ImpactReframer", role),
+                prefer_without_evidence=True,
+                exclude_role=role if phase.key == "stress_test" else None,
+                limit=3,
+            )
+            if node.id not in {target.id for target in evidence_targets}
         )
         for index, target in enumerate(evidence_targets[:2]):
             if target.evidence:
@@ -1761,6 +1831,15 @@ def _record_runtime_controller_trace(
             "candidate_source": candidate.get("candidate_source"),
             "predicted_gain": candidate.get("predicted_gain"),
             "critic_score": candidate.get("critic_score"),
+            "critic_base_score": candidate.get("critic_base_score"),
+            "critic_calibration_bias": candidate.get("critic_calibration_bias"),
+            "critic_score_calibrated": candidate.get("critic_score_calibrated"),
+            "critic_action_family": candidate.get("critic_action_family"),
+            "critic_aligned_signal": candidate.get("critic_aligned_signal"),
+            "critic_calibration_enabled": candidate.get("critic_calibration_enabled"),
+            "critic_calibration_feedback": candidate.get("critic_calibration_feedback"),
+            "critic_calibration_deficits": candidate.get("critic_calibration_deficits"),
+            "heuristic_components": candidate.get("heuristic_components"),
             "controller_fallback_reason": candidate.get("controller_fallback_reason"),
         }
 
@@ -1922,8 +2001,11 @@ def _select_ranked_action(
                 "round_index": round_index,
                 "support_coverage": reference_snapshot.support_coverage,
                 "unresolved_contradiction_ratio": reference_snapshot.unresolved_contradiction_ratio,
+                "utility": reference_snapshot.utility,
+                "utility_stable": reference_snapshot.utility_stable,
                 "completeness": reference_snapshot.completeness,
                 "is_mature": reference_snapshot.is_mature,
+                "utility_breakdown": asdict(reference_snapshot.utility_breakdown),
             }
             heuristic_candidate_id = str(heuristic_selected_candidate.get("candidate_id", "")).strip()
             if controller_kind == "text_critic_rerank":
@@ -1964,6 +2046,12 @@ def _select_ranked_action(
                 selected_candidate = {
                     **selected_candidate_from_ranked,
                     "critic_score": controller_decision.selected_spec.get("critic_score"),
+                    "critic_base_score": controller_decision.selected_spec.get("critic_base_score"),
+                    "critic_calibration_bias": controller_decision.selected_spec.get("critic_calibration_bias"),
+                    "critic_score_calibrated": controller_decision.selected_spec.get("critic_score_calibrated"),
+                    "critic_action_family": controller_decision.selected_spec.get("critic_action_family"),
+                    "critic_calibration_enabled": controller_decision.selected_spec.get("critic_calibration_enabled"),
+                    "critic_calibration_feedback": controller_decision.selected_spec.get("critic_calibration_feedback"),
                     "controller_kind": controller_kind,
                     "controller_selected_source": controller_decision.policy_decision.selected_source,
                     "controller_override_margin": controller_decision.policy_decision.override_margin,

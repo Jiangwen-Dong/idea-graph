@@ -151,6 +151,9 @@ def apply_runtime_controller_overrides(
     *,
     runtime_controller_calibration_path: str | Path | None,
     disable_runtime_calibration: bool,
+    disable_action_score_calibration: bool = False,
+    action_score_calibration_strength: float | None = None,
+    action_score_calibration_max_bias: float | None = None,
 ) -> ExperimentInstance:
     metadata = dict(instance.metadata)
     if disable_runtime_calibration:
@@ -160,12 +163,30 @@ def apply_runtime_controller_overrides(
             metadata.pop("runtime_controller_calibration_path", None)
             metadata.pop("runtime_controller_calibration_source", None)
             metadata.pop("runtime_controller_calibration_version", None)
+            metadata.pop("runtime_controller_calibration_missing", None)
+            metadata.pop("runtime_controller_calibration_missing_path", None)
+            metadata.pop("runtime_controller_use_joint_threshold_calibration", None)
         metadata["runtime_controller_disable_calibration"] = True
     elif runtime_controller_calibration_path is not None:
         metadata["runtime_controller_calibration_path"] = str(
             Path(runtime_controller_calibration_path).resolve()
         )
+        metadata["runtime_controller_use_joint_threshold_calibration"] = True
         metadata.pop("runtime_controller_disable_calibration", None)
+    if disable_action_score_calibration:
+        metadata["runtime_controller_use_action_score_calibration"] = False
+    elif "runtime_controller_use_action_score_calibration" in metadata:
+        metadata["runtime_controller_use_action_score_calibration"] = bool(
+            metadata["runtime_controller_use_action_score_calibration"]
+        )
+    if action_score_calibration_strength is not None:
+        metadata["runtime_controller_action_score_calibration_strength"] = float(
+            action_score_calibration_strength
+        )
+    if action_score_calibration_max_bias is not None:
+        metadata["runtime_controller_action_score_calibration_max_bias"] = float(
+            action_score_calibration_max_bias
+        )
     return ExperimentInstance(
         name=instance.name,
         topic=instance.topic,
@@ -187,6 +208,9 @@ def execute_packet_run(
     paper_baseline_name_override: str | None = None,
     runtime_controller_calibration_path: str | Path | None = None,
     disable_runtime_calibration: bool = False,
+    disable_action_score_calibration: bool = False,
+    action_score_calibration_strength: float | None = None,
+    action_score_calibration_max_bias: float | None = None,
 ) -> dict[str, Any]:
     settings, backend = build_openai_backend(llm_config_path)
     if native_eval and settings is None:
@@ -198,6 +222,9 @@ def execute_packet_run(
         instance,
         runtime_controller_calibration_path=runtime_controller_calibration_path,
         disable_runtime_calibration=disable_runtime_calibration,
+        disable_action_score_calibration=disable_action_score_calibration,
+        action_score_calibration_strength=action_score_calibration_strength,
+        action_score_calibration_max_bias=action_score_calibration_max_bias,
     )
 
     experiment_metadata = dict(instance.metadata)
