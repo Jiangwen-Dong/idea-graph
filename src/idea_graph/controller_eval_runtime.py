@@ -24,6 +24,7 @@ from .benchmarks import (
 from .fs_utils import read_text_file, write_text_file
 from .instances import ExperimentInstance
 from .io import write_run_artifacts
+from .external_baselines import load_external_baseline_config
 from .settings import OpenAICompatibleSettings
 
 
@@ -137,12 +138,20 @@ def load_benchmark_instance(
     return liveideabench_instance_from_record(record, benchmark_root=benchmark_root)
 
 
+def load_openai_settings(
+    llm_config_path: str | Path | None,
+) -> OpenAICompatibleSettings | None:
+    if llm_config_path is None:
+        return None
+    return OpenAICompatibleSettings.from_json_file(llm_config_path)
+
+
 def build_openai_backend(
     llm_config_path: str | Path | None,
 ) -> tuple[OpenAICompatibleSettings | None, OpenAICompatibleCollaborationBackend | None]:
-    if llm_config_path is None:
+    settings = load_openai_settings(llm_config_path)
+    if settings is None:
         return None, None
-    settings = OpenAICompatibleSettings.from_json_file(llm_config_path)
     return settings, OpenAICompatibleCollaborationBackend(settings)
 
 
@@ -204,7 +213,9 @@ def execute_packet_run(
     benchmark_root_base: str | Path,
     max_rounds: int,
     native_eval: bool,
-    llm_config_path: str | Path | None,
+    generation_llm_config_path: str | Path | None,
+    judge_llm_config_path: str | Path | None = None,
+    external_baseline_config_path: str | Path | None = None,
     paper_baseline_name_override: str | None = None,
     runtime_controller_calibration_path: str | Path | None = None,
     disable_runtime_calibration: bool = False,
@@ -212,9 +223,14 @@ def execute_packet_run(
     action_score_calibration_strength: float | None = None,
     action_score_calibration_max_bias: float | None = None,
 ) -> dict[str, Any]:
-    settings, backend = build_openai_backend(llm_config_path)
-    if native_eval and settings is None:
-        raise ValueError("native_eval requires llm_config_path so the judge backend can be built.")
+    generation_settings, backend = build_openai_backend(generation_llm_config_path)
+    judge_settings = load_openai_settings(judge_llm_config_path)
+    if judge_settings is None:
+        judge_settings = generation_settings
+    if native_eval and judge_settings is None:
+        raise ValueError(
+            "native_eval requires a judge config. Provide generation_llm_config_path or judge_llm_config_path."
+        )
 
     instance = load_benchmark_instance(row, benchmark_root_base=benchmark_root_base)
     instance = attach_baseline_metadata(instance, baseline_name=baseline_name, io_mode="auto")
@@ -236,9 +252,9 @@ def execute_packet_run(
     experiment_metadata["packet_source_split"] = _normalize_str(row.get("source_split"))
     if backend is not None:
         experiment_metadata["openai_compatible"] = backend.settings.sanitized_dict()
-    if native_eval and settings is not None:
+    if native_eval and judge_settings is not None:
         experiment_metadata["benchmark_native_eval_enabled"] = True
-        experiment_metadata["benchmark_native_eval_backend"] = settings.sanitized_dict()
+        experiment_metadata["benchmark_native_eval_backend"] = judge_settings.sanitized_dict()
     instance = ExperimentInstance(
         name=instance.name,
         topic=instance.topic,
@@ -246,6 +262,7 @@ def execute_packet_run(
         source_path=instance.source_path,
         metadata=experiment_metadata,
     )
+    external_baseline_config = load_external_baseline_config(external_baseline_config_path)
 
     graph = run_baseline_experiment(
         instance,
@@ -253,9 +270,9 @@ def execute_packet_run(
         collaboration_backend=backend,
         max_rounds=max(1, max_rounds),
         stop_when_mature=True,
-        external_baseline_config={},
+        external_baseline_config=external_baseline_config,
     )
-    native_evaluation = evaluate_benchmark_native(graph, settings=settings) if native_eval else None
+    native_evaluation = evaluate_benchmark_native(graph, settings=judge_settings) if native_eval else None
     run_dir = write_run_artifacts(
         graph,
         output_root=Path(output_root) / "runs" / canonical_baseline_name(baseline_name),

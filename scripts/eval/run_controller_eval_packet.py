@@ -14,6 +14,8 @@ from idea_graph.controller_eval_runtime import (
     build_run_manifest_row,
     execute_packet_run,
     load_packet_rows,
+    summarize_packet_runs,
+    write_packet_summary,
 )
 from idea_graph.fs_utils import write_text_file
 from idea_graph.repo_paths import default_benchmark_root
@@ -39,7 +41,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--llm-config",
         type=Path,
         default=None,
-        help="Optional OpenAI-compatible runtime config.",
+        help="Optional OpenAI-compatible generation config.",
+    )
+    parser.add_argument(
+        "--external-baseline-config",
+        type=Path,
+        default=None,
+        help="Optional JSON config for external baselines such as AI-Researcher.",
+    )
+    parser.add_argument(
+        "--native-eval-llm-config",
+        type=Path,
+        default=None,
+        help="Optional OpenAI-compatible judge config for benchmark-native evaluation. Defaults to --llm-config.",
     )
     parser.add_argument(
         "--output-root",
@@ -157,7 +171,9 @@ def main() -> None:
                         benchmark_root_base=args.benchmark_root_base,
                         max_rounds=args.max_rounds,
                         native_eval=args.native_eval,
-                        llm_config_path=args.llm_config,
+                        generation_llm_config_path=args.llm_config,
+                        judge_llm_config_path=args.native_eval_llm_config,
+                        external_baseline_config_path=args.external_baseline_config,
                         paper_baseline_name_override=args.paper_baseline_name_override,
                         runtime_controller_calibration_path=args.runtime_controller_calibration_path,
                         disable_runtime_calibration=args.disable_runtime_calibration,
@@ -167,6 +183,10 @@ def main() -> None:
                     )
                 )
             write_text_file(args.output_root / "run_manifest.jsonl", _jsonl_lines(run_manifest_rows))
+
+    if not args.dry_run:
+        summary = summarize_packet_runs(run_manifest_rows)
+        write_packet_summary(args.output_root, summary)
 
     print(
         f"Wrote {len(run_manifest_rows)} run-manifest rows "

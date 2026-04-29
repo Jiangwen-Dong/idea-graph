@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import sys
 import tempfile
@@ -287,6 +289,49 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
             BASELINE_SPECS["ours-eig-random-control"].runtime_controller,
             "random_control",
         )
+        self.assertIn("ours-eig-sequential-heuristic-order-a", BASELINE_SPECS)
+        self.assertIn("ours-eig-sequential-heuristic-order-b", BASELINE_SPECS)
+        self.assertIn("ours-eig-sequential-heuristic-order-c", BASELINE_SPECS)
+        self.assertIn("ours-eig-sequential-dropin-order-a", BASELINE_SPECS)
+        self.assertIn("ours-eig-sequential-dropin-order-b", BASELINE_SPECS)
+        self.assertIn("ours-eig-sequential-dropin-order-c", BASELINE_SPECS)
+
+    def test_runtime_protocol_module_exposes_sequential_role_orders(self) -> None:
+        self.assertIsNotNone(importlib.util.find_spec("idea_graph.runtime_protocols"))
+
+        runtime_protocols = importlib.import_module("idea_graph.runtime_protocols")
+
+        self.assertEqual(runtime_protocols.PARALLEL_GRAPH_V2, "parallel_graph_v2")
+        self.assertEqual(runtime_protocols.SEQUENTIAL_GRAPH_V2, "sequential_graph_v2")
+        self.assertEqual(
+            runtime_protocols.resolve_role_order(
+                "order_b_reverse",
+                ["MechanismProposer", "NoveltyExaminer", "ImpactReframer"],
+            ),
+            ("ImpactReframer", "NoveltyExaminer", "MechanismProposer"),
+        )
+        self.assertEqual(
+            runtime_protocols.resolve_role_order(
+                "order_a_canonical",
+                ["NoveltyExaminer", "ImpactReframer", "FeasibilityCritic"],
+            ),
+            ("FeasibilityCritic", "NoveltyExaminer", "ImpactReframer"),
+        )
+
+    def test_resolve_role_order_rejects_unknown_order_and_unknown_active_roles(self) -> None:
+        runtime_protocols = importlib.import_module("idea_graph.runtime_protocols")
+
+        with self.assertRaisesRegex(ValueError, "Unknown role order"):
+            runtime_protocols.resolve_role_order("missing_order", ["MechanismProposer"])
+
+        with self.assertRaisesRegex(ValueError, "Unknown active roles"):
+            runtime_protocols.resolve_role_order(
+                "order_a_canonical",
+                ["MechanismProposer", "UnknownRole"],
+            )
+
+        with self.assertRaisesRegex(ValueError, "resolved to an empty active-role subset"):
+            runtime_protocols.resolve_role_order("order_a_canonical", [])
 
     def test_graph_of_thought_baseline_runs_three_generation_scoring_rounds(self) -> None:
         class FakeClient:
@@ -600,18 +645,20 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
         self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
         self.assertTrue(calibrated.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertTrue(calibrated.metadata["runtime_controller_use_joint_threshold_calibration"])
         self.assertNotIn("runtime_controller_disable_calibration", calibrated.metadata)
-        self.assertNotIn("runtime_controller_calibration_path", calibrated.metadata)
-        self.assertAlmostEqual(calibrated.metadata["runtime_controller_tau_override"], 0.05)
-        self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.50)
-        self.assertEqual(calibrated.metadata["runtime_controller_min_commit_round"], 3)
+        self.assertTrue(Path(calibrated.metadata["runtime_controller_calibration_path"]).is_file())
+        self.assertAlmostEqual(calibrated.metadata["runtime_controller_tau_override"], 0.068)
+        self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.6563)
+        self.assertEqual(calibrated.metadata["runtime_controller_min_commit_round"], 2)
         self.assertFalse(calibrated.metadata["runtime_controller_use_low_signal_kind_swap_guard"])
 
         self.assertFalse(no_edit.metadata["runtime_controller_use_edit"])
         self.assertTrue(no_edit.metadata["runtime_controller_use_commit"])
         self.assertFalse(no_edit.metadata["runtime_controller_use_action_score_calibration"])
+        self.assertTrue(no_edit.metadata["runtime_controller_use_joint_threshold_calibration"])
         self.assertNotIn("runtime_controller_disable_calibration", no_edit.metadata)
-        self.assertNotIn("runtime_controller_calibration_path", no_edit.metadata)
+        self.assertTrue(Path(no_edit.metadata["runtime_controller_calibration_path"]).is_file())
 
         no_commit = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
@@ -646,8 +693,9 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
                 instance.metadata["runtime_controller_kind"],
                 "relation_graph_two_head_critic",
             )
+            self.assertTrue(instance.metadata["runtime_controller_use_joint_threshold_calibration"])
             self.assertNotIn("runtime_controller_calibration_path", instance.metadata)
-            self.assertNotIn("runtime_controller_calibration_missing", instance.metadata)
+            self.assertTrue(instance.metadata["runtime_controller_calibration_missing"])
             self.assertAlmostEqual(instance.metadata["runtime_controller_tau_override"], 0.05)
             self.assertAlmostEqual(instance.metadata["runtime_controller_gamma_commit"], 0.50)
             self.assertEqual(instance.metadata["runtime_controller_min_commit_round"], 3)
@@ -736,6 +784,51 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertEqual(fixed_instance.metadata["runtime_protocol"], "parallel_graph_v2")
         self.assertEqual(random_instance.metadata["runtime_protocol"], "parallel_graph_v2")
 
+    def test_attach_baseline_metadata_uses_sequential_runtime_for_registered_ablation_rows(self) -> None:
+        expected_metadata = {
+            "ours-eig-sequential-heuristic-order-a": (
+                "runtime_role_order_id",
+                "order_a_canonical",
+                "signal_heuristic_control",
+            ),
+            "ours-eig-sequential-heuristic-order-b": (
+                "runtime_role_order_id",
+                "order_b_reverse",
+                "signal_heuristic_control",
+            ),
+            "ours-eig-sequential-heuristic-order-c": (
+                "runtime_role_order_id",
+                "order_c_cyclic",
+                "signal_heuristic_control",
+            ),
+            "ours-eig-sequential-dropin-order-a": (
+                "runtime_role_order_id",
+                "order_a_canonical",
+                "relation_graph_two_head_critic",
+            ),
+            "ours-eig-sequential-dropin-order-b": (
+                "runtime_role_order_id",
+                "order_b_reverse",
+                "relation_graph_two_head_critic",
+            ),
+            "ours-eig-sequential-dropin-order-c": (
+                "runtime_role_order_id",
+                "order_c_cyclic",
+                "relation_graph_two_head_critic",
+            ),
+        }
+
+        for baseline_name, (order_key, order_id, controller_kind) in expected_metadata.items():
+            with self.subTest(baseline_name=baseline_name):
+                instance = attach_baseline_metadata(
+                    self._ai_idea_bench_instance(),
+                    baseline_name=baseline_name,
+                    io_mode="auto",
+                )
+                self.assertEqual(instance.metadata["runtime_protocol"], "sequential_graph_v2")
+                self.assertEqual(instance.metadata[order_key], order_id)
+                self.assertEqual(instance.metadata["runtime_controller_kind"], controller_kind)
+
     def test_attach_baseline_metadata_overwrites_stale_controller_fields_on_baseline_switch(self) -> None:
         text_instance = attach_baseline_metadata(
             self._ai_idea_bench_instance(),
@@ -764,6 +857,59 @@ class BenchmarkModeAndBaselineTests(unittest.TestCase):
         self.assertNotIn("runtime_controller_kind", plain_instance.metadata)
         self.assertNotIn("runtime_controller_model_path", plain_instance.metadata)
         self.assertNotIn("runtime_controller_model_dir", plain_instance.metadata)
+
+    def test_attach_baseline_metadata_clears_stale_sequential_fields_when_switching_to_parallel_eig(self) -> None:
+        sequential_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-sequential-heuristic-order-a",
+            io_mode="auto",
+        )
+        self.assertEqual(sequential_instance.metadata["runtime_protocol"], "sequential_graph_v2")
+        self.assertEqual(sequential_instance.metadata["runtime_role_order_id"], "order_a_canonical")
+        self.assertEqual(
+            sequential_instance.metadata["runtime_role_order"],
+            [
+                "MechanismProposer",
+                "FeasibilityCritic",
+                "NoveltyExaminer",
+                "EvaluationDesigner",
+                "ImpactReframer",
+            ],
+        )
+        self.assertEqual(
+            sequential_instance.metadata["idea_graph_protocol_variant"],
+            "eig_sequential_v2_heuristic_order_a",
+        )
+
+        parallel_instance = attach_baseline_metadata(
+            sequential_instance,
+            baseline_name="ours-eig",
+            io_mode="auto",
+        )
+
+        self.assertEqual(parallel_instance.metadata["runtime_protocol"], "parallel_graph_v2")
+        self.assertNotIn("runtime_role_order_id", parallel_instance.metadata)
+        self.assertNotIn("runtime_role_order", parallel_instance.metadata)
+        self.assertNotIn("idea_graph_protocol_variant", parallel_instance.metadata)
+
+    def test_attach_baseline_metadata_clears_stale_runtime_protocol_when_switching_to_non_evolving_baseline(self) -> None:
+        sequential_instance = attach_baseline_metadata(
+            self._ai_idea_bench_instance(),
+            baseline_name="ours-eig-sequential-dropin-order-b",
+            io_mode="auto",
+        )
+        self.assertEqual(sequential_instance.metadata["runtime_protocol"], "sequential_graph_v2")
+
+        direct_instance = attach_baseline_metadata(
+            sequential_instance,
+            baseline_name="direct",
+            io_mode="auto",
+        )
+
+        self.assertNotIn("runtime_protocol", direct_instance.metadata)
+        self.assertNotIn("runtime_role_order_id", direct_instance.metadata)
+        self.assertNotIn("runtime_role_order", direct_instance.metadata)
+        self.assertNotIn("idea_graph_protocol_variant", direct_instance.metadata)
 
     def test_default_relation_graph_runtime_model_dir_prefers_shared_outputs_from_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

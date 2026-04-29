@@ -30,6 +30,14 @@ def append_post_round_commit_rows(
         payload.extend(dict(row) for row in rows)
 
 
+def _protocol_prefix(*, runtime_protocol: str, state_kind: str) -> str:
+    if "sequential" in str(state_kind).strip().lower():
+        return "sequential"
+    if "sequential" in str(runtime_protocol).strip().lower():
+        return "sequential"
+    return "parallel"
+
+
 def _state_snapshot(
     graph: IdeaGraph,
     *,
@@ -128,10 +136,11 @@ def _synthetic_action(
     round_name: str,
     role: str,
     decision,
+    protocol_prefix: str,
 ) -> GraphAction:
     payload = dict(decision.payload or {})
     return GraphAction(
-        id=f"parallel::{round_name}::{role}",
+        id=f"{protocol_prefix}::{round_name}::{role}",
         round_name=round_name,
         role=role,
         kind=str(decision.kind).strip(),
@@ -148,6 +157,7 @@ def _build_candidate_rows(
     round_name: str,
     role: str,
     selected_action: GraphAction,
+    protocol_prefix: str,
 ) -> tuple[list[dict[str, object]], str]:
     candidate_specs = enumerate_edit_candidate_specs(
         graph,
@@ -158,7 +168,7 @@ def _build_candidate_rows(
     candidate_rows: list[dict[str, object]] = []
     selected_candidate_id = ""
     for candidate_index, spec in enumerate(candidate_specs):
-        candidate_id = f"parallel::{round_name}::{role}::candidate:{candidate_index:04d}"
+        candidate_id = f"{protocol_prefix}::{round_name}::{role}::candidate:{candidate_index:04d}"
         is_selected = (
             str(spec.get("kind", "")).strip() == selected_action.kind
             and [str(item).strip() for item in spec.get("target_ids", []) if str(item).strip()] == selected_action.target_ids
@@ -182,7 +192,9 @@ def _build_candidate_rows(
             }
         )
     if not selected_candidate_id:
-        selected_candidate_id = f"parallel::{round_name}::{role}::candidate:{len(candidate_rows):04d}"
+        selected_candidate_id = (
+            f"{protocol_prefix}::{round_name}::{role}::candidate:{len(candidate_rows):04d}"
+        )
         synthetic_spec = {
             "kind": selected_action.kind,
             "target_ids": list(selected_action.target_ids),
@@ -213,8 +225,16 @@ def build_parallel_edit_rows(
     role_decisions: Sequence[tuple[str, Any]],
     runtime_protocol: str,
     label_source: str,
+    state_kind: str = "parallel_pre_action",
+    runtime_role_order_id: str = "",
+    resolved_role_sequence: Sequence[str] = (),
 ) -> list[dict[str, object]]:
-    state_snapshot = _state_snapshot(graph)
+    protocol_prefix = _protocol_prefix(runtime_protocol=runtime_protocol, state_kind=state_kind)
+    state_snapshot = _state_snapshot(
+        graph,
+        state_kind=state_kind,
+        action_id=f"{protocol_prefix}_round_pre_action",
+    )
     state_text = _flatten_state_text(graph)
     rows: list[dict[str, object]] = []
     for role, decision in role_decisions:
@@ -223,18 +243,22 @@ def build_parallel_edit_rows(
             round_name=round_name,
             role=role,
             decision=decision,
+            protocol_prefix=protocol_prefix,
         )
         candidates, selected_candidate_id = _build_candidate_rows(
             graph,
             round_name=round_name,
             role=role,
             selected_action=selected_action,
+            protocol_prefix=protocol_prefix,
         )
         rows.append(
             {
                 "schema_version": "parallel_edit_row_v1",
-                "state_id": f"parallel::{round_name}::{role}",
+                "state_id": f"{protocol_prefix}::{round_name}::{role}",
                 "runtime_protocol": runtime_protocol,
+                "runtime_role_order_id": runtime_role_order_id,
+                "resolved_role_sequence": list(resolved_role_sequence),
                 "label_source": label_source,
                 "benchmark": _metadata_string(graph, "benchmark"),
                 "instance_name": _metadata_string(graph, "instance_name", graph.topic),
@@ -242,7 +266,7 @@ def build_parallel_edit_rows(
                 "topic": graph.topic,
                 "round_name": round_name,
                 "role": role,
-                "state_kind": "parallel_pre_action",
+                "state_kind": state_kind,
                 "state_text": state_text,
                 "state_snapshot": state_snapshot,
                 "state_node_count": state_snapshot["node_count"],
@@ -267,24 +291,30 @@ def build_post_round_commit_row(
     commit_check: Any,
     runtime_protocol: str,
     label_source: str,
+    state_kind: str = "parallel_post_round",
+    runtime_role_order_id: str = "",
+    resolved_role_sequence: Sequence[str] = (),
 ) -> dict[str, object]:
+    protocol_prefix = _protocol_prefix(runtime_protocol=runtime_protocol, state_kind=state_kind)
     state_snapshot = _state_snapshot(
         graph,
-        state_kind="parallel_post_round",
-        action_id="parallel_round_post_action",
+        state_kind=state_kind,
+        action_id=f"{protocol_prefix}_round_post_action",
     )
     should_commit = bool(getattr(commit_check, "should_commit", False))
     return {
         "schema_version": "post_round_commit_row_v1",
-        "state_id": f"parallel::{round_name}::post_round_commit",
+        "state_id": f"{protocol_prefix}::{round_name}::post_round_commit",
         "runtime_protocol": runtime_protocol,
+        "runtime_role_order_id": runtime_role_order_id,
+        "resolved_role_sequence": list(resolved_role_sequence),
         "label_source": label_source,
         "benchmark": _metadata_string(graph, "benchmark"),
         "instance_name": _metadata_string(graph, "instance_name", graph.topic),
         "baseline_name": _metadata_string(graph, "baseline_name"),
         "topic": graph.topic,
         "round_name": round_name,
-        "state_kind": "parallel_post_round",
+        "state_kind": state_kind,
         "state_text": _flatten_state_text(graph),
         "state_snapshot": state_snapshot,
         "state_node_count": state_snapshot["node_count"],

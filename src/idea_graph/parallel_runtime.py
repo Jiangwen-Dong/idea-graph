@@ -31,6 +31,7 @@ from .critic_policy import commit_threshold_for_round
 from .runtime_critic import select_text_critic_candidate
 from .role_activation import active_roles_for_round
 from .signal_heuristic_control import graph_signal_payload as _heuristic_graph_signal_payload
+from .runtime_protocols import PARALLEL_GRAPH_V2
 
 
 def _decision_from_graph_action(action) -> ActionDecision:
@@ -62,30 +63,51 @@ def _patch_record(role: str, decision: ActionDecision, *, is_empty: bool) -> Par
     )
 
 
-def _synthetic_action_from_decision(graph, *, round_name: str, role: str, decision: ActionDecision) -> GraphAction:
+def _runtime_protocol_prefix(runtime_protocol: str) -> str:
+    return "sequential" if "sequential" in str(runtime_protocol).strip().lower() else "parallel"
+
+
+def _synthetic_action_from_decision(
+    graph,
+    *,
+    round_name: str,
+    role: str,
+    decision: ActionDecision,
+    runtime_protocol: str = PARALLEL_GRAPH_V2,
+) -> GraphAction:
+    protocol_prefix = _runtime_protocol_prefix(runtime_protocol)
     return GraphAction(
-        id=f"parallel::{round_name}::{role}::controller-baseline",
+        id=f"{protocol_prefix}::{round_name}::{role}::controller-baseline",
         round_name=round_name,
         role=role,
         kind=str(decision.kind).strip(),
         target_ids=[str(item).strip() for item in decision.target_ids if str(item).strip()],
         payload=dict(decision.payload),
         rationale=str(decision.rationale).strip(),
-        source="parallel_controller_baseline",
+        source=f"{protocol_prefix}_controller_baseline",
     )
 
 
-def _controller_candidate_specs(graph, *, round_name: str, role: str, decision: ActionDecision) -> list[dict[str, object]]:
+def _controller_candidate_specs(
+    graph,
+    *,
+    round_name: str,
+    role: str,
+    decision: ActionDecision,
+    runtime_protocol: str = PARALLEL_GRAPH_V2,
+) -> list[dict[str, object]]:
+    protocol_prefix = _runtime_protocol_prefix(runtime_protocol)
     baseline_action = _synthetic_action_from_decision(
         graph,
         round_name=round_name,
         role=role,
         decision=decision,
+        runtime_protocol=runtime_protocol,
     )
     return [
         {
             **candidate,
-            "candidate_id": f"parallel::{round_name}::{role}::candidate:{index:04d}",
+            "candidate_id": f"{protocol_prefix}::{round_name}::{role}::candidate:{index:04d}",
         }
         for index, candidate in enumerate(
             enumerate_edit_candidate_specs(
@@ -221,6 +243,7 @@ def _maybe_apply_runtime_controller(
     raw_decisions: list[tuple[str, ActionDecision]],
     runtime_controller: Any | None,
     runtime_controller_metadata: dict[str, Any] | None,
+    runtime_protocol: str = PARALLEL_GRAPH_V2,
 ) -> tuple[list[tuple[str, ActionDecision]], bool]:
     if runtime_controller is None or runtime_controller_metadata is None:
         return raw_decisions, False
@@ -266,6 +289,7 @@ def _maybe_apply_runtime_controller(
             round_name=round_name,
             role=role,
             decision=decision,
+            runtime_protocol=runtime_protocol,
         )
         valid_candidates = [candidate for candidate in candidate_specs if str(candidate.get("kind", "")).strip()]
         if not valid_candidates:
@@ -525,6 +549,7 @@ def _runtime_commit_check(
     post_round_snapshot,
     runtime_controller: Any | None,
     runtime_controller_metadata: dict[str, Any] | None,
+    state_kind: str = "parallel_post_round",
 ) -> ParallelCommitCheckRecord:
     controller_state = {
         "round_index": _round_index(round_name),
@@ -608,7 +633,7 @@ def _runtime_commit_check(
         should_commit = calibrated_probability >= threshold and not guard_reason
         return ParallelCommitCheckRecord(
             round_name=round_name,
-            state_kind="parallel_post_round",
+            state_kind=state_kind,
             should_commit=should_commit,
             source="runtime_controller_commit" if should_commit else "runtime_controller_continue",
             support_coverage=float(post_round_snapshot.support_coverage),
@@ -628,7 +653,7 @@ def _runtime_commit_check(
 
     return ParallelCommitCheckRecord(
         round_name=round_name,
-        state_kind="parallel_post_round",
+        state_kind=state_kind,
         should_commit=bool(post_round_snapshot.is_mature),
         source="maturity_snapshot",
         support_coverage=float(post_round_snapshot.support_coverage),

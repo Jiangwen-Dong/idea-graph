@@ -121,7 +121,7 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertEqual(text.metadata["runtime_protocol"], "parallel_graph_v2")
         self.assertEqual(text.metadata["runtime_controller_kind"], "text_critic_rerank")
         self.assertTrue(text.metadata["runtime_controller_use_edit"])
-        self.assertFalse(text.metadata["runtime_controller_use_commit"])
+        self.assertTrue(text.metadata["runtime_controller_use_commit"])
 
         calibrated = prepare_instance_for_method_plan(
             self._instance(),
@@ -134,12 +134,12 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertTrue(calibrated.metadata["runtime_controller_use_edit"])
         self.assertTrue(calibrated.metadata["runtime_controller_use_commit"])
         self.assertTrue(calibrated.metadata["runtime_controller_use_action_score_calibration"])
-        self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.50)
-        self.assertEqual(calibrated.metadata["runtime_controller_min_commit_round"], 3)
+        self.assertAlmostEqual(calibrated.metadata["runtime_controller_gamma_commit"], 0.6563)
+        self.assertEqual(calibrated.metadata["runtime_controller_min_commit_round"], 2)
         self.assertFalse(calibrated.metadata["runtime_controller_use_low_signal_kind_swap_guard"])
         self.assertNotIn("runtime_controller_disable_calibration", calibrated.metadata)
         self.assertNotIn("runtime_controller_calibration_missing", calibrated.metadata)
-        self.assertNotIn("runtime_controller_calibration_path", calibrated.metadata)
+        self.assertIn("runtime_controller_calibration_path", calibrated.metadata)
 
         no_commit = prepare_instance_for_method_plan(
             self._instance(),
@@ -167,7 +167,7 @@ class ExperimentPlanTests(unittest.TestCase):
         self.assertFalse(no_edit.metadata["runtime_controller_use_action_score_calibration"])
         self.assertNotIn("runtime_controller_disable_calibration", no_edit.metadata)
         self.assertNotIn("runtime_controller_calibration_missing", no_edit.metadata)
-        self.assertNotIn("runtime_controller_calibration_path", no_edit.metadata)
+        self.assertIn("runtime_controller_calibration_path", no_edit.metadata)
 
         fixed = prepare_instance_for_method_plan(
             self._instance(),

@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from tempfile import mkdtemp
+from unittest.mock import patch
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -203,6 +204,70 @@ class ControllerEvalRunnerTests(unittest.TestCase):
         self.assertFalse(updated.metadata["runtime_controller_use_action_score_calibration"])
         self.assertEqual(updated.metadata["runtime_controller_action_score_calibration_strength"], 0.25)
         self.assertEqual(updated.metadata["runtime_controller_action_score_calibration_max_bias"], 0.20)
+
+    def test_execute_packet_run_passes_external_baseline_config(self) -> None:
+        from idea_graph.controller_eval_runtime import execute_packet_run
+        from idea_graph.instances import ExperimentInstance
+
+        config_path = self.tmp_dir / "external_baselines.json"
+        write_text_file(
+            config_path,
+            json.dumps(
+                {
+                    "ai-researcher": {
+                        "enabled": True,
+                        "execution_mode": "openai-compatible",
+                        "openai_compatible": {
+                            "base_url": "https://example.com/v1",
+                            "api_key_env": "EXAMPLE_API_KEY",
+                            "model": "demo-model",
+                        },
+                    }
+                }
+            ),
+        )
+        row = {
+            "group_id": "AI_Idea_Bench_2025::ai-idea-bench-2025-10",
+            "benchmark": "AI_Idea_Bench_2025",
+            "instance_name": "ai-idea-bench-2025-10",
+            "partition_role": "paper_eval",
+            "source_split": "frozen",
+            "benchmark_index": 10,
+        }
+        instance = ExperimentInstance(
+            name="ai-idea-bench-2025-10",
+            topic="topic",
+            literature=["paper"],
+            source_path="demo.json",
+            metadata={},
+        )
+
+        with (
+            patch("idea_graph.controller_eval_runtime.build_openai_backend", return_value=(None, None)),
+            patch("idea_graph.controller_eval_runtime.load_openai_settings", return_value=None),
+            patch("idea_graph.controller_eval_runtime.load_benchmark_instance", return_value=instance),
+            patch("idea_graph.controller_eval_runtime.attach_baseline_metadata", return_value=instance),
+            patch("idea_graph.controller_eval_runtime.apply_runtime_controller_overrides", return_value=instance),
+            patch("idea_graph.controller_eval_runtime.write_run_artifacts", return_value=str(self.tmp_dir / "run")),
+            patch("idea_graph.controller_eval_runtime.run_baseline_experiment", return_value=object()) as mock_run,
+        ):
+            manifest_row = execute_packet_run(
+                row,
+                baseline_name="ai-researcher",
+                output_root=self.tmp_dir / "out",
+                benchmark_root_base=self.tmp_dir,
+                max_rounds=5,
+                native_eval=False,
+                generation_llm_config_path=None,
+                external_baseline_config_path=config_path,
+            )
+
+        self.assertEqual(manifest_row["baseline_name"], "ai-researcher")
+        self.assertIn("ai-researcher", mock_run.call_args.kwargs["external_baseline_config"])
+        self.assertEqual(
+            mock_run.call_args.kwargs["external_baseline_config"]["ai-researcher"]["execution_mode"],
+            "openai-compatible",
+        )
 
     def test_runner_cli_dry_run_accepts_action_score_calibration_flags(self) -> None:
         manifest_path = self.tmp_dir / "packet.jsonl"

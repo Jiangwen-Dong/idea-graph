@@ -3518,6 +3518,126 @@ def run_experiment(
                 )
                 break
             continue
+        if runtime_protocol == "sequential_graph_v2":
+            from .parallel_replay import (
+                append_parallel_edit_rows,
+                append_parallel_round_trace,
+                append_post_round_commit_rows,
+            )
+            from .sequential_runtime import execute_sequential_role_round
+
+            result = execute_sequential_role_round(
+                graph,
+                round_name=round_name,
+                collaboration_backend=collaboration_backend,
+                runtime_controller=runtime_controller,
+                runtime_controller_metadata=runtime_controller_metadata,
+                progress_callback=progress_callback,
+            )
+            selected_role_decision_payloads = [
+                asdict(record)
+                for record in result.selected_role_decisions
+            ]
+            edit_patch_payloads = [
+                asdict(record)
+                for record in result.edit_patches
+            ]
+            materialized_action_payloads = [
+                {
+                    "id": action.id,
+                    "role": action.role,
+                    "kind": action.kind,
+                    "target_ids": list(action.target_ids),
+                    "payload": dict(action.payload),
+                    "source": action.source,
+                }
+                for action in result.materialized_graph_actions
+            ]
+            append_parallel_round_trace(
+                graph.metadata,
+                {
+                    "round": result.round_name,
+                    "runtime_protocol": runtime_protocol,
+                    "runtime_role_order_id": str(graph.metadata.get("runtime_role_order_id", "")).strip(),
+                    "runtime_role_order": list(graph.metadata.get("runtime_role_order", []) or []),
+                    "resolved_role_sequence": list(result.active_roles),
+                    "active_roles": list(result.active_roles),
+                    "inactive_roles": [role for role in ROLE_NAMES if role not in result.active_roles],
+                    "selected_role_decisions": selected_role_decision_payloads,
+                    "edit_patches": edit_patch_payloads,
+                    "materialized_graph_actions": materialized_action_payloads,
+                    "skipped_roles": list(result.skipped_roles),
+                    "post_round_commit": asdict(result.post_round_commit),
+                    "graph_delta": {
+                        "node_count_before": result.node_count_before,
+                        "node_count_after": result.node_count_after,
+                        "node_delta": result.node_count_after - result.node_count_before,
+                        "edge_count_before": result.edge_count_before,
+                        "edge_count_after": result.edge_count_after,
+                        "edge_delta": result.edge_count_after - result.edge_count_before,
+                        "action_count_before": result.action_count_before,
+                        "action_count_after": result.action_count_after,
+                        "action_delta": result.action_count_after - result.action_count_before,
+                    },
+                },
+            )
+            append_parallel_edit_rows(
+                graph.metadata,
+                result.edit_rows,
+            )
+            append_post_round_commit_rows(
+                graph.metadata,
+                result.post_round_commit_rows,
+            )
+            snapshot = maturity_snapshot(graph)
+            graph.round_summaries.append((round_name, snapshot))
+            if result.post_round_commit.should_commit and graph.matured_at_round is None:
+                graph.matured_at_round = round_name
+                graph.metadata["maturity_stop_candidate"] = round_name
+            emit_progress(
+                graph,
+                progress_callback,
+                stage="round_complete",
+                message=(
+                    f"{round_name} complete: support={snapshot.support_coverage}, "
+                    f"contradictions={snapshot.unresolved_contradiction_ratio}, "
+                    f"utility={snapshot.utility}, coherence={snapshot.utility_breakdown.coherence}, "
+                    f"mature={snapshot.is_mature}."
+                ),
+                details={
+                    "round": round_name,
+                    "runtime_protocol": runtime_protocol,
+                    "runtime_role_order_id": str(graph.metadata.get("runtime_role_order_id", "")).strip(),
+                    "active_roles": list(result.active_roles),
+                    "skipped_roles": list(result.skipped_roles),
+                    "selected_role_decision_count": len(result.selected_role_decisions),
+                    "materialized_action_count": len(result.materialized_graph_actions),
+                    "post_round_commit": bool(result.post_round_commit.should_commit),
+                    "post_round_commit_source": result.post_round_commit.source,
+                    "support_coverage": snapshot.support_coverage,
+                    "unresolved_contradiction_ratio": snapshot.unresolved_contradiction_ratio,
+                    "utility": snapshot.utility,
+                    "utility_breakdown": asdict(snapshot.utility_breakdown),
+                    "is_mature": snapshot.is_mature,
+                },
+            )
+            if stop_when_mature and result.post_round_commit.should_commit:
+                graph.metadata["stopped_early"] = True
+                stop_prefix = (
+                    "commit"
+                    if str(result.post_round_commit.source).strip() == "runtime_controller_commit"
+                    else "mature"
+                )
+                graph.metadata["stop_reason"] = f"{stop_prefix}_at_{round_name}"
+                emit_progress(
+                    graph,
+                    progress_callback,
+                    stage="maturity_stop",
+                    message=f"{round_name} reached the post-round stop condition, stopping early before additional rounds.",
+                    details={"round": round_name, "source": result.post_round_commit.source},
+                )
+                break
+            continue
         for role in ROLE_NAMES:
             action_source = "deterministic"
             deterministic_ranked_action: GraphAction | None = None

@@ -22,6 +22,7 @@ from .relation_graph_runtime_critic import (
     load_relation_graph_runtime_bundle,
 )
 from .relation_graph_two_head_runtime_critic import load_relation_graph_two_head_runtime_bundle
+from .runtime_protocols import PARALLEL_GRAPH_V2, ROLE_ORDER_PRESETS, SEQUENTIAL_GRAPH_V2
 from .runtime_critic import TextCriticRuntimeConfig, load_pickled_text_critic_model
 from .signal_heuristic_control import SignalHeuristicController
 
@@ -37,6 +38,8 @@ class BaselineSpec:
     prompt_style: str = ""
     candidate_count: int = 1
     runtime_controller: str = ""
+    runtime_protocol: str = ""
+    metadata_overrides: dict[str, Any] | None = None
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,8 +60,10 @@ RELATION_GRAPH_TWO_HEAD_MODEL_RELATIVE_DIR = (
     / "parallel_v2_twohead_gold256_st_e8_20260423"
 )
 TRACKED_JOINT_CONTROLLER_CALIBRATION_RELATIVE_PATH = (
-    Path("configs")
-    / "joint_controller_calibration.json"
+    Path("data")
+    / "splits"
+    / "parallel_v2"
+    / "frozen_dev_joint_controller_calibration.json"
 )
 FIXED_CONTROL_POLICY_RELATIVE_PATH = (
     Path("configs")
@@ -100,6 +105,13 @@ RUNTIME_CONTROLLER_METADATA_KEYS = (
     "runtime_controller_error",
     "runtime_controller_loaded",
     "max_rounds_hint",
+)
+
+RUNTIME_PROTOCOL_METADATA_KEYS = (
+    "runtime_protocol",
+    "runtime_role_order_id",
+    "runtime_role_order",
+    "idea_graph_protocol_variant",
 )
 
 GRAPH_OF_THOUGHT_ROUND_COUNT = 3
@@ -258,7 +270,7 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         name="ours-eig-critic-text",
         display_name="Ours (EIG + Text Critic)",
         strategy="evolving_graph",
-        description="Evolving Idea Graph multi-agent collaboration with the G4.8 adapted text critic as a conservative edit reranker.",
+        description="Parallel EIG with a text-only controller for role-local edit selection and post-round commit control.",
         prompt_style="ours",
         runtime_controller="text_critic_rerank",
     ),
@@ -325,6 +337,90 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         description="Parallel EIG with the streamlined graph-signal controller and heuristic edit/commit decisions.",
         prompt_style="ours",
         runtime_controller="signal_heuristic_control",
+    ),
+    "ours-eig-sequential-heuristic-order-a": BaselineSpec(
+        name="ours-eig-sequential-heuristic-order-a",
+        display_name="Ours (Sequential Heuristic Order A)",
+        strategy="evolving_graph",
+        description="Sequential EIG ablation with heuristic control and canonical role order.",
+        prompt_style="ours",
+        runtime_controller="signal_heuristic_control",
+        runtime_protocol=SEQUENTIAL_GRAPH_V2,
+        metadata_overrides={
+            "runtime_role_order_id": "order_a_canonical",
+            "runtime_role_order": list(ROLE_ORDER_PRESETS["order_a_canonical"]),
+            "idea_graph_protocol_variant": "eig_sequential_v2_heuristic_order_a",
+        },
+    ),
+    "ours-eig-sequential-heuristic-order-b": BaselineSpec(
+        name="ours-eig-sequential-heuristic-order-b",
+        display_name="Ours (Sequential Heuristic Order B)",
+        strategy="evolving_graph",
+        description="Sequential EIG ablation with heuristic control and reverse role order.",
+        prompt_style="ours",
+        runtime_controller="signal_heuristic_control",
+        runtime_protocol=SEQUENTIAL_GRAPH_V2,
+        metadata_overrides={
+            "runtime_role_order_id": "order_b_reverse",
+            "runtime_role_order": list(ROLE_ORDER_PRESETS["order_b_reverse"]),
+            "idea_graph_protocol_variant": "eig_sequential_v2_heuristic_order_b",
+        },
+    ),
+    "ours-eig-sequential-heuristic-order-c": BaselineSpec(
+        name="ours-eig-sequential-heuristic-order-c",
+        display_name="Ours (Sequential Heuristic Order C)",
+        strategy="evolving_graph",
+        description="Sequential EIG ablation with heuristic control and cyclic role order.",
+        prompt_style="ours",
+        runtime_controller="signal_heuristic_control",
+        runtime_protocol=SEQUENTIAL_GRAPH_V2,
+        metadata_overrides={
+            "runtime_role_order_id": "order_c_cyclic",
+            "runtime_role_order": list(ROLE_ORDER_PRESETS["order_c_cyclic"]),
+            "idea_graph_protocol_variant": "eig_sequential_v2_heuristic_order_c",
+        },
+    ),
+    "ours-eig-sequential-dropin-order-a": BaselineSpec(
+        name="ours-eig-sequential-dropin-order-a",
+        display_name="Ours (Sequential Drop-In Order A)",
+        strategy="evolving_graph",
+        description="Sequential EIG ablation with the learned two-head controller and canonical role order.",
+        prompt_style="ours",
+        runtime_controller="relation_graph_two_head_critic",
+        runtime_protocol=SEQUENTIAL_GRAPH_V2,
+        metadata_overrides={
+            "runtime_role_order_id": "order_a_canonical",
+            "runtime_role_order": list(ROLE_ORDER_PRESETS["order_a_canonical"]),
+            "idea_graph_protocol_variant": "eig_sequential_v2_dropin_order_a",
+        },
+    ),
+    "ours-eig-sequential-dropin-order-b": BaselineSpec(
+        name="ours-eig-sequential-dropin-order-b",
+        display_name="Ours (Sequential Drop-In Order B)",
+        strategy="evolving_graph",
+        description="Sequential EIG ablation with the learned two-head controller and reverse role order.",
+        prompt_style="ours",
+        runtime_controller="relation_graph_two_head_critic",
+        runtime_protocol=SEQUENTIAL_GRAPH_V2,
+        metadata_overrides={
+            "runtime_role_order_id": "order_b_reverse",
+            "runtime_role_order": list(ROLE_ORDER_PRESETS["order_b_reverse"]),
+            "idea_graph_protocol_variant": "eig_sequential_v2_dropin_order_b",
+        },
+    ),
+    "ours-eig-sequential-dropin-order-c": BaselineSpec(
+        name="ours-eig-sequential-dropin-order-c",
+        display_name="Ours (Sequential Drop-In Order C)",
+        strategy="evolving_graph",
+        description="Sequential EIG ablation with the learned two-head controller and cyclic role order.",
+        prompt_style="ours",
+        runtime_controller="relation_graph_two_head_critic",
+        runtime_protocol=SEQUENTIAL_GRAPH_V2,
+        metadata_overrides={
+            "runtime_role_order_id": "order_c_cyclic",
+            "runtime_role_order": list(ROLE_ORDER_PRESETS["order_c_cyclic"]),
+            "idea_graph_protocol_variant": "eig_sequential_v2_dropin_order_c",
+        },
     ),
     "direct": BaselineSpec(
         name="direct",
@@ -458,8 +554,11 @@ def attach_baseline_metadata(
     metadata["baseline_local_variant"] = baseline.is_local_variant
     metadata["baseline_reference_target"] = baseline.reference_target
     metadata["baseline_runtime_controller"] = baseline.runtime_controller
+    metadata_overrides = dict(baseline.metadata_overrides or {})
+    for key in RUNTIME_PROTOCOL_METADATA_KEYS:
+        metadata.pop(key, None)
     if baseline.strategy == "evolving_graph":
-        metadata["runtime_protocol"] = "parallel_graph_v2"
+        metadata["runtime_protocol"] = baseline.runtime_protocol or PARALLEL_GRAPH_V2
     for key in RUNTIME_CONTROLLER_METADATA_KEYS:
         metadata.pop(key, None)
 
@@ -467,7 +566,7 @@ def attach_baseline_metadata(
         metadata["runtime_controller_enabled"] = True
         metadata["runtime_controller_kind"] = "text_critic_rerank"
         metadata["runtime_controller_use_edit"] = True
-        metadata["runtime_controller_use_commit"] = False
+        metadata["runtime_controller_use_commit"] = True
         metadata["runtime_controller_tau_override"] = 0.05
         metadata["runtime_controller_model_path"] = str(_default_text_critic_model_path())
     elif baseline.runtime_controller == "relation_graph_critic_rerank":
@@ -483,6 +582,11 @@ def attach_baseline_metadata(
         metadata["runtime_controller_use_commit"] = True
         metadata.update(TWO_HEAD_RUNTIME_CONTROLLER_DEFAULTS)
         metadata["runtime_controller_model_dir"] = str(_default_relation_graph_two_head_runtime_model_dir())
+        if baseline.name in {"ours-eig-critic-calibrated", "ours-eig-critic-no-edit"}:
+            metadata["runtime_controller_use_joint_threshold_calibration"] = True
+            metadata["runtime_controller_calibration_path"] = str(
+                _default_joint_controller_calibration_path()
+            )
         if baseline.name == "ours-eig-critic-no-commit":
             metadata["runtime_controller_use_commit"] = False
         if baseline.name == "ours-eig-critic-no-edit":
@@ -523,6 +627,7 @@ def attach_baseline_metadata(
         }
         metadata["runtime_controller_min_commit_round"] = 2
         metadata["max_rounds_hint"] = 6
+    metadata.update(metadata_overrides)
     return instance.__class__(
         name=instance.name,
         topic=instance.topic,
