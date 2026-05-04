@@ -97,10 +97,6 @@ The repository includes several baseline families:
 - Single-model graph reasoning: `graph-of-thought`
 - External upstream wrappers: `ai-researcher`, `scipip`, `virsci`
 
-The three local workflow variants are benchmark-facing local implementations
-that follow the high-level workflow shape of the named systems. They are not
-claims of exact upstream reproduction.
-
 ## OpenAI-Compatible Backend
 
 Start from the public example config:
