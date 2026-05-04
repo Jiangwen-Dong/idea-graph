@@ -150,16 +150,12 @@ Large paper archives and benchmark assets remain local. Do not commit them.
 
 The code contains controller integration paths for text critics, relation-graph
 critics, two-head graph critics, signal-heuristic control, fixed control, and
-random control. Trained critic models and paper-evaluation calibration artifacts
-are not included in this repository.
+random control.
 
 If you have private controller artifacts, keep them in ignored local paths such
 as `outputs/critic_models/` or provide explicit paths through local configs or
 metadata. Temporary external-baseline workspaces should likewise stay under
 ignored paths such as `outputs/tmp/`.
-
-The public repository includes the runtime code for these controllers, but not
-the learned checkpoints needed to reproduce the trained-controller results.
 
 ## External Baselines
 
