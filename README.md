@@ -96,8 +96,6 @@ The repository includes several baseline families:
   control, and random control
 - Single-model graph reasoning: `graph-of-thought`
 - External upstream wrappers: `ai-researcher`, `scipip`, `virsci`
-- Local workflow variants inspired by upstream systems:
-  `ai-researcher-guided`, `scipip-structured`, and `virsci-discussion`
 
 The three local workflow variants are benchmark-facing local implementations
 that follow the high-level workflow shape of the named systems. They are not
