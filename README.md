@@ -38,16 +38,6 @@ Research utilities are grouped under:
 
 See `scripts/README.md` for the grouped layout.
 
-## What Is Not Included
-
-- `outputs/`: generated runs, tables, logs, and paper-evaluation results
-- `data/`: local benchmark downloads, split registries, and user-supplied inputs
-- `docs/`: internal plans, execution logs, and project records
-- `models/`, `checkpoints/`, and serialized critic artifacts
-- Any API keys or provider-specific private configs
-
-The `.gitignore` is configured to keep those artifacts local.
-
 ## Installation
 
 Use Python 3.10 or newer. From the repository root:
