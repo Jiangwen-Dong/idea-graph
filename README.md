@@ -1,33 +1,60 @@
-# idea-graph
+<div align="center">
 
-`idea-graph` is a Python research prototype for scientific ideation with
-Evolving Idea Graphs (EIG). It represents a developing research idea as a typed
-graph, lets role-specialized agents edit that shared state, and synthesizes a
-final proposal from the committed graph.
+# 🧠 idea-graph
 
-This repository is prepared as a code-only public version. It intentionally
-does not include experiment outputs, benchmark datasets, trained model
-checkpoints, private split registries, private calibration artifacts, or
-internal research logs.
+**Evolving Idea Graphs (EIG) for Multi-Agent Scientific Ideation**
 
-## What Is Included
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-%3E%3D2.4-ee4c2c)](https://pytorch.org/)
 
-- Core EIG graph data models and runtime logic in `src/idea_graph/`
-- Deterministic local backend for smoke tests and reproducible graph mechanics
-- OpenAI-compatible backend support for local provider configuration
-- Benchmark loader and evaluation code paths
-- Baseline adapters and controller variants used by the research prototype
-- Public configuration examples in `configs/`
-- Unit tests in `tests/`
+</div>
 
-## Public Surface
+`idea-graph` is a Python research prototype for scientific ideation with Evolving Idea Graphs (EIG). It represents a developing research idea as a **typed graph**, lets role-specialized agents edit that shared state, and synthesizes a final proposal from the committed graph.
 
-The public entrypoints are:
+---
 
-- `python scripts/run_pipeline.py ...`
-- `python scripts/check_openai_compatible.py ...`
-- `python scripts/fetch_ai_idea_bench_2025.py`
-- `python scripts/fetch_liveideabench.py`
+## 📋 Table of Contents
+
+- [✨ What Is Included](#-what-is-included)
+- [🚀 Quick Start](#-quick-start)
+- [🧪 Baseline Families](#-baseline-families)
+- [🔌 OpenAI-Compatible Backend](#-openai-compatible-backend)
+- [📊 Benchmarks](#-benchmarks)
+- [🎓 Learned Controllers](#-learned-controllers)
+- [🔗 External Baselines](#-external-baselines)
+- [🧪 Tests](#-tests)
+- [🧹 Repository Hygiene](#-repository-hygiene)
+
+---
+
+## ✨ What Is Included
+
+| Component | Description |
+|-----------|-------------|
+| `src/idea_graph/` | Core EIG graph data models and runtime logic |
+| `tests/` | Unit tests and smoke checks |
+| `configs/` | Configuration examples for backends and control policies |
+| `scripts/` | Pipeline runners, analysis, data prep, evaluation, and training |
+
+- **Deterministic local backend** for smoke tests and reproducible graph mechanics
+- **OpenAI-compatible backend** support for local provider configuration
+- **Benchmark loader** and evaluation code paths
+- **Baseline adapters** and controller variants
+- **Training pipeline** for graph critics with offline supervision collection
+
+### 📂 Public Entrypoints
+
+```bash
+# Main pipeline
+python scripts/run_pipeline.py ...
+
+# Backend connectivity check
+python scripts/check_openai_compatible.py ...
+
+# Benchmark fetchers
+python scripts/fetch_ai_idea_bench_2025.py
+python scripts/fetch_liveideabench.py
+```
 
 Research utilities are grouped under:
 
@@ -36,30 +63,31 @@ Research utilities are grouped under:
 - `scripts/eval/`
 - `scripts/train/`
 
-See `scripts/README.md` for the grouped layout.
+See [`scripts/README.md`](scripts/README.md) for the grouped layout.
 
-## Installation
+---
 
-Use Python 3.10 or newer. From the repository root:
+## 🚀 Quick Start
+
+### 📦 Installation
+
+Requires **Python 3.10 or newer**:
 
 ```bash
 python -m pip install -e .
 ```
 
-The package depends on `numpy`, `scikit-learn`, `torch`, and
-`sentence-transformers`. Learned-controller paths can require local model
-artifacts that are intentionally not part of this public release.
+Core dependencies: `numpy`, `scikit-learn`, `torch`, `sentence-transformers`.
 
-## Quick Start
+### ▶️ Run the Pipeline
 
-Run the pipeline on your own JSON instance:
+On your own JSON instance:
 
 ```bash
 python scripts/run_pipeline.py --input /path/to/instance.json
 ```
 
-The input JSON should contain the fields `name`, `topic`, and `literature`.
-A minimal example looks like:
+The input JSON should contain the fields `name`, `topic`, and `literature`. A minimal example:
 
 ```json
 {
@@ -75,29 +103,47 @@ A minimal example looks like:
 }
 ```
 
-Runs write artifacts under `outputs/`, which is ignored by Git.
+Runs write artifacts under `outputs/`.
 
-Run a specific local baseline on your JSON input:
+### 🎛️ Run a Specific Baseline
 
 ```bash
+# One-shot generation
 python scripts/run_pipeline.py --input /path/to/instance.json --baseline direct
+
+# Single-agent revision
 python scripts/run_pipeline.py --input /path/to/instance.json --baseline self-refine
-python scripts/run_pipeline.py --input /path/to/instance.json --baseline ours-eig --runtime-protocol parallel_graph_v2
+
+# Full EIG with parallel graph runtime
+python scripts/run_pipeline.py --input /path/to/instance.json \
+  --baseline ours-eig --runtime-protocol parallel_graph_v2
 ```
 
-## Baseline Families
+---
 
-The repository includes several baseline families:
+## 🧪 Baseline Families
 
-- Direct proposal generation: `direct`
-- Single-agent revision: `self-refine`
-- EIG variants: `ours-eig` and controller-based variants such as text critic,
-  relation-graph critic, two-head graph critic, signal heuristic control, fixed
-  control, and random control
-- Single-model graph reasoning: `graph-of-thought`
-- External upstream wrappers: `ai-researcher`, `scipip`, `virsci`
+| Family | Baseline Key | Description |
+|--------|--------------|-------------|
+| Direct | `direct` | One-shot proposal generation |
+| Self-Refine | `self-refine` | Single-agent iterative revision |
+| **EIG (Ours)** | `ours-eig` | Full EIG with graph-based collaboration and learned control |
+| Graph of Thoughts | `graph-of-thought` | Single-model graph reasoning |
+| AI-Researcher | `ai-researcher` | Multi-stage literature-grounded pipeline |
+| SciPIP | `scipip` | Structured planning-and-drafting pipeline |
+| VirSci | `virsci` | Discussion-oriented multi-agent proposal system |
 
-## OpenAI-Compatible Backend
+**Controller variants** (for `ours-eig`):
+
+- Text critic
+- Relation-graph critic
+- Two-head graph critic
+- Signal-heuristic control
+- Random control
+
+---
+
+## 🔌 OpenAI-Compatible Backend
 
 Start from the public example config:
 
@@ -105,94 +151,115 @@ Start from the public example config:
 configs/openai_compatible.example.json
 ```
 
-Set credentials through environment variables rather than writing keys into JSON
-files:
+Set credentials through **environment variables** rather than writing keys into JSON files:
 
 ```powershell
+# PowerShell
 $env:DASHSCOPE_API_KEY="your_real_key"
-python scripts/check_openai_compatible.py --llm-config configs/openai_compatible.example.json
-python scripts/run_pipeline.py --agent-backend openai-compatible --llm-config configs/openai_compatible.example.json
+python scripts/check_openai_compatible.py \
+  --llm-config configs/openai_compatible.example.json
+
+python scripts/run_pipeline.py \
+  --agent-backend openai-compatible \
+  --llm-config configs/openai_compatible.example.json
 ```
 
-The config field `api_key_env` should contain an environment-variable name such
-as `DASHSCOPE_API_KEY` or `OPENAI_API_KEY`, not a literal key.
+> **Important:** The config field `api_key_env` should contain an environment-variable name such as `DASHSCOPE_API_KEY` or `OPENAI_API_KEY`, **not a literal key**.
 
-## Benchmarks
+---
 
-Benchmark data is not committed. By default, the fetch scripts download the
-official files into ignored local paths under `data/benchmarks/`:
+## 📊 Benchmarks
+
+Fetch the official benchmark files:
 
 ```bash
 python scripts/fetch_ai_idea_bench_2025.py
 python scripts/fetch_liveideabench.py
 ```
 
-Then run an instance by benchmark index:
+Then run by benchmark index:
 
 ```bash
 python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 0
 python scripts/run_pipeline.py --benchmark liveideabench --benchmark-index 0
 ```
 
-If you want the runner to fetch missing benchmark metadata automatically, use:
+Auto-fetch missing metadata:
 
 ```bash
-python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 --benchmark-index 0 --download-if-missing
-python scripts/run_pipeline.py --benchmark liveideabench --benchmark-index 0 --download-if-missing
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 \
+  --benchmark-index 0 --download-if-missing
 ```
 
-If you prefer a different local cache location, override it with
-`--benchmark-root /path/to/benchmarks`.
+Override the local cache location:
 
-Large paper archives and benchmark assets remain local. Do not commit them.
+```bash
+python scripts/run_pipeline.py --benchmark ai_idea_bench_2025 \
+  --benchmark-index 0 --benchmark-root /path/to/benchmarks
+```
 
-## Learned Controllers And Private Artifacts
+> **Note:** Benchmark assets are downloaded to local paths under `data/benchmarks/` by default.
 
-The code contains controller integration paths for text critics, relation-graph
-critics, two-head graph critics, signal-heuristic control, fixed control, and
-random control.
+---
 
-If you have private controller artifacts, keep them in ignored local paths such
-as `outputs/critic_models/` or provide explicit paths through local configs or
-metadata. Temporary external-baseline workspaces should likewise stay under
-ignored paths such as `outputs/tmp/`.
+## 🎓 Learned Controllers
 
-## External Baselines
+The repository includes controller integration paths and training code for:
 
-The external baselines `ai-researcher`, `scipip`, and `virsci` require local
-copies of their upstream repositories plus local configuration. Their temporary
-workspaces should remain under ignored paths such as
-`outputs/tmp/external-baseline-runs/`.
+- Text critics
+- Relation-graph critics
+- Two-head graph critics
+- Signal-heuristic control
+- Random control
 
-The fixed-control ablation uses the public example schedule:
+The training pipeline is in `scripts/train/`. It consumes offline profiling traces collected under the EIG runtime and produces trained critic checkpoints. See `scripts/train/` for training configuration and `scripts/data_prep/` for supervision corpus construction.
+
+---
+
+## 🔗 External Baselines
+
+The external baselines `ai-researcher`, `scipip`, and `virsci` require local copies of their upstream repositories plus local configuration. Their temporary workspaces are written to `outputs/tmp/external-baseline-runs/` by default.
+
+The fixed-control ablation uses the example schedule:
 
 ```bash
 configs/fixed_control_policy.example.json
 ```
 
-## Tests
+---
 
-Run the test suite with:
+## 🧪 Tests
+
+Run the full test suite:
 
 ```bash
 pytest
 ```
 
-For a faster smoke check of the public-release cleanup behavior:
+Fast smoke check:
 
 ```bash
-pytest tests/test_benchmark_mode_and_baselines.py tests/test_experiment_plans.py -q
+pytest tests/test_benchmark_mode_and_baselines.py \
+       tests/test_experiment_plans.py -q
 ```
 
-## Repository Hygiene
+---
 
-Before pushing, check:
+## 🧹 Repository Hygiene
+
+Before pushing, verify no artifacts are staged:
 
 ```bash
 git status --short
 git ls-files outputs data docs models checkpoints
 ```
 
-The second command should not list files for a code-only public push. Keep API
-keys, generated outputs, benchmark datasets, trained models, and internal plans
-outside Git.
+The second command should return **nothing** for a clean push. Keep API keys, generated outputs, benchmark datasets, trained models, and internal plans outside Git.
+
+---
+
+<div align="center">
+
+**[⬆ Back to Top](#-idea-graph)**
+
+</div>
