@@ -12,11 +12,26 @@
 
 `idea-graph` is a Python research prototype for scientific ideation with Evolving Idea Graphs (EIG). It represents a developing research idea as a **typed graph**, lets role-specialized agents edit that shared state, and synthesizes a final proposal from the committed graph.
 
+<div align="center">
+  <img src="assets/fig-framework.png" alt="EIG Framework" width="88%">
+</div>
+
+---
+
+## 🌟 Key Features
+
+- 🔄 **Evolving Idea Graphs** – Represent developing research ideas as typed graphs with nodes (claims, hypotheses, evidence) and edges (support, contradiction, dependency).
+- 🤖 **Role-Specialized Agents** – Multiple agents collaboratively edit a shared graph state, each with distinct responsibilities.
+- 🧠 **Learned Controller** – Shared-encoder two-head graph critic decides which edits to accept and when to stop iterating.
+- ⚡ **Parallel Runtime** – Frozen-snapshot protocol enables concurrent agent execution per round, faster than sequential update.
+- 📊 **Benchmark-Ready** – Built-in loaders for AI Idea Bench 2025 and LiveIdeaBench with benchmark-faithful evaluation.
+
 ---
 
 ## 📋 Table of Contents
 
 - [✨ What Is Included](#-what-is-included)
+- [🌟 Key Features](#-key-features)
 - [🚀 Quick Start](#-quick-start)
 - [🧪 Baseline Families](#-baseline-families)
 - [🔌 OpenAI-Compatible Backend](#-openai-compatible-backend)
@@ -42,6 +57,19 @@
 - **Benchmark loader** and evaluation code paths
 - **Baseline adapters** and controller variants
 - **Training pipeline** for graph critics with offline supervision collection
+
+### 📂 Project Structure
+
+```
+idea-graph/
+├── src/idea_graph/      # Core EIG runtime and data models
+├── tests/               # Unit tests and smoke checks
+├── configs/             # Backend and control policy configs
+├── scripts/             # Pipeline runners, eval, and training
+├── assets/              # Documentation figures
+├── outputs/             # Runtime artifacts (gitignored)
+└── data/                # Benchmark datasets (gitignored)
+```
 
 ### 📂 Public Entrypoints
 
