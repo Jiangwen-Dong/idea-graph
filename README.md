@@ -6,6 +6,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-%3E%3D2.4-ee4c2c)](https://pytorch.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 </div>
 
@@ -176,6 +177,11 @@ Fetch the official benchmark files:
 python scripts/fetch_ai_idea_bench_2025.py
 python scripts/fetch_liveideabench.py
 ```
+
+Datasets are hosted on HuggingFace:
+
+- [AI Idea Bench 2025](https://huggingface.co/datasets/yanshengqiu/AI_Idea_Bench_2025)
+- [LiveIdeaBench](https://huggingface.co/datasets/6cf/liveideabench)
 
 Then run by benchmark index:
 
